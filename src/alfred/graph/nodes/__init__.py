@@ -8,5 +8,15 @@ Nodes:
 - reply: Synthesize final response
 """
 
-# Nodes will be implemented in Phase 3
+from alfred.graph.nodes.act import act_node, should_continue_act
+from alfred.graph.nodes.reply import reply_node
+from alfred.graph.nodes.router import router_node
+from alfred.graph.nodes.think import think_node
 
+__all__ = [
+    "router_node",
+    "think_node",
+    "act_node",
+    "reply_node",
+    "should_continue_act",
+]

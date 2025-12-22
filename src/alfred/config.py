@@ -50,3 +50,18 @@ def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
 
+
+# Convenience singleton - lazy loaded
+class _SettingsProxy:
+    """Lazy proxy for settings to avoid loading .env at import time."""
+    
+    _instance: Settings | None = None
+    
+    def __getattr__(self, name: str):
+        if self._instance is None:
+            self._instance = get_settings()
+        return getattr(self._instance, name)
+
+
+settings = _SettingsProxy()
+

@@ -7,9 +7,13 @@ Usage:
     alfred --help            Show help
 """
 
+import asyncio
+
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.spinner import Spinner
+from rich.live import Live
 
 app = typer.Typer(
     name="alfred",
@@ -22,6 +26,9 @@ console = Console()
 @app.command()
 def chat() -> None:
     """Start an interactive chat session with Alfred."""
+    from alfred.config import settings
+    from alfred.graph import run_alfred
+
     console.print(
         Panel.fit(
             "[bold green]Alfred V2[/bold green]\n"
@@ -31,6 +38,8 @@ def chat() -> None:
             border_style="green",
         )
     )
+
+    user_id = settings.DEV_USER_ID
 
     while True:
         try:
@@ -43,15 +52,37 @@ def chat() -> None:
             if not user_input:
                 continue
 
-            # TODO: Integrate with LangGraph pipeline
-            console.print(
-                f"\n[bold green]Alfred:[/bold green] "
-                f"[dim](Graph not implemented yet)[/dim] You said: {user_input}"
-            )
+            # Run through the graph
+            with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
+                response = asyncio.run(run_alfred(
+                    user_message=user_input,
+                    user_id=user_id,
+                ))
+
+            console.print(f"\n[bold green]Alfred:[/bold green] {response}")
 
         except KeyboardInterrupt:
             console.print("\n\n[dim]Session interrupted. Goodbye! 👋[/dim]")
             break
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+
+
+@app.command()
+def ask(message: str = typer.Argument(..., help="Message to send to Alfred")) -> None:
+    """Send a single message to Alfred (useful for testing)."""
+    from alfred.config import settings
+    from alfred.graph import run_alfred
+
+    user_id = settings.DEV_USER_ID
+
+    with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
+        response = asyncio.run(run_alfred(
+            user_message=message,
+            user_id=user_id,
+        ))
+
+    console.print(f"\n[bold green]Alfred:[/bold green] {response}")
 
 
 @app.command()
