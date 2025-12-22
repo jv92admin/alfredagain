@@ -9,24 +9,20 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files first (for layer caching)
+# Copy all package files (need src/ for pip install to work)
 COPY pyproject.toml README.md ./
+COPY src/ ./src/
+COPY prompts/ ./prompts/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir .
 
-# Copy application code
-COPY src/ ./src/
-COPY prompts/ ./prompts/
-
-# Expose port for health checks
+# Expose port (Railway will set PORT env var)
 EXPOSE 8000
 
-# Health check
+# Health check using Railway's PORT
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
 # Run the application
-# For now, just a simple health server - will be replaced with actual app
 CMD ["python", "-m", "alfred.server"]
-
