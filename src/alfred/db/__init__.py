@@ -1,9 +1,13 @@
 """
-Alfred V2 - Database Integration.
+Alfred V2 - Database Client.
 
-Uses Supabase for:
-- SQL queries (inventory, preferences, meal plans)
-- Vector search (recipes, ingredients, memories)
-- Authentication (user_id)
+Provides Supabase access with hybrid SQL + vector retrieval.
 """
 
+from alfred.db.client import get_client
+from alfred.db.context import get_context
+
+__all__ = [
+    "get_client",
+    "get_context",
+]
