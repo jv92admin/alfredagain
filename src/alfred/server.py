@@ -38,8 +38,13 @@ class HealthHandler(BaseHTTPRequestHandler):
         pass
 
 
-def run_server(port: int = 8000) -> None:
+def run_server(port: int | None = None) -> None:
     """Run the health check server."""
+    import os
+    # Railway sets PORT environment variable
+    if port is None:
+        port = int(os.environ.get("PORT", 8000))
+    
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"Alfred health server running on port {port}")
     server.serve_forever()
