@@ -2,12 +2,12 @@
 Alfred V2 - Model Router.
 
 Selects the appropriate OpenAI model based on task complexity.
-Uses GPT-5 series with reasoning effort and verbosity controls.
+Currently using GPT-4.1-mini for testing (faster than GPT-5 reasoning models).
 
 Complexity levels:
-- low: Simple lookups, confirmations, basic CRUD → gpt-5-mini (minimal reasoning)
-- medium: Multi-step reasoning, recipe suggestions → gpt-5-mini (medium reasoning)
-- high: Complex planning, novel problem solving → gpt-5 (high reasoning)
+- low: Simple lookups, confirmations, basic CRUD → gpt-4.1-mini
+- medium: Multi-step reasoning, recipe suggestions → gpt-4.1-mini
+- high: Complex planning, novel problem solving → gpt-4.1-mini (upgrade to gpt-5 later)
 """
 
 from typing import Literal, TypedDict
@@ -23,29 +23,29 @@ class ModelConfig(TypedDict, total=False):
 
 
 # Model configurations by complexity
-# GPT-5 series supports reasoning_effort and verbosity parameters
+# GPT-4.1-mini for testing (faster, non-reasoning)
+# TODO: Switch to GPT-5 series with reasoning_effort when ready
 MODEL_CONFIGS: dict[str, ModelConfig] = {
     "low": {
-        "model": "gpt-5-mini",
-        "reasoning_effort": "minimal",  # Fast, few reasoning tokens
+        "model": "gpt-4.1-mini",
+        "temperature": 0.2,  # Very deterministic for simple CRUD
         "verbosity": "low",  # Terse output
     },
     "medium": {
-        "model": "gpt-5-mini",
-        "reasoning_effort": "medium",  # Balanced thinking
+        "model": "gpt-4.1-mini",
+        "temperature": 0.5,  # Some flexibility for reasoning
         "verbosity": "medium",  # Default detail level
     },
     "high": {
-        "model": "gpt-5",
-        "reasoning_effort": "high",  # Deep reasoning
+        "model": "gpt-4.1-mini",  # TODO: gpt-5 for complex tasks
+        "temperature": 0.7,  # More creative for generation
         "verbosity": "high",  # Detailed output
     },
 }
 
 # Default config if complexity not recognized
 DEFAULT_CONFIG: ModelConfig = {
-    "model": "gpt-5-mini",
-    "reasoning_effort": "medium",
+    "model": "gpt-4.1-mini",
     "verbosity": "medium",
 }
 
@@ -97,6 +97,16 @@ NODE_VERBOSITY: dict[str, str] = {
     "reply": "medium",  # User-facing needs balance
 }
 
+# Node-specific temperature overrides
+# Lower = more deterministic, higher = more creative
+NODE_TEMPERATURE: dict[str, float] = {
+    "router": 0.15,  # Classification should be consistent
+    "act": 0.25,  # CRUD needs precision but also context awareness
+    "think": 0.35,  # Planning needs flexibility to merge steps
+    "reply": 0.6,  # User-facing can be warmer
+    "summarize": 0.3,  # Summarization should be consistent
+}
+
 
 def get_node_config(
     node: str,
@@ -118,5 +128,9 @@ def get_node_config(
     # (high complexity overrides node defaults)
     if complexity != "high" and node in NODE_VERBOSITY:
         config["verbosity"] = NODE_VERBOSITY[node]
+
+    # Apply node-specific temperature (always - determinism is important)
+    if node in NODE_TEMPERATURE:
+        config["temperature"] = NODE_TEMPERATURE[node]
 
     return config

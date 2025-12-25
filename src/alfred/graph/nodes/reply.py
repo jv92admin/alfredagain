@@ -3,6 +3,8 @@ Alfred V2 - Reply Node.
 
 The Reply node synthesizes the final response to the user
 based on execution results.
+
+Now includes conversation context for continuity awareness.
 """
 
 from pathlib import Path
@@ -18,6 +20,7 @@ from alfred.graph.state import (
     StepCompleteAction,
 )
 from alfred.llm.client import call_llm, set_current_node
+from alfred.memory.conversation import format_condensed_context
 
 
 # Load prompts once at module level
@@ -51,6 +54,7 @@ async def reply_node(state: AlfredState) -> dict:
     Reply node - generates final user response.
     
     Synthesizes execution results into a natural, helpful response.
+    Now includes conversation context for continuity awareness.
     
     Args:
         state: Current graph state with step_results and any errors
@@ -71,6 +75,10 @@ async def reply_node(state: AlfredState) -> dict:
     pending_action = state.get("pending_action")
     think_output = state.get("think_output")
     error = state.get("error")
+    conversation = state.get("conversation", {})
+    
+    # Format conversation context (condensed for Reply)
+    conversation_section = format_condensed_context(conversation)
     
     # Handle special cases
     if error:
@@ -105,7 +113,7 @@ Reason: {pending_action.details}
 {_format_execution_summary(step_results, think_output)}
 
 ## Conversation Context
-*No prior conversation context.*
+{conversation_section}
 
 ---
 
@@ -129,7 +137,7 @@ Generate a helpful response explaining what was accomplished and what we could t
 {_format_execution_summary(step_results, think_output)}
 
 ## Conversation Context
-*No prior conversation context.*
+{conversation_section}
 
 ---
 
@@ -213,12 +221,22 @@ def _format_execution_summary(
         elif isinstance(result, dict):
             # Single record created/updated or structured analysis
             if "deleted" in result:
-                # Deletion result
+                # Deletion result - handle both list and count formats
                 deleted = result.get("deleted", [])
                 remaining = result.get("remaining", [])
-                lines.append(f"Outcome: Deleted {len(deleted)} items ({', '.join(deleted)})")
-                if remaining:
-                    lines.append(f"Remaining: {', '.join(remaining)}")
+                if isinstance(deleted, int):
+                    # LLM returned count instead of list
+                    lines.append(f"Outcome: Deleted {deleted} items")
+                elif isinstance(deleted, list) and deleted:
+                    lines.append(f"Outcome: Deleted {len(deleted)} items ({', '.join(str(d) for d in deleted)})")
+                else:
+                    lines.append("Outcome: Nothing to delete (already empty)")
+                if remaining and isinstance(remaining, list):
+                    lines.append(f"Remaining: {', '.join(str(r) for r in remaining)}")
+            elif _has_single_list_value(result):
+                # Wrapped list result ({"any_key": [...]}) - unwrap and format
+                key, items = _get_single_list_value(result)
+                lines.extend(_format_item_list(items, label=key))
             elif "name" in result:
                 # Created record
                 name = result.get("name", "record")
@@ -244,6 +262,50 @@ def _format_execution_summary(
         lines.append("")
     
     return "\n".join(lines)
+
+
+def _has_single_list_value(d: dict) -> bool:
+    """Check if dict has exactly one key with a list value."""
+    list_keys = [k for k, v in d.items() if isinstance(v, list)]
+    return len(list_keys) == 1 and len(d) <= 2  # Allow one list + maybe a note
+
+
+def _get_single_list_value(d: dict) -> tuple[str, list]:
+    """Get the key and list value from a single-list dict."""
+    for k, v in d.items():
+        if isinstance(v, list):
+            return k, v
+    return "items", []
+
+
+def _format_item_list(items: list, label: str = "items") -> list[str]:
+    """Format a list of items for the execution summary."""
+    lines = []
+    if len(items) == 0:
+        lines.append("Outcome: No records found")
+    else:
+        lines.append(f"Outcome: Found {len(items)} {label}")
+        for item in items:
+            if isinstance(item, dict):
+                name = item.get("name", item.get("id", "item"))
+                qty = item.get("quantity", "")
+                unit = item.get("unit", "")
+                location = item.get("location", "")
+                expiry = item.get("expiry_date", "")
+                
+                parts = [f"  - {name}"]
+                if qty and unit:
+                    parts.append(f"({qty} {unit})")
+                elif qty:
+                    parts.append(f"({qty})")
+                if location:
+                    parts.append(f"[{location}]")
+                if expiry:
+                    parts.append(f"expires {expiry}")
+                lines.append(" ".join(parts))
+            else:
+                lines.append(f"  - {item}")
+    return lines
 
 
 def _summarize_dict(d: dict) -> str:

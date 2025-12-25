@@ -1,9 +1,10 @@
 """
 Alfred V2 - LangGraph Orchestration.
 
-The graph implements: Router → Think → Act Loop → Reply
+The graph implements: Router → Think → Act Loop → Reply → Summarize
 
 Uses generic CRUD tools with subdomain-based schema filtering.
+Maintains conversation memory across turns.
 """
 
 # Import tools module
@@ -19,12 +20,18 @@ from alfred.graph.state import (
     FailAction,
     PlannedStep,
     RequestSchemaAction,
+    RetrieveStepAction,
     RouterOutput,
     StepCompleteAction,
     ThinkOutput,
     ToolCallAction,
 )
-from alfred.graph.workflow import compile_alfred_graph, create_alfred_graph, run_alfred
+from alfred.graph.workflow import (
+    compile_alfred_graph,
+    create_alfred_graph,
+    run_alfred,
+    run_alfred_simple,
+)
 
 __all__ = [
     # State and contracts
@@ -38,6 +45,7 @@ __all__ = [
     "ToolCallAction",
     "StepCompleteAction",
     "RequestSchemaAction",
+    "RetrieveStepAction",
     "AskUserAction",
     "BlockedAction",
     "FailAction",
@@ -45,4 +53,5 @@ __all__ = [
     "create_alfred_graph",
     "compile_alfred_graph",
     "run_alfred",
+    "run_alfred_simple",
 ]

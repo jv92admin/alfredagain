@@ -276,9 +276,19 @@ Read all recipes: `{"tool": "db_read", "params": {"table": "recipes", "filters":
 ```
 This finds recipes matching ANY of the keywords (OR logic).
 
-Create recipe: `{"tool": "db_create", "params": {"table": "recipes", "data": {"name": "Garlic Pasta", "cuisine": "Italian", "difficulty": "easy", "servings": 2, "instructions": ["Step 1", "Step 2"]}}}`
+Create recipe: `{"tool": "db_create", "params": {"table": "recipes", "data": {"name": "Garlic Pasta", "cuisine": "italian", "difficulty": "easy", "servings": 2, "instructions": ["Boil pasta", "Sauté garlic", "Toss together"]}}}`
 
-**Parent-child pattern**: Create recipe first, get its ID, then create each recipe_ingredient with that ID.
+**⚠️ After creating recipe, you MUST create recipe_ingredients!**
+Get the recipe `id` from the response, then:
+```json
+{"tool": "db_create", "params": {"table": "recipe_ingredients", "data": [
+  {"recipe_id": "<recipe-uuid>", "name": "pasta", "quantity": 8, "unit": "oz"},
+  {"recipe_id": "<recipe-uuid>", "name": "garlic", "quantity": 4, "unit": "cloves"},
+  {"recipe_id": "<recipe-uuid>", "name": "olive oil", "quantity": 2, "unit": "tbsp"}
+]}}
+```
+
+Read recipe ingredients: `{"tool": "db_read", "params": {"table": "recipe_ingredients", "filters": [{"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}]}}`
 """,
     "shopping": """## Examples
 
@@ -384,17 +394,22 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | tags | text[] | Yes |
 | source_url | text | Yes |
 
-### recipe_ingredients
+### recipe_ingredients (REQUIRED for each recipe!)
 | Column | Type | Nullable |
 |--------|------|----------|
 | id | uuid | No |
-| recipe_id | uuid | No |
+| recipe_id | uuid | No ← FK to recipes.id |
 | ingredient_id | uuid | Yes |
 | name | text | No |
 | quantity | numeric | Yes |
 | unit | text | Yes |
 | notes | text | Yes |
 | is_optional | boolean | No |
+
+**⚠️ IMPORTANT: recipes + recipe_ingredients are linked!**
+- When CREATING a recipe: First create `recipes` row, get its `id`, then create `recipe_ingredients` rows with that `recipe_id`
+- When READING ingredients: Query `recipe_ingredients` WHERE `recipe_id` = the recipe's id
+- A recipe without `recipe_ingredients` rows is incomplete!
 
 ### ingredients
 | Column | Type | Nullable |

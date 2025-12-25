@@ -6,11 +6,13 @@ Nodes:
 - think: Domain-specific planning, generate steps
 - act: Execute steps via tools
 - reply: Synthesize final response
+- summarize: Maintain conversation memory after each turn
 """
 
 from alfred.graph.nodes.act import act_node, should_continue_act
 from alfred.graph.nodes.reply import reply_node
 from alfred.graph.nodes.router import router_node
+from alfred.graph.nodes.summarize import summarize_node
 from alfred.graph.nodes.think import think_node
 
 __all__ = [
@@ -18,5 +20,6 @@ __all__ = [
     "think_node",
     "act_node",
     "reply_node",
+    "summarize_node",
     "should_continue_act",
 ]

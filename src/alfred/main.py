@@ -30,49 +30,100 @@ def chat(
     """Start an interactive chat session with Alfred."""
     from alfred.config import settings
     from alfred.graph import run_alfred
+    from alfred.memory.conversation import initialize_conversation
     from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
 
     if log_prompts:
         enable_prompt_logging(True)
-        console.print("[dim]📝 Prompt logging enabled. Check prompt_logs/ after the session.[/dim]")
+        console.print("[dim]Prompt logging enabled. Check prompt_logs/ after the session.[/dim]")
 
     console.print(
         Panel.fit(
             "[bold green]Alfred V2[/bold green]\n"
             "Your intelligent assistant for kitchen, fitness, and wine.\n\n"
-            "[dim]Type 'exit' or 'quit' to end the session.[/dim]",
+            "[dim]Type 'exit' or 'quit' to end the session.[/dim]\n"
+            "[dim]Type 'context' to see current conversation state.[/dim]",
             title="Welcome",
             border_style="green",
         )
     )
 
     user_id = settings.dev_user_id
+    
+    # Initialize conversation context (persists across turns)
+    conversation = initialize_conversation()
+    turn_count = 0
 
     while True:
         try:
             user_input = console.input("\n[bold blue]You:[/bold blue] ").strip()
 
             if user_input.lower() in ("exit", "quit", "q"):
-                console.print("\n[dim]Goodbye! 👋[/dim]")
+                console.print("\n[dim]Goodbye![/dim]")
                 break
 
             if not user_input:
                 continue
+            
+            # Debug command to show conversation state
+            if user_input.lower() == "context":
+                _show_conversation_context(conversation, turn_count)
+                continue
 
-            # Run through the graph
+            # Run through the graph with conversation context
             with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
-                response = asyncio.run(run_alfred(
+                response, conversation = asyncio.run(run_alfred(
                     user_message=user_input,
                     user_id=user_id,
+                    conversation=conversation,
                 ))
 
+            turn_count += 1
             console.print(f"\n[bold green]Alfred:[/bold green] {response}")
 
         except KeyboardInterrupt:
-            console.print("\n\n[dim]Session interrupted. Goodbye! 👋[/dim]")
+            console.print("\n\n[dim]Session interrupted. Goodbye![/dim]")
             break
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
+            import traceback
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+
+
+def _show_conversation_context(conversation: dict, turn_count: int) -> None:
+    """Show current conversation context for debugging."""
+    console.print("\n[bold yellow]Conversation Context[/bold yellow]")
+    console.print(f"[dim]Turns: {turn_count}[/dim]")
+    
+    # Engagement summary
+    engagement = conversation.get("engagement_summary", "")
+    if engagement:
+        console.print(f"\n[bold]Session:[/bold] {engagement}")
+    
+    # Active entities
+    active = conversation.get("active_entities", {})
+    if active:
+        console.print("\n[bold]Active Entities:[/bold]")
+        for entity_type, entity_data in active.items():
+            label = entity_data.get("label", "?")
+            console.print(f"  • {entity_type}: {label}")
+    
+    # Recent turns
+    recent = conversation.get("recent_turns", [])
+    if recent:
+        console.print(f"\n[bold]Recent Turns ({len(recent)}):[/bold]")
+        for turn in recent[-3:]:
+            user = turn.get("user", "")[:50]
+            asst = turn.get("assistant", "")[:50]
+            console.print(f"  [blue]You:[/blue] {user}...")
+            console.print(f"  [green]Alfred:[/green] {asst}...")
+    
+    # History summary
+    history = conversation.get("history_summary", "")
+    if history:
+        console.print(f"\n[bold]History Summary:[/bold] {history[:200]}...")
+    
+    console.print("")
 
 
 @app.command()
@@ -82,7 +133,7 @@ def ask(
 ) -> None:
     """Send a single message to Alfred (useful for testing)."""
     from alfred.config import settings
-    from alfred.graph import run_alfred
+    from alfred.graph import run_alfred_simple
     from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
 
     if log_prompts:
@@ -91,7 +142,7 @@ def ask(
     user_id = settings.dev_user_id
 
     with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
-        response = asyncio.run(run_alfred(
+        response = asyncio.run(run_alfred_simple(
             user_message=message,
             user_id=user_id,
         ))
@@ -101,7 +152,7 @@ def ask(
     if log_prompts:
         log_dir = get_session_log_dir()
         if log_dir:
-            console.print(f"\n[dim]📝 Prompts logged to: {log_dir}[/dim]")
+            console.print(f"\n[dim]Prompts logged to: {log_dir}[/dim]")
 
 
 @app.command()
@@ -113,32 +164,32 @@ def health() -> None:
 
     try:
         settings = get_settings()
-        console.print("✅ Configuration loaded")
+        console.print("[green]OK[/green] Configuration loaded")
         console.print(f"   Environment: {settings.alfred_env}")
         console.print(f"   Log level: {settings.log_level}")
 
         # Check OpenAI
         if settings.openai_api_key.startswith("sk-"):
-            console.print("✅ OpenAI API key configured")
+            console.print("[green]OK[/green] OpenAI API key configured")
         else:
-            console.print("⚠️  OpenAI API key may be invalid")
+            console.print("[yellow]WARN[/yellow] OpenAI API key may be invalid")
 
         # Check Supabase
         if settings.supabase_url.startswith("https://"):
-            console.print("✅ Supabase URL configured")
+            console.print("[green]OK[/green] Supabase URL configured")
         else:
-            console.print("❌ Supabase URL missing or invalid")
+            console.print("[red]FAIL[/red] Supabase URL missing or invalid")
 
         # Check LangSmith
         if settings.langchain_tracing_v2 and settings.langchain_api_key:
-            console.print("✅ LangSmith tracing enabled")
+            console.print("[green]OK[/green] LangSmith tracing enabled")
         else:
-            console.print("ℹ️  LangSmith tracing disabled")
+            console.print("[dim]INFO[/dim] LangSmith tracing disabled")
 
         console.print("\n[green]All checks passed![/green]")
 
     except Exception as e:
-        console.print(f"\n[red]❌ Configuration error: {e}[/red]")
+        console.print(f"\n[red]FAIL Configuration error: {e}[/red]")
         console.print("[dim]Make sure you have a .env file with required variables.[/dim]")
         raise typer.Exit(1)
 
@@ -152,6 +203,30 @@ def version() -> None:
 
 
 @app.command()
+def serve(
+    port: int = typer.Option(8000, "--port", "-p", help="Port to run on"),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload for development"),
+) -> None:
+    """Start the web UI server."""
+    import uvicorn
+    import os
+    
+    # Railway sets PORT env var
+    actual_port = int(os.environ.get("PORT", port))
+    
+    console.print(f"\n[bold green]Alfred Web UI[/bold green]")
+    console.print(f"Starting server on http://localhost:{actual_port}")
+    console.print(f"[dim]Press Ctrl+C to stop[/dim]\n")
+    
+    uvicorn.run(
+        "alfred.web.app:app",
+        host="0.0.0.0",
+        port=actual_port,
+        reload=reload,
+    )
+
+
+@app.command()
 def db() -> None:
     """Check database connection and schema."""
     from alfred.db.client import get_client
@@ -160,7 +235,7 @@ def db() -> None:
 
     try:
         client = get_client()
-        console.print("✅ Connected to Supabase")
+        console.print("[green]OK[/green] Connected to Supabase")
 
         # Check each table
         tables = [
@@ -181,14 +256,14 @@ def db() -> None:
             try:
                 result = client.table(table).select("*", count="exact").limit(0).execute()
                 count = result.count if hasattr(result, "count") else "?"
-                console.print(f"  ✅ {table}: {count} rows")
+                console.print(f"  [green]OK[/green] {table}: {count} rows")
             except Exception as e:
-                console.print(f"  ❌ {table}: {e}")
+                console.print(f"  [red]FAIL[/red] {table}: {e}")
 
         console.print("\n[green]Database check complete![/green]")
 
     except Exception as e:
-        console.print(f"\n[red]❌ Database connection failed: {e}[/red]")
+        console.print(f"\n[red]FAIL Database connection failed: {e}[/red]")
         raise typer.Exit(1)
 
 

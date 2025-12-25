@@ -7,6 +7,8 @@ For each step, it:
 2. Decides which CRUD operation to perform
 3. Executes and caches the result
 
+Now includes full conversation context (last 2 turns, last 2 steps full data).
+
 Each iteration emits a structured action.
 """
 
@@ -16,6 +18,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from alfred.graph.state import (
+    ACT_CONTEXT_THRESHOLD,
+    FULL_DETAIL_STEPS,
     ActAction,
     AlfredState,
     AskUserAction,
@@ -23,10 +27,12 @@ from alfred.graph.state import (
     FailAction,
     PlannedStep,
     RequestSchemaAction,
+    RetrieveStepAction,
     StepCompleteAction,
     ToolCallAction,
 )
 from alfred.llm.client import call_llm, set_current_node
+from alfred.memory.conversation import format_full_context
 from alfred.tools.crud import execute_crud
 from alfred.tools.schema import get_schema_with_fallback
 
@@ -44,7 +50,7 @@ class ActDecision(BaseModel):
     """
 
     action: Literal[
-        "tool_call", "step_complete", "request_schema", "ask_user", "blocked", "fail"
+        "tool_call", "step_complete", "request_schema", "retrieve_step", "ask_user", "blocked", "fail"
     ] = Field(description="The action to take")
 
     # For tool_call
@@ -62,6 +68,11 @@ class ActDecision(BaseModel):
     # For request_schema
     subdomain: str | None = Field(
         default=None, description="Subdomain to request schema for"
+    )
+    
+    # For retrieve_step (fetch older step data)
+    step_index: int | None = Field(
+        default=None, description="Index of the step to retrieve (0-based)"
     )
 
     # For ask_user
@@ -196,11 +207,11 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
                 if len(result) > 5:
                     lines.append(f"  - ... and {len(result) - 5} more")
         elif isinstance(result, dict):
-            lines.append(f"**Step {step_num}**: {json.dumps(result, default=str)[:200]}")
+            lines.append(f"**Step {step_num}**: {json.dumps(result, default=str)}")
         elif isinstance(result, int):
             lines.append(f"**Step {step_num}**: Affected {result} records")
         else:
-            lines.append(f"**Step {step_num}**: {str(result)[:200]}")
+            lines.append(f"**Step {step_num}**: {result}")
         
         lines.append("")
 
@@ -224,8 +235,7 @@ def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls
             if isinstance(result, list):
                 if len(result) == 0:
                     lines.append("**Result: 0 records found.**")
-                    lines.append("→ The items you searched for do NOT exist in this table.")
-                    lines.append("→ This is a valid, complete answer. You now know they don't exist.")
+                    lines.append("→ Empty result. If step goal is READ: this is your answer. If step goal is ADD/CREATE: proceed with db_create.")
                 elif len(result) > 10:
                     lines.append(f"**Result: {len(result)} records found.** First 10:")
                     lines.append("```json")
@@ -309,6 +319,7 @@ async def act_node(state: AlfredState) -> dict:
     This enables multi-tool-call patterns within a single step
     (e.g., create recipe, then create each recipe_ingredient).
 
+    Now includes full conversation context (last 2 turns/steps in full detail).
     Circuit breaker: Max 5 tool calls per step to prevent infinite loops.
 
     Args:
@@ -323,6 +334,7 @@ async def act_node(state: AlfredState) -> dict:
     current_step_tool_results = state.get("current_step_tool_results", [])
     user_id = state.get("user_id", "")
     schema_requests = state.get("schema_requests", 0)
+    conversation = state.get("conversation", {})
     
     # Circuit breaker - force step_complete if too many tool calls
     if len(current_step_tool_results) >= MAX_TOOL_CALLS_PER_STEP:
@@ -368,26 +380,29 @@ async def act_node(state: AlfredState) -> dict:
     tool_calls_made = len(current_step_tool_results)
 
     # Build context sections
+    # Previous step results (last FULL_DETAIL_STEPS in full, older summarized)
     prev_step_section = _format_step_results(step_results, current_step_index)
     this_step_section = _format_current_step_results(current_step_tool_results, tool_calls_made)
+    
+    # Conversation context (full for Act - last 2 turns, entities, etc.)
+    conversation_section = format_full_context(
+        conversation, step_results, current_step_index, ACT_CONTEXT_THRESHOLD
+    )
 
     # Common context block (reused across all step types)
+    # NOTE: We intentionally DON'T show "Original Goal" here.
+    # The step description is the ONLY scope for this turn.
+    # Showing the full goal causes Act to optimize for the whole goal instead of the step.
     context_block = f"""---
 
 ## Context
 
 ### Conversation History
-*No conversation history yet (single-turn request).*
+{conversation_section}
 
 {prev_step_section}
 
 {this_step_section}
-
-### Original Goal
-{think_output.goal}
-
-### User Message
-{state.get("user_message", "")}
 
 ---"""
 
@@ -432,17 +447,18 @@ This is a **GENERATION** step. Create content based on context.
 - Call `step_complete` with your generated content in `data`"""
 
     else:
-        # CRUD step - include schema
+        # CRUD step - include schema AND conversation context
         subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
         
-        # Simple, clear prompt structure
+        # Include conversation context for CRUD steps too
+        # (critical for "save that recipe" type requests where generated content is in prior turns)
         user_prompt = f"""## 1. Your Task
 
 **Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
 
 User said: "{state.get("user_message", "")}"
 
----
+{context_block}
 
 {this_step_section}## 2. Schema ({current_step.subdomain})
 
@@ -475,6 +491,43 @@ User said: "{state.get("user_message", "")}"
         return {
             "schema_requests": schema_requests + 1,
             "current_subdomain": decision.subdomain,
+        }
+
+    # Handle retrieve_step - fetch older step data and include in next prompt
+    if decision.action == "retrieve_step" and decision.step_index is not None:
+        requested_idx = decision.step_index
+        
+        # Validate step index
+        if requested_idx < 0 or requested_idx >= current_step_index:
+            return {
+                "pending_action": BlockedAction(
+                    reason_code="PLAN_INVALID",
+                    details=f"Invalid step index {requested_idx}. Only steps 0-{current_step_index - 1} are available.",
+                    suggested_next="ask_user",
+                ),
+            }
+        
+        # Retrieve the step data
+        retrieved_data = step_results.get(requested_idx)
+        
+        if retrieved_data is None:
+            return {
+                "pending_action": BlockedAction(
+                    reason_code="PLAN_INVALID",
+                    details=f"Step {requested_idx} has no stored data.",
+                    suggested_next="ask_user",
+                ),
+            }
+        
+        # Add retrieved data to current step's tool results so it appears in context
+        # This acts like a "virtual tool call" that returns the old step data
+        new_tool_results = current_step_tool_results + [
+            (f"retrieve_step_{requested_idx}", retrieved_data)
+        ]
+        
+        return {
+            "pending_action": RetrieveStepAction(step_index=requested_idx),
+            "current_step_tool_results": new_tool_results,
         }
 
     # Handle tool_call - execute but DON'T advance step
@@ -577,6 +630,10 @@ def should_continue_act(state: AlfredState) -> str:
 
     if isinstance(pending_action, RequestSchemaAction):
         # Loop back to try with new schema
+        return "continue"
+
+    if isinstance(pending_action, RetrieveStepAction):
+        # Retrieved older step data - loop back with data in context
         return "continue"
 
     if isinstance(pending_action, AskUserAction):

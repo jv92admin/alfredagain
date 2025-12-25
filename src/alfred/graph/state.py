@@ -4,9 +4,25 @@ Alfred V2 - Graph State Definition.
 The AlfredState is the shared state passed through all nodes.
 """
 
+from datetime import datetime
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+# =============================================================================
+# Context Token Thresholds
+# =============================================================================
+
+# Router and Think get condensed context (fast routing/planning)
+ROUTER_CONTEXT_THRESHOLD = 8_000  # tokens
+
+# Act gets full recent context (needs details for execution)
+ACT_CONTEXT_THRESHOLD = 25_000  # tokens (we have 400K window)
+
+# How many turns/steps to keep in full detail
+FULL_DETAIL_TURNS = 3  # Last 3 conversation turns
+FULL_DETAIL_STEPS = 3  # Last 3 step results (important for multi-step flows)
 
 
 # =============================================================================
@@ -28,6 +44,7 @@ class EntityRef(BaseModel):
     id: str  # UUID
     label: str  # Human-readable for LLM context
     source: str  # "db_lookup", "user_input", "generated"
+    step_index: int | None = None  # Which step this came from (for retrieval)
 
 
 # =============================================================================
@@ -96,6 +113,13 @@ class RequestSchemaAction(BaseModel):
     subdomain: str  # Request schema for this subdomain
 
 
+class RetrieveStepAction(BaseModel):
+    """Request to retrieve full data from an older step."""
+
+    action: Literal["retrieve_step"] = "retrieve_step"
+    step_index: int  # 0-based index of step to retrieve
+
+
 class AskUserAction(BaseModel):
     """Request clarification from the user."""
 
@@ -130,6 +154,7 @@ ActAction = (
     ToolCallAction
     | StepCompleteAction
     | RequestSchemaAction
+    | RetrieveStepAction
     | AskUserAction
     | BlockedAction
     | FailAction
@@ -137,24 +162,63 @@ ActAction = (
 
 
 # =============================================================================
-# Conversation Context (for Phase 5)
+# Conversation Context (Phase 5)
 # =============================================================================
 
 
+class ConversationTurn(BaseModel):
+    """A single turn in the conversation."""
+    
+    user: str  # User's message
+    assistant: str  # Alfred's response
+    timestamp: str  # ISO format
+    routing: dict[str, Any] | None = None  # Router decision for this turn
+    entities_mentioned: list[str] = Field(default_factory=list)  # Entity IDs touched
+
+
+class StepSummary(BaseModel):
+    """Compressed summary of an older step (beyond FULL_DETAIL_STEPS)."""
+    
+    step_index: int
+    description: str  # From the plan
+    subdomain: str
+    outcome: str  # One-line summary
+    entity_ids: list[str] = Field(default_factory=list)  # IDs for retrieval
+    record_count: int = 0  # How many records were involved
+
+
 class ConversationContext(TypedDict, total=False):
-    """Conversation history and context tracking."""
+    """
+    Conversation history and context tracking.
+    
+    Design:
+    - Last FULL_DETAIL_TURNS turns: full text
+    - Older turns: compressed to history_summary
+    - Last FULL_DETAIL_STEPS step results: full data in step_results
+    - Older steps: compressed to step_summaries (Act can retrieve via tool)
+    - active_entities: EntityRefs for "that recipe" resolution
+    """
 
     # High-level summary of current engagement
     engagement_summary: str  # "Helping with meal planning, saved 2 recipes..."
 
-    # Last 2-3 exchanges - full text
-    recent_turns: list[dict]  # [{user: str, assistant: str, timestamp: str}]
+    # Last N exchanges - full text (N = FULL_DETAIL_TURNS)
+    recent_turns: list[dict]  # ConversationTurn as dict
 
     # Older exchanges - compressed
     history_summary: str  # "Earlier discussed pasta, added milk to pantry..."
+    
+    # Older step summaries (for reference, Act can retrieve full data)
+    step_summaries: list[dict]  # StepSummary as dict
 
     # Tracked entities for "that recipe" resolution
-    active_entities: dict[str, EntityRef]
+    # Key is entity type ("recipe", "inventory_item", etc.)
+    # Value is the most recent entity of that type
+    active_entities: dict[str, dict]  # EntityRef as dict
+    
+    # All entities from this conversation (for retrieval)
+    # Key is entity ID, value is EntityRef
+    all_entities: dict[str, dict]  # EntityRef as dict
 
 
 # =============================================================================

@@ -4,9 +4,9 @@ Alfred V2 - LLM Client.
 Wraps OpenAI with Instructor for guaranteed structured outputs.
 All LLM calls go through here for consistency and observability.
 
-Supports GPT-5 series with:
-- reasoning_effort: Controls thinking depth (minimal, low, medium, high)
-- verbosity: Controls output length (low, medium, high)
+Model support:
+- GPT-4.1-mini: Fast, non-reasoning (current default)
+- GPT-5 series: Reasoning models with reasoning_effort/verbosity (future)
 """
 
 from typing import TypeVar
@@ -92,7 +92,7 @@ async def call_llm(
         config["verbosity"] = verbosity_override
 
     # Extract model name for the API call
-    model = config.pop("model", "gpt-5-mini")
+    model = config.pop("model", "gpt-4.1-mini")
 
     # Build messages
     messages = [
@@ -113,11 +113,9 @@ async def call_llm(
     # They use reasoning_effort instead for controlling thinking depth
     # Only add temperature for non-GPT-5 models
     if not model.startswith("gpt-5"):
-        reasoning_effort = config.get("reasoning_effort", "medium")
-        if reasoning_effort in ("minimal", "low"):
-            api_kwargs["temperature"] = 0.3
-        elif reasoning_effort == "medium":
-            api_kwargs["temperature"] = 0.7
+        # Use explicit temperature from config, or default to 0.5
+        temperature = config.get("temperature", 0.5)
+        api_kwargs["temperature"] = temperature
 
     # Note: The actual reasoning and verbosity params depend on the OpenAI API version
     # Instructor may not support them directly yet, so we log them for now

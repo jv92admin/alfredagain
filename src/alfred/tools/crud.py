@@ -27,8 +27,8 @@ class FilterClause(BaseModel):
     """A single filter condition for queries."""
 
     field: str
-    op: Literal["=", ">", "<", ">=", "<=", "in", "ilike", "is_null"]
-    value: Any
+    op: Literal["=", ">", "<", ">=", "<=", "in", "ilike", "is_null", "contains"]
+    value: Any  # For 'contains' on arrays: value is a single string to check
 
 
 class DbReadParams(BaseModel):
@@ -78,18 +78,21 @@ class DbDeleteParams(BaseModel):
 
 # =============================================================================
 # Tables that are user-scoped (auto-filter by user_id)
+# Only parent tables with user_id column - child tables are filtered via FK
 # =============================================================================
 
 USER_OWNED_TABLES = {
     "inventory",
     "recipes",
-    "recipe_ingredients",
     "meal_plans",
-    "meal_plan_items",
-    "shopping_lists",
-    "shopping_list_items",
+    "shopping_list",  # Note: singular, not plural
     "user_preferences",
 }
+
+# Child tables (no user_id, linked via parent FK) - no auto user_id filter
+# recipe_ingredients → recipe_id
+# meal_plan_items → meal_plan_id  
+# shopping_list_items → shopping_list_id (if exists)
 
 
 # =============================================================================
@@ -116,6 +119,10 @@ def apply_filter(query: Any, f: FilterClause) -> Any:
             return query.ilike(f.field, f.value)
         case "is_null":
             return query.is_(f.field, "null")
+        case "contains":
+            # For array columns: check if array contains value
+            # Uses PostgreSQL @> operator via Supabase .contains()
+            return query.contains(f.field, [f.value] if isinstance(f.value, str) else f.value)
     return query
 
 
