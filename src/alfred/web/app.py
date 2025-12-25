@@ -153,8 +153,8 @@ async def chat(req: ChatRequest, request: Request, session: dict = Depends(requi
     from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
     
     try:
-        # Always enable prompt logging for now (debugging phase)
-        enable_prompt_logging(True)
+        # Enable prompt logging based on user preference
+        enable_prompt_logging(req.log_prompts)
         
         # Get conversation from session
         conversation = session.get("conversation") or initialize_conversation()
@@ -755,19 +755,32 @@ def get_frontend_html() -> str:
             align-items: center;
             gap: 12px;
             margin-bottom: 10px;
-            font-size: 0.8rem;
+            font-size: 0.85rem;
+            padding: 8px 0;
         }
         
         .checkbox-label {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             color: var(--text-muted);
             cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+        }
+        
+        .checkbox-label:hover {
+            border-color: var(--accent);
+            color: var(--text);
         }
         
         .checkbox-label input {
             accent-color: var(--accent);
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
         }
         
         .log-dir {
@@ -863,7 +876,7 @@ def get_frontend_html() -> str:
             <div class="chat-input-container">
                 <div class="chat-options">
                     <label class="checkbox-label">
-                        <input type="checkbox" id="logPrompts"> Debug mode
+                        <input type="checkbox" id="logPrompts" checked> 📝 Log prompts
                     </label>
                     <span id="logDir" class="log-dir"></span>
                 </div>

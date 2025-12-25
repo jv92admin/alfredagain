@@ -16,6 +16,29 @@ This document tracks UX observations from testing. These are **not bugs** - the 
 
 ## Open Issues
 
+### UX-010: Recipe ingredients copied literally to shopping list
+**Severity:** moderate  
+**Date:** 2024-12-25  
+**Trigger:** Adding recipe ingredients to shopping list
+
+**Observed:**
+Recipe ingredient "hard-boiled eggs (4 pieces)" was added to shopping list as "hard-boiled eggs" instead of just "eggs".
+
+**Expected:**
+Shopping list should have generic ingredient names like "eggs" (quantity: 4), not preparation states like "hard-boiled eggs".
+
+**Root Cause:**  
+When generating recipes, Act stores full descriptive ingredient names in `recipe_ingredients.name`. When adding to shopping list, it copies these names verbatim.
+
+**Proposed Fix:**  
+Option A: Normalize ingredient names when adding to shopping list (strip preparation adjectives)
+Option B: Add guidance in Think/Act prompts to use base ingredient names for shopping lists
+Option C: Create a lookup against `ingredients` table to normalize names
+
+**Status:** Open
+
+---
+
 ### UX-001: Inventory readouts missing quantities (Partially Fixed)
 **Severity:** moderate  
 **Date:** 2024-12-24  
@@ -149,6 +172,107 @@ await log_schema_drift_warnings()  # Call on app startup
 2. Added semantic labels: "✓ Created 6 records", "Result: 0 records found"
 3. Updated `_format_step_results()` to handle tuple format from circuit breaker
 4. LLM now sees factual tool outputs, not its own potentially-wrong summaries
+
+---
+
+### UX-014: Conversation context bloat from recipe content ✅ FIXED
+**Severity:** moderate (context explosion, potential hallucination trigger)  
+**Date:** 2024-12-25 | **Fixed:** 2024-12-25
+
+**Trigger:** Multi-turn session with recipe generation
+
+**Observed:**
+Conversation context included full recipe text (ingredients + instructions) repeated in every Act call.
+- 2 recipes = ~80 lines of content per prompt
+- Same content repeated 10+ times in a single conversation turn
+
+**Root Cause:**  
+Assistant messages were included verbatim in conversation context, even when they contained long generated content.
+
+**Fix Applied (v2 - LLM-based):**
+1. Added `_summarize_assistant_response()` in `summarize.py` - uses LLM for smart summarization
+2. Added `assistant_summary` field to `ConversationTurn` model
+3. Summarize node generates summary at storage time (after Reply)
+4. Context formatting uses `assistant_summary` when available
+5. Fallback to regex-based detection for legacy turns without summary
+
+**LLM Prompt:**
+```
+Summarize what was accomplished in ONE brief sentence.
+Focus on: what action was taken, what was created/found/updated.
+Do NOT include full details like ingredient lists or instructions.
+Example: "Created 2 recipes: Butter Chicken and Lemon Fish."
+```
+
+**Principle:** Conversation history conveys INTENT. Tool/step results are source of truth for DATA.
+
+---
+
+### UX-013: LLM hallucination loop in JSON generation ✅ MITIGATED
+**Severity:** critical (complete failure)  
+**Date:** 2024-12-25 | **Fixed:** 2024-12-25
+
+**Trigger:** "Go through all recipes and update shopping list" (4 recipes with many ingredients)
+
+**Observed:**
+Act generated catastrophically malformed JSON with degenerate repetition:
+```json
+"filters": [
+  {"field": "recipe_id", "op": "in", "value": [...]},
+  "],",      // random string
+  "limit", 1000, "columns", [...],  // repeated 30+ times
+]
+```
+Pydantic threw 115 validation errors.
+
+**Root Cause:**  
+LLM got into a degenerate loop generating invalid JSON. This is a known failure mode for LLMs. Likely triggered by very long context with repeated recipe content.
+
+**Fix Applied:**
+1. Added `_validate_tool_params()` function in `act.py` to catch malformed params before Pydantic
+2. Pre-validates that filters/or_filters are lists of dicts, data is correct type
+3. Returns clearer error message indicating "LLM hallucination"
+4. **Also:** Reduced context bloat (UX-014) which may have contributed
+
+**Future:** Consider retry logic with simpler prompt on hallucination detection.
+
+---
+
+### UX-012: db_read results truncated to 10 items ✅ FIXED
+**Severity:** major (data loss)  
+**Date:** 2024-12-25 | **Fixed:** 2024-12-25
+
+**Trigger:** "What about teaspoon and tablespoon stuff?" (shopping list had 15 items)
+
+**Observed:**
+Alfred said "none were listed as separate entries" for teaspoon/tablespoon items, but honey (1 tsp) and lemon juice (1 tbsp) WERE on the list as items 11-12.
+
+**Root Cause:**  
+`_format_current_step_results()` in `act.py` truncated db_read results to "First 10" when list size > 10. Items 11-15 were invisible to the LLM.
+
+**Fix Applied:**
+Increased truncation threshold from 10 to 50 records. For most CRUD operations (shopping lists, pantry items, recipes), users won't have 50+ items, so the LLM will see complete data.
+
+---
+
+### UX-011: db_update passed array instead of dict ✅ FIXED
+**Severity:** major (tool call failure)  
+**Date:** 2024-12-25 | **Fixed:** 2024-12-25
+
+**Trigger:** "Adjust quantities for honey and lemon juice on shopping list"
+
+**Observed:**
+Act node passed `data: [{"quantity": 0.5}]` (array) when `db_update` requires `data: {"quantity": 0.5}` (dict).
+Pydantic validation failed: "Input should be a valid dictionary"
+
+**Root Cause:**  
+Act prompt showed `db_create` with array format but didn't have an explicit `db_update` example. LLM confused the two formats.
+
+**Fix Applied:**
+1. Added "Data Format" section to Act prompt with explicit warning:
+   - `db_create`: dict OR array
+   - `db_update`: dict ONLY (applied to ALL matches)
+2. Added `db_update` batch example showing the correct format
 
 ---
 

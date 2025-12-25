@@ -42,10 +42,20 @@ class TurnSummary(BaseModel):
     summary: str  # One sentence summary
 
 
+class AssistantResponseSummary(BaseModel):
+    """LLM-generated summary of an assistant response."""
+    
+    summary: str  # Condensed version of what was accomplished
+
+
 class EngagementSummary(BaseModel):
     """LLM-generated engagement summary."""
     
     summary: str  # What we're helping with overall
+
+
+# Threshold for summarizing assistant responses (characters)
+SUMMARIZE_THRESHOLD = 400  # ~100 tokens
 
 
 # =============================================================================
@@ -83,7 +93,7 @@ async def summarize_node(state: AlfredState) -> dict:
     if not final_response:
         return {}
     
-    # 1. Create current turn
+    # 1. Create current turn (with LLM-generated summary for long responses)
     routing_info = None
     if router_output:
         routing_info = {
@@ -92,9 +102,13 @@ async def summarize_node(state: AlfredState) -> dict:
             "complexity": router_output.complexity,
         }
     
+    # Generate summary for long responses (used in conversation context)
+    assistant_summary = await _summarize_assistant_response(final_response)
+    
     current_turn = create_conversation_turn(
         user_message=user_message,
         assistant_response=final_response,
+        assistant_summary=assistant_summary,  # For context formatting
         routing=routing_info,
     )
     
@@ -182,6 +196,38 @@ def _update_conversation(
                     updated["step_summaries"].append(summary.model_dump())
     
     return updated
+
+
+async def _summarize_assistant_response(response: str) -> str:
+    """
+    LLM-summarize a long assistant response for conversation context.
+    
+    The full response is kept in the turn for Reply to use.
+    The summary is used in conversation context for Act/Think.
+    
+    Principle: Conversation history conveys INTENT, not DATA.
+    Tool results are the source of truth for specifics.
+    """
+    if len(response) < SUMMARIZE_THRESHOLD:
+        return response  # Short enough, keep as-is
+    
+    try:
+        result = await call_llm(
+            response_model=AssistantResponseSummary,
+            system_prompt="""Summarize what was accomplished in ONE brief sentence.
+Focus on: what action was taken, what was created/found/updated.
+Do NOT include full details like ingredient lists or instructions.
+Example: "Created 2 recipes: Butter Chicken and Lemon Fish."
+Example: "Found 5 items in pantry including milk and eggs."
+Example: "Updated shopping list with 3 new items."
+""",
+            user_prompt=f"Summarize this response:\n\n{response[:1000]}",
+            complexity="low",
+        )
+        return result.summary
+    except Exception:
+        # Fallback: truncate with note
+        return response[:300] + "... [see step results for details]"
 
 
 async def _compress_old_turns(

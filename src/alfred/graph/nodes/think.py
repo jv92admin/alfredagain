@@ -56,27 +56,30 @@ async def think_node(state: AlfredState) -> dict:
     # Format conversation context (condensed for Think)
     context_section = format_condensed_context(conversation)
     
-    # Build the user prompt with goal and context
-    user_prompt = f"""## Goal
-{router_output.goal}
+    # Build the user prompt following: Task → Context → Instructions
+    user_prompt = f"""## Task
 
-## Agent
-{router_output.agent}
+**Goal**: {router_output.goal}
 
-## User Request
-{state["user_message"]}
+**User said**: "{state["user_message"]}"
 
-## Conversation Context
+**Agent**: {router_output.agent}
+
+---
+
+## Context
+
 {context_section}
 
 ---
 
-Create an execution plan for this goal. For each step:
-1. Write a clear description of what needs to be done
-2. Assign the appropriate subdomain (inventory, recipes, shopping, meal_plan, preferences)
-3. Set the complexity (low, medium, high)
+## Instructions
 
-The Act node will receive the table schema for each step's subdomain and execute CRUD operations."""
+Create an execution plan. For each step, specify:
+- `description`: What this step accomplishes
+- `step_type`: crud, analyze, or generate
+- `subdomain`: inventory, recipes, shopping, meal_plan, or preferences
+- `complexity`: low, medium, or high"""
 
     # Call LLM for planning
     result = await call_llm(

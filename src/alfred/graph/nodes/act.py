@@ -38,6 +38,81 @@ from alfred.tools.schema import get_schema_with_fallback
 
 
 # =============================================================================
+# Param Validation (catch LLM hallucinations before Pydantic)
+# =============================================================================
+
+
+def _fix_and_validate_tool_params(tool: str, params: dict) -> tuple[dict, str | None]:
+    """
+    Fix common LLM hallucinations and validate tool params.
+    
+    Returns (fixed_params, error_message).
+    - If fixable: returns (fixed_params, None)
+    - If unfixable: returns (original_params, error_message)
+    
+    Common patterns fixed:
+    - "limit" or "columns" strings accidentally put in filters array
+    """
+    if not isinstance(params, dict):
+        return params, f"params must be a dict, got {type(params).__name__}"
+    
+    # Make a copy to fix
+    fixed = dict(params)
+    
+    # Fix filters array - remove misplaced strings like "limit", "columns"
+    if "filters" in fixed:
+        filters = fixed["filters"]
+        if not isinstance(filters, list):
+            return params, f"filters must be a list, got {type(filters).__name__}"
+        
+        # Extract valid filter dicts, log what we removed
+        valid_filters = []
+        removed_items = []
+        for i, f in enumerate(filters):
+            if isinstance(f, dict) and "field" in f and "op" in f:
+                valid_filters.append(f)
+            else:
+                removed_items.append(repr(f)[:30])
+        
+        if removed_items:
+            # Auto-fix by keeping only valid filters
+            fixed["filters"] = valid_filters
+            # Log what we fixed (but don't fail)
+            import logging
+            logging.getLogger("alfred.act").warning(
+                f"Auto-fixed malformed filters: removed {removed_items}"
+            )
+    
+    # Fix or_filters similarly
+    if "or_filters" in fixed:
+        or_filters = fixed["or_filters"]
+        if not isinstance(or_filters, list):
+            return params, f"or_filters must be a list, got {type(or_filters).__name__}"
+        
+        valid_or_filters = []
+        for f in or_filters:
+            if isinstance(f, dict) and "field" in f and "op" in f:
+                valid_or_filters.append(f)
+        fixed["or_filters"] = valid_or_filters
+    
+    # Validate data for create/update (can't auto-fix these)
+    if tool in ("db_create", "db_update") and "data" in fixed:
+        data = fixed["data"]
+        if tool == "db_update":
+            if not isinstance(data, dict):
+                return params, f"db_update data must be a dict, got {type(data).__name__}"
+        elif tool == "db_create":
+            if not isinstance(data, (dict, list)):
+                return params, f"db_create data must be dict or list, got {type(data).__name__}"
+            if isinstance(data, list):
+                for i, item in enumerate(data):
+                    if not isinstance(item, dict):
+                        return params, f"db_create data[{i}] must be a dict, got {type(item).__name__}"
+    
+    return fixed, None
+
+
+# =============================================================================
 # Act Decision Model
 # =============================================================================
 
@@ -218,6 +293,31 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
     return "\n".join(lines)
 
 
+def _extract_key_fields(records: list[dict]) -> str:
+    """Extract key identifiers from db_read results for quick reference."""
+    if not records:
+        return ""
+    
+    # Try to find id and name fields
+    first = records[0]
+    has_id = "id" in first
+    has_name = "name" in first
+    
+    if not has_id and not has_name:
+        return ""
+    
+    lines = ["**Quick Reference (IDs for next query):**"]
+    for r in records:
+        parts = []
+        if has_id:
+            parts.append(f"`{r.get('id')}`")
+        if has_name:
+            parts.append(r.get('name', ''))
+        lines.append(f"- {' — '.join(parts)}")
+    
+    return "\n".join(lines)
+
+
 def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls_made: int) -> str:
     """Format tool results from current step - show ACTUAL data, not summaries."""
     import json
@@ -236,16 +336,34 @@ def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls
                 if len(result) == 0:
                     lines.append("**Result: 0 records found.**")
                     lines.append("→ Empty result. If step goal is READ: this is your answer. If step goal is ADD/CREATE: proceed with db_create.")
-                elif len(result) > 10:
-                    lines.append(f"**Result: {len(result)} records found.** First 10:")
+                elif len(result) > 50:
+                    # Only truncate very large results
+                    lines.append(f"**Result: {len(result)} records found.** First 50:")
+                    # Add quick reference for IDs/names
+                    quick_ref = _extract_key_fields(result[:50])
+                    if quick_ref:
+                        lines.append(quick_ref)
+                        lines.append("")
+                    lines.append("<details><summary>Full JSON</summary>")
+                    lines.append("")
                     lines.append("```json")
-                    lines.append(json.dumps(result[:10], indent=2, default=str))
+                    lines.append(json.dumps(result[:50], indent=2, default=str))
                     lines.append("```")
+                    lines.append("</details>")
                 else:
+                    # Show all records for reasonable sizes (up to 50)
                     lines.append(f"**Result: {len(result)} records found:**")
+                    # Add quick reference for IDs/names FIRST
+                    quick_ref = _extract_key_fields(result)
+                    if quick_ref:
+                        lines.append(quick_ref)
+                        lines.append("")
+                    lines.append("<details><summary>Full JSON</summary>")
+                    lines.append("")
                     lines.append("```json")
                     lines.append(json.dumps(result, indent=2, default=str))
                     lines.append("```")
+                    lines.append("</details>")
             else:
                 lines.append(f"Result: `{result}`")
         elif tool_name == "db_create":
@@ -292,11 +410,7 @@ def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls
         
         lines.append("")
     
-    # Simple decision prompt
-    lines.append("")
-    lines.append("---")
-    lines.append("**Decision:** Is the step goal complete? → `step_complete` | Need more? → next tool call")
-    lines.append("")
+    # NOTE: Decision prompt moved to END of user prompt (not buried here in section 2)
     
     return "\n".join(lines)
 
@@ -407,64 +521,140 @@ async def act_node(state: AlfredState) -> dict:
 ---"""
 
     # Build prompt based on step type
+    # Unified prompt structure for all step types:
+    # 1. Task (orientation: step #, description, type)
+    # 2. This Step (current state: loop status, tool results)
+    # 3. Resources (toolkit: schema for CRUD, data for analyze/generate)
+    # 4. Context (background: previous steps, conversation)
+    # 5. Instructions (what to do next)
+    
     if step_type == "analyze":
-        user_prompt = f"""## Current Step
+        user_prompt = f"""## STATUS
+| Step | {current_step_index + 1} of {len(steps)} |
+| Goal | {current_step.description} |
+| Type | analyze (no db calls) |
 
-**Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
-- Type: **analyze**
-- Complexity: {current_step.complexity}
+---
 
-## Loop Status
-Tool calls this step: {tool_calls_made} of max {MAX_TOOL_CALLS_PER_STEP}
-
-{context_block}
-
-## Your Task
-
-This is an **ANALYSIS** step. You have data from previous steps.
-- Compare, filter, identify patterns, or make decisions
-- NO database operations — just reason over the data
-- Call `step_complete` with your analysis in `result_summary` and structured findings in `data`"""
-
-    elif step_type == "generate":
-        user_prompt = f"""## Current Step
-
-**Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
-- Type: **generate**
-- Subdomain: {current_step.subdomain}
-- Complexity: {current_step.complexity}
-
-## Loop Status
-Tool calls this step: {tool_calls_made} of max {MAX_TOOL_CALLS_PER_STEP}
-
-{context_block}
-
-## Your Task
-
-This is a **GENERATION** step. Create content based on context.
-- Generate recipe, plan, summary, meal idea, etc.
-- NO database operations — just create content
-- Call `step_complete` with your generated content in `data`"""
-
-    else:
-        # CRUD step - include schema AND conversation context
-        subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
-        
-        # Include conversation context for CRUD steps too
-        # (critical for "save that recipe" type requests where generated content is in prior turns)
-        user_prompt = f"""## 1. Your Task
-
-**Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
+## 1. Task
 
 User said: "{state.get("user_message", "")}"
 
-{context_block}
+Your job this step: **{current_step.description}**
 
-{this_step_section}## 2. Schema ({current_step.subdomain})
+---
+
+## 2. Data Available
+
+{prev_step_section if prev_step_section else "*No previous step data.*"}
+
+---
+
+## 3. Context
+
+{conversation_section if conversation_section else "*No additional context.*"}
+
+---
+
+## DECISION
+
+Analyze the data above and complete the step:
+`{{"action": "step_complete", "result_summary": "Analysis: ...", "data": {{"key": "value"}}}}`"""
+
+    elif step_type == "generate":
+        user_prompt = f"""## STATUS
+| Step | {current_step_index + 1} of {len(steps)} |
+| Goal | {current_step.description} |
+| Type | generate (create content, no db calls) |
+
+---
+
+## 1. Task
+
+User said: "{state.get("user_message", "")}"
+
+Your job this step: **{current_step.description}**
+
+---
+
+## 2. Data Available
+
+{prev_step_section if prev_step_section else "*No previous step data.*"}
+
+---
+
+## 3. Context
+
+{conversation_section if conversation_section else "*No additional context.*"}
+
+---
+
+## DECISION
+
+Generate the requested content and complete the step:
+`{{"action": "step_complete", "result_summary": "Generated: ...", "data": {{"your_content": "here"}}}}`"""
+
+    else:
+        # CRUD step - needs schema as primary resource
+        subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
+        
+        # Build a quick status summary for the last tool call
+        last_tool_summary = ""
+        if current_step_tool_results:
+            last_tool, last_result = current_step_tool_results[-1]
+            if isinstance(last_result, list):
+                last_tool_summary = f" → Last: `{last_tool}` returned {len(last_result)} records"
+            elif isinstance(last_result, dict):
+                last_tool_summary = f" → Last: `{last_tool}` returned 1 record"
+            else:
+                last_tool_summary = f" → Last: `{last_tool}` completed"
+        
+        user_prompt = f"""## STATUS
+| Step | {current_step_index + 1} of {len(steps)} |
+| Goal | {current_step.description} |
+| Type | crud |
+| Progress | {tool_calls_made} tool calls{last_tool_summary} |
+
+---
+
+## 1. Task
+
+User said: "{state.get("user_message", "")}"
+
+Your job this step: **{current_step.description}**
+
+---
+
+## 2. Tool Results This Step
+
+{this_step_section if this_step_section else "*No tool calls yet — make your first db_ call.*"}
+
+---
+
+## 3. Schema ({current_step.subdomain})
 
 {subdomain_schema}
 
-{prev_step_section}"""
+---
+
+## 4. Previous Steps
+
+{prev_step_section if prev_step_section else "*No previous steps.*"}
+
+---
+
+## 5. Context
+
+{conversation_section if conversation_section else "*No additional context.*"}
+
+---
+
+## DECISION
+
+What's next?
+- Step done? → `{{"action": "step_complete", "result_summary": "...", "data": {{...}}}}`
+- Need data? → `{{"action": "tool_call", "tool": "db_read", "params": {{"table": "...", "filters": [...], "limit": N}}}}`
+- Need to create? → `{{"action": "tool_call", "tool": "db_create", "params": {{"table": "...", "data": {{...}}}}}}`"""
 
     # Call LLM for decision (step_results are already in the prompt)
     decision = await call_llm(
@@ -533,11 +723,22 @@ User said: "{state.get("user_message", "")}"
     # Handle tool_call - execute but DON'T advance step
     # LLM must explicitly call step_complete to advance
     if decision.action == "tool_call" and decision.tool and decision.params:
+        # Fix common LLM hallucinations and validate params
+        fixed_params, validation_error = _fix_and_validate_tool_params(decision.tool, decision.params)
+        if validation_error:
+            return {
+                "pending_action": BlockedAction(
+                    reason_code="TOOL_FAILURE",
+                    details=f"Invalid tool params (unfixable): {validation_error}",
+                    suggested_next="replan",
+                ),
+            }
+        
         try:
-            # Execute the CRUD tool
+            # Execute the CRUD tool with fixed params
             result = await execute_crud(
                 tool=decision.tool,
-                params=decision.params,
+                params=fixed_params,  # Use fixed params
                 user_id=user_id,
             )
 

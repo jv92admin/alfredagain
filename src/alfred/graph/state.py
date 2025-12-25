@@ -170,7 +170,8 @@ class ConversationTurn(BaseModel):
     """A single turn in the conversation."""
     
     user: str  # User's message
-    assistant: str  # Alfred's response
+    assistant: str  # Alfred's full response (for Reply/display)
+    assistant_summary: str | None = None  # LLM-condensed version (for context in Act/Think)
     timestamp: str  # ISO format
     routing: dict[str, Any] | None = None  # Router decision for this turn
     entities_mentioned: list[str] = Field(default_factory=list)  # Entity IDs touched
