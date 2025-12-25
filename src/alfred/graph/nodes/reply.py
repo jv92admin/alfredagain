@@ -6,6 +6,7 @@ based on execution results.
 """
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -14,8 +15,9 @@ from alfred.graph.state import (
     AskUserAction,
     BlockedAction,
     FailAction,
+    StepCompleteAction,
 )
-from alfred.llm.client import call_llm
+from alfred.llm.client import call_llm, set_current_node
 
 
 # Load prompts once at module level
@@ -51,18 +53,21 @@ async def reply_node(state: AlfredState) -> dict:
     Synthesizes execution results into a natural, helpful response.
     
     Args:
-        state: Current graph state with completed_steps and any errors
+        state: Current graph state with step_results and any errors
         
     Returns:
         State update with final_response
     """
+    # Set node name for prompt logging
+    set_current_node("reply")
+
     system_prompt, reply_instructions = _get_prompts()
     
     # Combine system prompt with reply instructions
     full_system_prompt = f"{system_prompt}\n\n---\n\n{reply_instructions}"
     
     # Build context for the reply
-    completed_steps = state.get("completed_steps", [])
+    step_results = state.get("step_results", {})
     pending_action = state.get("pending_action")
     think_output = state.get("think_output")
     error = state.get("error")
@@ -88,15 +93,23 @@ async def reply_node(state: AlfredState) -> dict:
     # Handle blocked
     if isinstance(pending_action, BlockedAction):
         # Generate a helpful response about being blocked
-        user_prompt = f"""## Situation
-I was trying to help with: {think_output.goal if think_output else "the user's request"}
+        user_prompt = f"""## Original Request
+{state.get("user_message", "Unknown request")}
 
-But I got stuck: {pending_action.details}
+## Goal
+{think_output.goal if think_output else "the user's request"}
 
-## What I Completed
-{_format_completed_steps(completed_steps)}
+## Status: ⚠️ Blocked
+Reason: {pending_action.details}
 
-Generate a helpful response explaining what happened and what we could try next."""
+{_format_execution_summary(step_results, think_output)}
+
+## Conversation Context
+*No prior conversation context.*
+
+---
+
+Generate a helpful response explaining what was accomplished and what we could try next."""
 
         result = await call_llm(
             response_model=ReplyOutput,
@@ -113,10 +126,14 @@ Generate a helpful response explaining what happened and what we could try next.
 ## Goal
 {think_output.goal if think_output else "Complete the user's request"}
 
-## What Was Done
-{_format_completed_steps(completed_steps)}
+{_format_execution_summary(step_results, think_output)}
 
-Generate a natural, helpful response summarizing what was accomplished."""
+## Conversation Context
+*No prior conversation context.*
+
+---
+
+Generate a natural, helpful response. Lead with the outcome, be specific, be concise."""
 
     result = await call_llm(
         response_model=ReplyOutput,
@@ -128,17 +145,118 @@ Generate a natural, helpful response summarizing what was accomplished."""
     return {"final_response": result.response}
 
 
-def _format_completed_steps(completed_steps: list) -> str:
-    """Format completed steps for the prompt."""
-    if not completed_steps:
-        return "No steps completed yet."
+def _format_execution_summary(
+    step_results: dict[int, Any],
+    think_output: Any,
+) -> str:
+    """
+    Format execution results as a structured handoff for Reply.
     
-    lines = []
-    for i, step in enumerate(completed_steps, 1):
-        lines.append(f"{i}. **{step.step_name}**: {step.result_summary}")
-        if step.refs:
-            for ref in step.refs:
-                lines.append(f"   - Created/Modified: {ref.label} ({ref.type})")
+    Shows:
+    - Plan overview (how many steps, completion status)
+    - Each step's description + outcome
+    - Key data in human-readable format
+    """
+    if not step_results:
+        return "No steps were executed."
+    
+    # Get plan info if available
+    steps = think_output.steps if think_output else []
+    total_steps = len(steps)
+    completed_steps = len(step_results)
+    
+    lines = [
+        "## Execution Summary",
+        f"Plan: {total_steps} steps | Completed: {completed_steps} | Status: {'✅ Success' if completed_steps >= total_steps else '⚠️ Partial'}",
+        "",
+    ]
+    
+    # Format each step with its description and outcome
+    for idx in sorted(step_results.keys()):
+        result = step_results[idx]
+        
+        # Get step description from plan
+        step_desc = steps[idx].description if idx < len(steps) else f"Step {idx + 1}"
+        step_type = getattr(steps[idx], "step_type", "crud") if idx < len(steps) else "crud"
+        
+        lines.append(f"### Step {idx + 1}: {step_desc}")
+        lines.append(f"Type: {step_type}")
+        
+        # Format the outcome
+        if isinstance(result, list):
+            if len(result) == 0:
+                lines.append("Outcome: No records found")
+            else:
+                lines.append(f"Outcome: Found {len(result)} items")
+                # Show items with key details
+                for item in result:
+                    if isinstance(item, dict):
+                        name = item.get("name", item.get("id", "item"))
+                        qty = item.get("quantity", "")
+                        unit = item.get("unit", "")
+                        location = item.get("location", "")
+                        expiry = item.get("expiry_date", "")
+                        
+                        parts = [f"  - {name}"]
+                        if qty and unit:
+                            parts.append(f"({qty} {unit})")
+                        elif qty:
+                            parts.append(f"({qty})")
+                        if location:
+                            parts.append(f"[{location}]")
+                        if expiry:
+                            parts.append(f"expires {expiry}")
+                        lines.append(" ".join(parts))
+                    else:
+                        lines.append(f"  - {item}")
+        
+        elif isinstance(result, dict):
+            # Single record created/updated or structured analysis
+            if "deleted" in result:
+                # Deletion result
+                deleted = result.get("deleted", [])
+                remaining = result.get("remaining", [])
+                lines.append(f"Outcome: Deleted {len(deleted)} items ({', '.join(deleted)})")
+                if remaining:
+                    lines.append(f"Remaining: {', '.join(remaining)}")
+            elif "name" in result:
+                # Created record
+                name = result.get("name", "record")
+                lines.append(f"Outcome: Created/Updated '{name}'")
+                for key in ["cuisine", "difficulty", "servings", "quantity", "unit"]:
+                    if key in result and result[key]:
+                        lines.append(f"  {key}: {result[key]}")
+            else:
+                # Generic dict (analysis result, generated content)
+                lines.append(f"Outcome: {_summarize_dict(result)}")
+        
+        elif isinstance(result, int):
+            lines.append(f"Outcome: Affected {result} records")
+        
+        elif isinstance(result, str):
+            # Generated content
+            lines.append(f"Outcome: Generated content")
+            lines.append(result[:500])
+        
+        else:
+            lines.append(f"Outcome: {str(result)[:200]}")
+        
+        lines.append("")
     
     return "\n".join(lines)
 
+
+def _summarize_dict(d: dict) -> str:
+    """Summarize a dict for display."""
+    if not d:
+        return "Empty result"
+    
+    # Try to extract key info
+    summary_parts = []
+    for key in ["summary", "result", "message", "content"]:
+        if key in d:
+            return str(d[key])[:200]
+    
+    # Fall back to key listing
+    keys = list(d.keys())[:5]
+    return f"Data with keys: {', '.join(keys)}"

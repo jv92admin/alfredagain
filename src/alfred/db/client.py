@@ -22,8 +22,8 @@ def get_client() -> Client:
 
     if _client is None:
         _client = create_client(
-            settings.SUPABASE_URL,
-            settings.SUPABASE_ANON_KEY,
+            settings.supabase_url,
+            settings.supabase_anon_key,
         )
 
     return _client
@@ -56,18 +56,34 @@ async def add_inventory_item(user_id: str, item: dict) -> dict:
     return response.data[0]
 
 
-async def update_inventory_item(item_id: str, updates: dict) -> dict:
+async def update_inventory_item(user_id: str, item_id: str, updates: dict) -> dict:
     """Update an inventory item."""
     client = get_client()
-    response = client.table("inventory").update(updates).eq("id", item_id).execute()
+    response = (
+        client.table("inventory")
+        .update(updates)
+        .eq("id", item_id)
+        .eq("user_id", user_id)  # Security: ensure user owns item
+        .execute()
+    )
     return response.data[0]
 
 
-async def delete_inventory_item(item_id: str) -> bool:
-    """Delete an inventory item."""
+async def remove_inventory_item(user_id: str, item_id: str) -> dict:
+    """
+    Remove an inventory item.
+    
+    Returns the deleted item data for confirmation.
+    """
     client = get_client()
-    client.table("inventory").delete().eq("id", item_id).execute()
-    return True
+    # First get the item to return its data
+    item_resp = client.table("inventory").select("*").eq("id", item_id).eq("user_id", user_id).single().execute()
+    item = item_resp.data
+    
+    # Then delete
+    client.table("inventory").delete().eq("id", item_id).eq("user_id", user_id).execute()
+    
+    return item
 
 
 # =============================================================================

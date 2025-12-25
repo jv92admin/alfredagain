@@ -11,7 +11,7 @@ The Router classifies user intent and determines:
 from pathlib import Path
 
 from alfred.graph.state import AlfredState, RouterOutput
-from alfred.llm.client import call_llm
+from alfred.llm.client import call_llm, set_current_node
 
 
 # Load prompt once at module level
@@ -40,6 +40,9 @@ async def router_node(state: AlfredState) -> dict:
         State update with router_output
     """
     user_message = state["user_message"]
+
+    # Set node name for prompt logging
+    set_current_node("router")
 
     # Call LLM for routing decision
     # Router uses low complexity - it's a classification task

@@ -24,9 +24,9 @@ class EntityRef(BaseModel):
     - LLMs never fabricate IDs
     """
 
-    type: str  # "ingredient", "recipe", "meal_plan", "pantry_item"
-    id: str  # "ing_123", "rec_456"
-    label: str  # "tomato" (human-readable for LLM context)
+    type: str  # "ingredient", "recipe", "meal_plan", "inventory_item"
+    id: str  # UUID
+    label: str  # Human-readable for LLM context
     source: str  # "db_lookup", "user_input", "generated"
 
 
@@ -41,21 +41,31 @@ class RouterOutput(BaseModel):
     agent: Literal["pantry", "coach", "cellar"]
     goal: str  # Natural language
     complexity: Literal["low", "medium", "high"]
-    context_needs: list[str] = []  # ["inventory", "preferences", "recipes"]
+    # NOTE: No context_needs - Act handles ALL data access via CRUD
 
 
-class Step(BaseModel):
-    """A single step in the execution plan."""
+class PlannedStep(BaseModel):
+    """
+    A step in the execution plan with subdomain hint.
+    
+    Think node outputs these - each step has:
+    - A natural language description
+    - A step type (crud, analyze, or generate)
+    - A subdomain hint (Act gets schema for CRUD steps)
+    - Complexity for model selection
+    """
 
-    name: str  # "Check pantry for missing ingredients"
-    complexity: Literal["low", "medium", "high"] = "medium"
+    description: str  # Natural language step description
+    step_type: Literal["crud", "analyze", "generate"] = "crud"
+    subdomain: str  # "inventory", "recipes", "shopping", "meal_plan", "preferences"
+    complexity: Literal["low", "medium", "high"] = "low"
 
 
 class ThinkOutput(BaseModel):
     """Output from the Think node."""
 
     goal: str
-    steps: list[Step]
+    steps: list[PlannedStep]
 
 
 # =============================================================================
@@ -64,20 +74,26 @@ class ThinkOutput(BaseModel):
 
 
 class ToolCallAction(BaseModel):
-    """Request to call a tool."""
+    """Request to call a CRUD tool."""
 
     action: Literal["tool_call"] = "tool_call"
-    tool: str  # "find_ingredients", "add_to_inventory"
-    arguments: dict[str, Any]  # Tool-specific args
+    tool: Literal["db_read", "db_create", "db_update", "db_delete"]
+    params: dict[str, Any]  # Tool-specific params
 
 
 class StepCompleteAction(BaseModel):
     """Indicates a step was completed successfully."""
 
     action: Literal["step_complete"] = "step_complete"
-    step_name: str  # Which step was completed
     result_summary: str  # Brief description of outcome
-    refs: list[EntityRef] = []  # Any entities created/modified
+    data: Any = None  # Full result for caching
+
+
+class RequestSchemaAction(BaseModel):
+    """Request additional subdomain schema."""
+
+    action: Literal["request_schema"] = "request_schema"
+    subdomain: str  # Request schema for this subdomain
 
 
 class AskUserAction(BaseModel):
@@ -93,10 +109,9 @@ class BlockedAction(BaseModel):
 
     action: Literal["blocked"] = "blocked"
     reason_code: Literal[
-        "INSUFFICIENT_INFORMATION",  # Need user input
+        "INSUFFICIENT_INFO",  # Need user input
         "PLAN_INVALID",  # Current plan won't work
         "TOOL_FAILURE",  # Tool returned error
-        "AMBIGUOUS_INPUT",  # Multiple interpretations possible
     ]
     details: str  # Human-readable explanation
     suggested_next: Literal["ask_user", "replan", "fail"]
@@ -111,7 +126,35 @@ class FailAction(BaseModel):
 
 
 # Union type for all actions
-ActAction = ToolCallAction | StepCompleteAction | AskUserAction | BlockedAction | FailAction
+ActAction = (
+    ToolCallAction
+    | StepCompleteAction
+    | RequestSchemaAction
+    | AskUserAction
+    | BlockedAction
+    | FailAction
+)
+
+
+# =============================================================================
+# Conversation Context (for Phase 5)
+# =============================================================================
+
+
+class ConversationContext(TypedDict, total=False):
+    """Conversation history and context tracking."""
+
+    # High-level summary of current engagement
+    engagement_summary: str  # "Helping with meal planning, saved 2 recipes..."
+
+    # Last 2-3 exchanges - full text
+    recent_turns: list[dict]  # [{user: str, assistant: str, timestamp: str}]
+
+    # Older exchanges - compressed
+    history_summary: str  # "Earlier discussed pasta, added milk to pantry..."
+
+    # Tracked entities for "that recipe" resolution
+    active_entities: dict[str, EntityRef]
 
 
 # =============================================================================
@@ -140,17 +183,23 @@ class AlfredState(TypedDict, total=False):
     # Think output
     think_output: ThinkOutput | None
 
-    # Retrieved context (from hybrid retrieval)
+    # NOTE: Context is NOT pre-fetched. Act uses CRUD for all data access.
+    # This field exists only for conversation context (Phase 5).
     context: dict[str, Any]
 
     # Act loop state
     current_step_index: int
-    completed_steps: list[StepCompleteAction]
+    step_results: dict[int, Any]  # Cache of tool outputs by step index
+    current_step_tool_results: list[Any]  # Tool results within current step (multi-tool pattern)
+    current_subdomain: str | None  # Active subdomain for schema
+    schema_requests: int  # Count of schema requests (for safeguard)
     pending_action: ActAction | None
+
+    # Conversation context (Phase 5)
+    conversation: ConversationContext
 
     # Final output
     final_response: str | None
 
     # Error state
     error: str | None
-

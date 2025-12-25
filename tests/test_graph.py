@@ -10,7 +10,7 @@ from alfred.graph.state import (
     AlfredState,
     EntityRef,
     RouterOutput,
-    Step,
+    PlannedStep,
     ThinkOutput,
     StepCompleteAction,
 )
@@ -66,16 +66,32 @@ class TestStateModels:
         assert output.agent == "pantry"
         assert output.complexity == "low"
 
-    def test_think_output_creation(self):
-        """ThinkOutput should be creatable with steps."""
+    def test_think_output_with_planned_step(self):
+        """ThinkOutput should use PlannedStep with tool assignments."""
         output = ThinkOutput(
             goal="Add milk to inventory",
             steps=[
-                Step(name="Add item to inventory", complexity="low"),
+                PlannedStep(
+                    description="Add item to inventory",
+                    tools=["manage_inventory"],
+                    complexity="low",
+                ),
             ],
         )
         assert len(output.steps) == 1
-        assert output.steps[0].name == "Add item to inventory"
+        assert output.steps[0].description == "Add item to inventory"
+        assert output.steps[0].tools == ["manage_inventory"]
+
+    def test_planned_step_with_multiple_tools(self):
+        """PlannedStep can have 1-3 tools assigned."""
+        step = PlannedStep(
+            description="Find matching recipes",
+            tools=["suggest_recipes", "query_recipe"],
+            complexity="medium",
+        )
+        assert len(step.tools) == 2
+        assert "suggest_recipes" in step.tools
+        assert "query_recipe" in step.tools
 
     def test_step_complete_action_creation(self):
         """StepCompleteAction should be creatable with refs."""
@@ -114,4 +130,3 @@ class TestAlfredState:
         }
         assert state["user_message"] == "Add milk to my pantry"
         assert state["current_step_index"] == 0
-

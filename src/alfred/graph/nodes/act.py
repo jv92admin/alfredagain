@@ -1,17 +1,17 @@
 """
 Alfred V2 - Act Node.
 
-The Act node executes the plan step by step. It loops until:
-- All steps complete (success)
-- User input needed (ask_user)
-- Unrecoverable error (fail)
-- Agent handoff needed (call_agent - future)
+The Act node executes the plan step by step using generic CRUD tools.
+For each step, it:
+1. Gets the schema for the step's subdomain
+2. Decides which CRUD operation to perform
+3. Executes and caches the result
 
 Each iteration emits a structured action.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,10 +21,14 @@ from alfred.graph.state import (
     AskUserAction,
     BlockedAction,
     FailAction,
+    PlannedStep,
+    RequestSchemaAction,
     StepCompleteAction,
     ToolCallAction,
 )
-from alfred.llm.client import call_llm_with_context
+from alfred.llm.client import call_llm, set_current_node
+from alfred.tools.crud import execute_crud
+from alfred.tools.schema import get_schema_with_fallback
 
 
 # =============================================================================
@@ -35,66 +39,90 @@ from alfred.llm.client import call_llm_with_context
 class ActDecision(BaseModel):
     """
     The LLM's decision for what action to take.
-    
-    This is what we ask the LLM to produce. It then gets
-    converted to the appropriate ActAction type.
+
+    This is what we ask the LLM to produce.
     """
 
-    action: str = Field(
-        description="One of: tool_call, step_complete, ask_user, blocked, fail"
-    )
-    
+    action: Literal[
+        "tool_call", "step_complete", "request_schema", "ask_user", "blocked", "fail"
+    ] = Field(description="The action to take")
+
     # For tool_call
-    tool: str | None = Field(default=None, description="Tool name to call")
-    arguments: dict[str, Any] | None = Field(default=None, description="Tool arguments")
-    
+    tool: Literal["db_read", "db_create", "db_update", "db_delete"] | None = Field(
+        default=None, description="CRUD tool to call"
+    )
+    params: dict[str, Any] | None = Field(default=None, description="Tool parameters")
+
     # For step_complete
-    step_name: str | None = Field(default=None, description="Which step was completed")
-    result_summary: str | None = Field(default=None, description="Brief outcome description")
-    
+    result_summary: str | None = Field(
+        default=None, description="Brief outcome description"
+    )
+    data: Any | None = Field(default=None, description="Full result data for caching")
+
+    # For request_schema
+    subdomain: str | None = Field(
+        default=None, description="Subdomain to request schema for"
+    )
+
     # For ask_user
     question: str | None = Field(default=None, description="Question to ask user")
-    question_context: str | None = Field(default=None, description="Why we need this info")
-    
+    context: str | None = Field(default=None, description="Why we need this info")
+
     # For blocked
-    reason_code: str | None = Field(default=None, description="INSUFFICIENT_INFORMATION, PLAN_INVALID, TOOL_FAILURE, AMBIGUOUS_INPUT")
+    reason_code: Literal["INSUFFICIENT_INFO", "PLAN_INVALID", "TOOL_FAILURE"] | None = (
+        Field(default=None, description="Blocked reason")
+    )
     details: str | None = Field(default=None, description="Human-readable explanation")
-    suggested_next: str | None = Field(default=None, description="ask_user, replan, fail")
-    
+    suggested_next: Literal["ask_user", "replan", "fail"] | None = Field(
+        default=None, description="Suggested next action"
+    )
+
     # For fail
     reason: str | None = Field(default=None, description="Why we can't proceed")
-    user_message: str | None = Field(default=None, description="What to tell the user")
+    user_message: str | None = Field(
+        default=None, description="What to tell the user"
+    )
 
 
 def _decision_to_action(decision: ActDecision) -> ActAction:
     """Convert LLM decision to typed action."""
-    if decision.action == "tool_call":
-        return ToolCallAction(
-            tool=decision.tool or "unknown",
-            arguments=decision.arguments or {},
-        )
-    elif decision.action == "step_complete":
-        return StepCompleteAction(
-            step_name=decision.step_name or "unknown",
-            result_summary=decision.result_summary or "",
-            refs=[],  # Tools would populate this
-        )
-    elif decision.action == "ask_user":
-        return AskUserAction(
-            question=decision.question or "Could you clarify?",
-            context=decision.question_context or "",
-        )
-    elif decision.action == "blocked":
-        return BlockedAction(
-            reason_code=decision.reason_code or "AMBIGUOUS_INPUT",  # type: ignore
-            details=decision.details or "Unable to proceed",
-            suggested_next=decision.suggested_next or "ask_user",  # type: ignore
-        )
-    else:  # fail
-        return FailAction(
-            reason=decision.reason or "Unknown error",
-            user_message=decision.user_message or "I'm sorry, I couldn't complete that request.",
-        )
+    match decision.action:
+        case "tool_call":
+            return ToolCallAction(
+                tool=decision.tool or "db_read",
+                params=decision.params or {},
+            )
+        case "step_complete":
+            return StepCompleteAction(
+                result_summary=decision.result_summary or "",
+                data=decision.data,
+            )
+        case "request_schema":
+            return RequestSchemaAction(
+                subdomain=decision.subdomain or "inventory",
+            )
+        case "ask_user":
+            return AskUserAction(
+                question=decision.question or "Could you clarify?",
+                context=decision.context or "",
+            )
+        case "blocked":
+            return BlockedAction(
+                reason_code=decision.reason_code or "PLAN_INVALID",
+                details=decision.details or "Unable to proceed",
+                suggested_next=decision.suggested_next or "ask_user",
+            )
+        case "fail":
+            return FailAction(
+                reason=decision.reason or "Unknown error",
+                user_message=decision.user_message
+                or "I'm sorry, I couldn't complete that request.",
+            )
+        case _:
+            return FailAction(
+                reason=f"Unknown action: {decision.action}",
+                user_message="I encountered an unexpected error.",
+            )
 
 
 # =============================================================================
@@ -102,7 +130,9 @@ def _decision_to_action(decision: ActDecision) -> ActAction:
 # =============================================================================
 
 # Load prompt once at module level
-_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "act.md"
+_PROMPT_PATH = (
+    Path(__file__).parent.parent.parent.parent.parent / "prompts" / "act.md"
+)
 _SYSTEM_PROMPT: str | None = None
 
 
@@ -114,23 +144,207 @@ def _get_system_prompt() -> str:
     return _SYSTEM_PROMPT
 
 
+def _format_step_results(step_results: dict[int, Any], current_index: int) -> str:
+    """Format previous step results for context - showing actual tool outputs as FACTS."""
+    import json
+    
+    if not step_results:
+        return "### Previous Step Results\n*No previous steps completed yet.*"
+
+    lines = ["### Previous Step Results", ""]
+
+    for idx in sorted(step_results.keys()):
+        result = step_results[idx]
+        step_num = idx + 1
+
+        # Handle tuple format from current_step_tool_results: [(tool_name, result), ...]
+        if isinstance(result, list) and result and isinstance(result[0], tuple):
+            lines.append(f"**Step {step_num}** completed with {len(result)} tool calls:")
+            for tool_name, tool_result in result:
+                if isinstance(tool_result, list):
+                    if len(tool_result) == 0:
+                        lines.append(f"  - `{tool_name}`: 0 records (empty)")
+                    else:
+                        lines.append(f"  - `{tool_name}`: {len(tool_result)} records")
+                        # Show first few items
+                        for item in tool_result[:3]:
+                            if isinstance(item, dict):
+                                name = item.get("name", item.get("id", "?"))
+                                lines.append(f"    - {name}")
+                        if len(tool_result) > 3:
+                            lines.append(f"    - ... and {len(tool_result) - 3} more")
+                elif isinstance(tool_result, dict):
+                    name = tool_result.get("name", tool_result.get("id", "record"))
+                    lines.append(f"  - `{tool_name}`: created/updated '{name}'")
+                else:
+                    lines.append(f"  - `{tool_name}`: {tool_result}")
+        # Handle simple list of dicts (normal step completion with data)
+        elif isinstance(result, list):
+            if len(result) == 0:
+                lines.append(f"**Step {step_num}**: 0 records (empty)")
+            else:
+                lines.append(f"**Step {step_num}**: {len(result)} records:")
+                for item in result[:5]:
+                    if isinstance(item, dict):
+                        name = item.get("name", item.get("id", "item"))
+                        qty = item.get("quantity", "")
+                        unit = item.get("unit", "")
+                        if qty and unit:
+                            lines.append(f"  - {name}: {qty} {unit}")
+                        else:
+                            lines.append(f"  - {name}")
+                if len(result) > 5:
+                    lines.append(f"  - ... and {len(result) - 5} more")
+        elif isinstance(result, dict):
+            lines.append(f"**Step {step_num}**: {json.dumps(result, default=str)[:200]}")
+        elif isinstance(result, int):
+            lines.append(f"**Step {step_num}**: Affected {result} records")
+        else:
+            lines.append(f"**Step {step_num}**: {str(result)[:200]}")
+        
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls_made: int) -> str:
+    """Format tool results from current step - show ACTUAL data, not summaries."""
+    import json
+    
+    if not tool_results:
+        return ""
+    
+    lines = [f"## What Already Happened This Step ({tool_calls_made} tool calls)", ""]
+    
+    for i, (tool_name, result) in enumerate(tool_results, 1):
+        lines.append(f"### Tool Call {i}: `{tool_name}`")
+        
+        # Show result with semantic meaning
+        if tool_name == "db_read":
+            if isinstance(result, list):
+                if len(result) == 0:
+                    lines.append("**Result: 0 records found.**")
+                    lines.append("→ The items you searched for do NOT exist in this table.")
+                    lines.append("→ This is a valid, complete answer. You now know they don't exist.")
+                elif len(result) > 10:
+                    lines.append(f"**Result: {len(result)} records found.** First 10:")
+                    lines.append("```json")
+                    lines.append(json.dumps(result[:10], indent=2, default=str))
+                    lines.append("```")
+                else:
+                    lines.append(f"**Result: {len(result)} records found:**")
+                    lines.append("```json")
+                    lines.append(json.dumps(result, indent=2, default=str))
+                    lines.append("```")
+            else:
+                lines.append(f"Result: `{result}`")
+        elif tool_name == "db_create":
+            if isinstance(result, list):
+                lines.append(f"**✓ Created {len(result)} records:**")
+                lines.append("```json")
+                lines.append(json.dumps(result, indent=2, default=str))
+                lines.append("```")
+            elif isinstance(result, dict):
+                lines.append(f"**✓ Created 1 record:**")
+                lines.append("```json")
+                lines.append(json.dumps(result, indent=2, default=str))
+                lines.append("```")
+            else:
+                lines.append(f"**✓ Created:** `{result}`")
+        elif tool_name == "db_update":
+            if isinstance(result, list):
+                lines.append(f"**✓ Updated {len(result)} records**")
+            elif isinstance(result, dict):
+                lines.append(f"**✓ Updated 1 record**")
+            else:
+                lines.append(f"**✓ Updated:** `{result}`")
+        elif tool_name == "db_delete":
+            if isinstance(result, list):
+                lines.append(f"**✓ Deleted {len(result)} records**")
+            elif isinstance(result, int):
+                lines.append(f"**✓ Deleted {result} records**")
+            else:
+                lines.append(f"**✓ Deleted:** `{result}`")
+        else:
+            # Generic fallback
+            if isinstance(result, (dict, list)):
+                result_json = json.dumps(result, indent=2, default=str)
+                if len(result_json) > 2000:
+                    lines.append("```json")
+                    lines.append(result_json[:2000] + "\n... (truncated)")
+                    lines.append("```")
+                else:
+                    lines.append("```json")
+                    lines.append(result_json)
+                    lines.append("```")
+            else:
+                lines.append(f"Result: `{result}`")
+        
+        lines.append("")
+    
+    # Simple decision prompt
+    lines.append("")
+    lines.append("---")
+    lines.append("**Decision:** Is the step goal complete? → `step_complete` | Need more? → next tool call")
+    lines.append("")
+    
+    return "\n".join(lines)
+
+
+# Maximum tool calls allowed within a single step (circuit breaker)
+MAX_TOOL_CALLS_PER_STEP = 5
+
+
 async def act_node(state: AlfredState) -> dict:
     """
-    Act node - executes one step of the plan.
-    
-    This is called repeatedly by the graph until a terminal condition.
-    
+    Act node - executes one step of the plan using CRUD tools.
+
+    For each step:
+    1. Gets schema for the step's subdomain
+    2. Shows previous step results + current step's tool results
+    3. LLM decides CRUD operation or step_complete
+    4. Execute and cache result, loop back for more tool calls
+    5. Only advance step when LLM says step_complete
+
+    This enables multi-tool-call patterns within a single step
+    (e.g., create recipe, then create each recipe_ingredient).
+
+    Circuit breaker: Max 5 tool calls per step to prevent infinite loops.
+
     Args:
         state: Current graph state with think_output and current_step_index
-        
+
     Returns:
         State update with action result
     """
     think_output = state.get("think_output")
     current_step_index = state.get("current_step_index", 0)
-    completed_steps = state.get("completed_steps", [])
-    context = state.get("context", {})
+    step_results = state.get("step_results", {})
+    current_step_tool_results = state.get("current_step_tool_results", [])
+    user_id = state.get("user_id", "")
+    schema_requests = state.get("schema_requests", 0)
     
+    # Circuit breaker - force step_complete if too many tool calls
+    if len(current_step_tool_results) >= MAX_TOOL_CALLS_PER_STEP:
+        # Force step completion with whatever we have
+        step_data = current_step_tool_results if current_step_tool_results else None
+        new_step_results = step_results.copy()
+        new_step_results[current_step_index] = step_data
+        
+        return {
+            "pending_action": StepCompleteAction(
+                result_summary=f"Step completed (max {MAX_TOOL_CALLS_PER_STEP} tool calls reached)",
+                data=step_data,
+            ),
+            "current_step_index": current_step_index + 1,
+            "step_results": new_step_results,
+            "current_step_tool_results": [],
+            "schema_requests": 0,
+        }
+
+    # Set node name for prompt logging
+    set_current_node("act")
+
     if think_output is None:
         return {
             "pending_action": FailAction(
@@ -138,57 +352,194 @@ async def act_node(state: AlfredState) -> dict:
                 user_message="I'm sorry, I couldn't create a plan for that request.",
             ),
         }
-    
+
     steps = think_output.steps
-    
+
     # Check if all steps are done
     if current_step_index >= len(steps):
         return {
             "pending_action": None,  # Signal completion
         }
-    
-    current_step = steps[current_step_index]
-    
-    # Build prompt for LLM
-    completed_summary = "\n".join(
-        f"- {s.step_name}: {s.result_summary}" for s in completed_steps
-    ) if completed_steps else "None yet"
-    
-    user_prompt = f"""## Current Step
-Step {current_step_index + 1} of {len(steps)}: {current_step.name}
-Complexity: {current_step.complexity}
 
-## Completed Steps
-{completed_summary}
+    current_step: PlannedStep = steps[current_step_index]
 
-## Original Goal
+    # Get step type (default to crud for backwards compatibility)
+    step_type = getattr(current_step, "step_type", "crud")
+    tool_calls_made = len(current_step_tool_results)
+
+    # Build context sections
+    prev_step_section = _format_step_results(step_results, current_step_index)
+    this_step_section = _format_current_step_results(current_step_tool_results, tool_calls_made)
+
+    # Common context block (reused across all step types)
+    context_block = f"""---
+
+## Context
+
+### Conversation History
+*No conversation history yet (single-turn request).*
+
+{prev_step_section}
+
+{this_step_section}
+
+### Original Goal
 {think_output.goal}
 
-## Original User Message
+### User Message
 {state.get("user_message", "")}
 
-Decide what action to take for the current step."""
+---"""
 
-    # Call LLM for decision
-    decision = await call_llm_with_context(
+    # Build prompt based on step type
+    if step_type == "analyze":
+        user_prompt = f"""## Current Step
+
+**Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
+- Type: **analyze**
+- Complexity: {current_step.complexity}
+
+## Loop Status
+Tool calls this step: {tool_calls_made} of max {MAX_TOOL_CALLS_PER_STEP}
+
+{context_block}
+
+## Your Task
+
+This is an **ANALYSIS** step. You have data from previous steps.
+- Compare, filter, identify patterns, or make decisions
+- NO database operations — just reason over the data
+- Call `step_complete` with your analysis in `result_summary` and structured findings in `data`"""
+
+    elif step_type == "generate":
+        user_prompt = f"""## Current Step
+
+**Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
+- Type: **generate**
+- Subdomain: {current_step.subdomain}
+- Complexity: {current_step.complexity}
+
+## Loop Status
+Tool calls this step: {tool_calls_made} of max {MAX_TOOL_CALLS_PER_STEP}
+
+{context_block}
+
+## Your Task
+
+This is a **GENERATION** step. Create content based on context.
+- Generate recipe, plan, summary, meal idea, etc.
+- NO database operations — just create content
+- Call `step_complete` with your generated content in `data`"""
+
+    else:
+        # CRUD step - include schema
+        subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
+        
+        # Simple, clear prompt structure
+        user_prompt = f"""## 1. Your Task
+
+**Step {current_step_index + 1} of {len(steps)}**: {current_step.description}
+
+User said: "{state.get("user_message", "")}"
+
+---
+
+{this_step_section}## 2. Schema ({current_step.subdomain})
+
+{subdomain_schema}
+
+{prev_step_section}"""
+
+    # Call LLM for decision (step_results are already in the prompt)
+    decision = await call_llm(
         response_model=ActDecision,
         system_prompt=_get_system_prompt(),
         user_prompt=user_prompt,
-        context=context,
         complexity=current_step.complexity,
     )
-    
-    action = _decision_to_action(decision)
-    
-    # Handle step_complete - advance to next step
-    if isinstance(action, StepCompleteAction):
+
+    # Handle request_schema - fetch additional schema and retry
+    if decision.action == "request_schema" and decision.subdomain:
+        if schema_requests >= 2:
+            # Too many schema requests - blocked
+            return {
+                "pending_action": BlockedAction(
+                    reason_code="PLAN_INVALID",
+                    details="Too many schema requests. Plan may need revision.",
+                    suggested_next="replan",
+                ),
+            }
+
+        # This would add the schema to context and loop back
+        # For now, just increment counter and let it try again
+        return {
+            "schema_requests": schema_requests + 1,
+            "current_subdomain": decision.subdomain,
+        }
+
+    # Handle tool_call - execute but DON'T advance step
+    # LLM must explicitly call step_complete to advance
+    if decision.action == "tool_call" and decision.tool and decision.params:
+        try:
+            # Execute the CRUD tool
+            result = await execute_crud(
+                tool=decision.tool,
+                params=decision.params,
+                user_id=user_id,
+            )
+
+            # Append to current step's tool results (accumulate within step)
+            # Store as (tool_name, result) tuple for clear formatting
+            new_tool_results = current_step_tool_results + [(decision.tool, result)]
+
+            # Return ToolCallAction - will loop back for more operations
+            action = ToolCallAction(
+                tool=decision.tool,
+                params=decision.params,
+            )
+
+            return {
+                "pending_action": action,
+                "current_step_tool_results": new_tool_results,
+                # Note: NO step_index increment - step continues
+            }
+
+        except Exception as e:
+            # Tool call failed
+            return {
+                "pending_action": BlockedAction(
+                    reason_code="TOOL_FAILURE",
+                    details=f"CRUD operation failed: {str(e)}",
+                    suggested_next="ask_user",
+                ),
+            }
+
+    # Handle step_complete - NOW we advance the step
+    if decision.action == "step_complete":
+        # Combine current step's tool results with any generated data
+        step_data = current_step_tool_results if current_step_tool_results else None
+        if decision.data is not None:
+            step_data = decision.data
+        
+        # Cache the combined result for this step
+        new_step_results = step_results.copy()
+        new_step_results[current_step_index] = step_data
+
+        action = StepCompleteAction(
+            result_summary=decision.result_summary or "Step completed",
+            data=step_data,
+        )
+
         return {
             "pending_action": action,
             "current_step_index": current_step_index + 1,
-            "completed_steps": completed_steps + [action],
+            "step_results": new_step_results,
+            "current_step_tool_results": [],  # Reset for next step
+            "schema_requests": 0,
         }
-    
-    # Other actions don't advance the step
+
+    # Handle other actions (ask_user, blocked, fail)
+    action = _decision_to_action(decision)
     return {
         "pending_action": action,
     }
@@ -197,7 +548,7 @@ Decide what action to take for the current step."""
 def should_continue_act(state: AlfredState) -> str:
     """
     Determine if ACT loop should continue or exit.
-    
+
     Returns:
         - "continue" to loop back to act
         - "reply" to move to reply node
@@ -207,33 +558,35 @@ def should_continue_act(state: AlfredState) -> str:
     pending_action = state.get("pending_action")
     think_output = state.get("think_output")
     current_step_index = state.get("current_step_index", 0)
-    
+
     # No action = all steps complete
     if pending_action is None:
         return "reply"
-    
+
     # Check action type
+    if isinstance(pending_action, ToolCallAction):
+        # Tool executed but step not complete - loop back for more
+        # This enables multi-tool-call pattern within a single step
+        return "continue"
+
     if isinstance(pending_action, StepCompleteAction):
-        # Check if more steps remain
+        # Step explicitly completed - check if more steps remain
         if think_output and current_step_index < len(think_output.steps):
             return "continue"
         return "reply"
-    
-    if isinstance(pending_action, ToolCallAction):
-        # After tool execution, continue the loop
-        # (Tool execution happens in a separate node in full implementation)
+
+    if isinstance(pending_action, RequestSchemaAction):
+        # Loop back to try with new schema
         return "continue"
-    
+
     if isinstance(pending_action, AskUserAction):
         return "ask_user"
-    
+
     if isinstance(pending_action, BlockedAction):
         # For now, treat blocked as needing reply
-        # Full implementation would handle replan vs ask_user vs fail
         return "reply"
-    
+
     if isinstance(pending_action, FailAction):
         return "fail"
-    
-    return "reply"
 
+    return "reply"

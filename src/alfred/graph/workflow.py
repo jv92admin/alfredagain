@@ -2,9 +2,10 @@
 Alfred V2 - Graph Workflow Definition.
 
 This module constructs the LangGraph workflow:
-Router → Think → Act Loop → Reply
+Router → Think (with subdomain hints) → Act Loop (with CRUD) → Reply
 
-The graph handles the full thinking loop for any agent.
+The Think node outputs steps with subdomain assignments.
+Act receives subdomain schema and uses generic CRUD tools.
 """
 
 from langgraph.graph import END, StateGraph
@@ -127,14 +128,16 @@ async def run_alfred(
         "think_output": None,
         "context": {},
         "current_step_index": 0,
-        "completed_steps": [],
+        "step_results": {},
+        "current_step_tool_results": [],  # Multi-tool-call pattern
+        "current_subdomain": None,
+        "schema_requests": 0,
         "pending_action": None,
         "final_response": None,
         "error": None,
     }
     
     # Run the graph
-    # Note: LangGraph's invoke is synchronous, we use ainvoke for async
     final_state = await app.ainvoke(initial_state)
     
     # Extract response

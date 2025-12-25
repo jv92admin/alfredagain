@@ -64,6 +64,7 @@ Thumbs.db
 # Logs
 *.log
 logs/
+prompt_logs/
 
 # Local development
 *.sqlite

@@ -1,15 +1,17 @@
 """
 Alfred V2 - Think Node.
 
-The Think node creates an execution plan based on the goal and context.
-It breaks down the task into discrete steps with complexity ratings.
+The Think node creates an execution plan based on the goal.
+It outputs steps with subdomain hints (not tool names).
+NO data fetching - Act handles all data access via CRUD.
+
+Output: Steps with subdomain assignments for Act node to execute.
 """
 
 from pathlib import Path
 
-from alfred.db.context import get_context
 from alfred.graph.state import AlfredState, ThinkOutput
-from alfred.llm.client import call_llm_with_context
+from alfred.llm.client import call_llm, set_current_node
 
 
 # Load prompt once at module level
@@ -27,31 +29,26 @@ def _get_system_prompt() -> str:
 
 async def think_node(state: AlfredState) -> dict:
     """
-    Think node - creates execution plan.
+    Think node - creates execution plan with subdomain hints.
 
-    Uses the router output to understand what agent and goal,
-    retrieves necessary context, and generates steps.
+    This node ONLY plans. It does NOT fetch data.
+    Act node handles all data access via CRUD.
 
     Args:
         state: Current graph state with router_output
 
     Returns:
-        State update with think_output and context
+        State update with think_output (steps with subdomain hints)
     """
     router_output = state["router_output"]
-    user_id = state["user_id"]
+
+    # Set node name for prompt logging
+    set_current_node("think")
 
     if router_output is None:
         return {"error": "Router output missing"}
 
-    # Retrieve context based on router's context_needs
-    context = await get_context(
-        user_id=user_id,
-        needs=router_output.context_needs,
-        query=router_output.goal,
-    )
-
-    # Build the user prompt with goal
+    # Build the user prompt with goal (no context, no data)
     user_prompt = f"""## Goal
 {router_output.goal}
 
@@ -61,22 +58,24 @@ async def think_node(state: AlfredState) -> dict:
 ## User Request
 {state["user_message"]}
 
-Create an execution plan for this goal."""
+Create an execution plan for this goal. For each step:
+1. Write a clear description of what needs to be done
+2. Assign the appropriate subdomain (inventory, recipes, shopping, meal_plan, preferences)
+3. Set the complexity (low, medium, high)
 
-    # Call LLM for planning
-    # Use the router's complexity assessment
-    result = await call_llm_with_context(
+The Act node will receive the table schema for each step's subdomain and execute CRUD operations."""
+
+    # Call LLM for planning (no context passed)
+    result = await call_llm(
         response_model=ThinkOutput,
         system_prompt=_get_system_prompt(),
         user_prompt=user_prompt,
-        context=context,
         complexity=router_output.complexity,
     )
 
     return {
         "think_output": result,
-        "context": context,
         "current_step_index": 0,
-        "completed_steps": [],
+        "step_results": {},
+        "schema_requests": 0,
     }
-

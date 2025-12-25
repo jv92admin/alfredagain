@@ -2,24 +2,52 @@
 Alfred V2 - Model Router.
 
 Selects the appropriate OpenAI model based on task complexity.
+Uses GPT-5 series with reasoning effort and verbosity controls.
 
 Complexity levels:
-- low: Simple lookups, confirmations, basic CRUD → gpt-4o-mini (fast, cheap)
-- medium: Multi-step reasoning, recipe suggestions → gpt-4o (balanced)
-- high: Complex planning, novel problem solving → o1 (reasoning model)
+- low: Simple lookups, confirmations, basic CRUD → gpt-5-mini (minimal reasoning)
+- medium: Multi-step reasoning, recipe suggestions → gpt-5-mini (medium reasoning)
+- high: Complex planning, novel problem solving → gpt-5 (high reasoning)
 """
 
-from typing import Literal
+from typing import Literal, TypedDict
 
-# Model mapping - easy to adjust based on performance/cost needs
-MODEL_MAP: dict[str, str] = {
-    "low": "gpt-4o-mini",
-    "medium": "gpt-4o",
-    "high": "o1",  # o1 for complex reasoning
+
+class ModelConfig(TypedDict, total=False):
+    """Configuration for model calls."""
+
+    model: str
+    temperature: float
+    reasoning_effort: str  # "minimal", "low", "medium", "high"
+    verbosity: str  # "low", "medium", "high"
+
+
+# Model configurations by complexity
+# GPT-5 series supports reasoning_effort and verbosity parameters
+MODEL_CONFIGS: dict[str, ModelConfig] = {
+    "low": {
+        "model": "gpt-5-mini",
+        "reasoning_effort": "minimal",  # Fast, few reasoning tokens
+        "verbosity": "low",  # Terse output
+    },
+    "medium": {
+        "model": "gpt-5-mini",
+        "reasoning_effort": "medium",  # Balanced thinking
+        "verbosity": "medium",  # Default detail level
+    },
+    "high": {
+        "model": "gpt-5",
+        "reasoning_effort": "high",  # Deep reasoning
+        "verbosity": "high",  # Detailed output
+    },
 }
 
-# Fallback if complexity not recognized
-DEFAULT_MODEL = "gpt-4o"
+# Default config if complexity not recognized
+DEFAULT_CONFIG: ModelConfig = {
+    "model": "gpt-5-mini",
+    "reasoning_effort": "medium",
+    "verbosity": "medium",
+}
 
 
 def get_model(complexity: Literal["low", "medium", "high"] | str) -> str:
@@ -32,28 +60,63 @@ def get_model(complexity: Literal["low", "medium", "high"] | str) -> str:
     Returns:
         OpenAI model name string
     """
-    return MODEL_MAP.get(complexity, DEFAULT_MODEL)
+    config = MODEL_CONFIGS.get(complexity, DEFAULT_CONFIG)
+    return config["model"]
 
 
-def get_model_config(complexity: Literal["low", "medium", "high"] | str) -> dict:
+def get_model_config(
+    complexity: Literal["low", "medium", "high"] | str,
+    *,
+    verbosity_override: str | None = None,
+) -> ModelConfig:
     """
     Get full model configuration for a complexity level.
 
-    Returns model name and appropriate parameters.
+    Args:
+        complexity: Task complexity level
+        verbosity_override: Optional override for verbosity (e.g., "high" for recipe generation)
+
+    Returns:
+        Model configuration with reasoning effort and verbosity
     """
-    model = get_model(complexity)
+    config = MODEL_CONFIGS.get(complexity, DEFAULT_CONFIG).copy()
 
-    # o1 models have different parameter support
-    if model.startswith("o1"):
-        return {
-            "model": model,
-            # o1 doesn't support temperature or max_tokens in the same way
-            # It uses max_completion_tokens instead
-        }
+    # Apply verbosity override if provided
+    if verbosity_override:
+        config["verbosity"] = verbosity_override
 
-    # Standard models
-    return {
-        "model": model,
-        "temperature": 0.7 if complexity == "medium" else 0.3,
-    }
+    return config
 
+
+# Node-specific defaults
+# Different nodes may want different verbosity even at same complexity
+NODE_VERBOSITY: dict[str, str] = {
+    "router": "low",  # Just classification
+    "think": "medium",  # Plans need some detail
+    "act": "low",  # Tool calls should be terse
+    "reply": "medium",  # User-facing needs balance
+}
+
+
+def get_node_config(
+    node: str,
+    complexity: Literal["low", "medium", "high"] | str,
+) -> ModelConfig:
+    """
+    Get model configuration optimized for a specific node.
+
+    Args:
+        node: Node name ("router", "think", "act", "reply")
+        complexity: Task complexity level
+
+    Returns:
+        Model configuration tuned for the node
+    """
+    config = get_model_config(complexity)
+
+    # Apply node-specific verbosity unless it's a high-complexity task
+    # (high complexity overrides node defaults)
+    if complexity != "high" and node in NODE_VERBOSITY:
+        config["verbosity"] = NODE_VERBOSITY[node]
+
+    return config
