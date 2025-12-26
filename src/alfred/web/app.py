@@ -32,6 +32,12 @@ sessions: dict[str, dict[str, Any]] = {}
 app = FastAPI(title="Alfred", version="2.0.0")
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Railway."""
+    return {"status": "healthy"}
+
+
 # =============================================================================
 # Models
 # =============================================================================
