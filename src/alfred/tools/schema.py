@@ -532,24 +532,15 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | notes | text | Yes |
 | is_optional | boolean | No |
 
-**🛑 STOP! Recipe creation requires 2 tool calls:**
-1. `db_create` on `recipes` → note the `id` in the response
-2. `db_create` on `recipe_ingredients` with that `recipe_id` (user_id auto-added)
+**🔗 LINKED TABLES: `recipes` ↔ `recipe_ingredients`**
 
-**DO NOT call `step_complete` until BOTH are done!**
-A recipe without `recipe_ingredients` rows will have no ingredients displayed.
+Any write (create/update/delete) must touch BOTH tables:
+- `recipes` — parent (has `id`)
+- `recipe_ingredients` — children (linked by `recipe_id`)
 
-**Deleting ONE recipe requires 2 steps (FK order):**
-1. `db_delete` on `recipe_ingredients` with filter `{"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}`
-2. `db_delete` on `recipes` with filter `{"field": "id", "op": "=", "value": "<recipe-uuid>"}`
+Order: Create parent→children. Delete children→parent.
 
-**Deleting ALL recipes requires 2 steps:**
-1. `db_delete` on `recipe_ingredients` (empty filters OK - deletes ALL user's ingredients)
-2. `db_delete` on `recipes` (empty filters OK - deletes ALL user's recipes)
-
-⚠️ Empty filters = delete EVERYTHING. To delete ONE recipe, ALWAYS filter by recipe_id/id!
-
-When READING a recipe's ingredients: Query `recipe_ingredients` WHERE `recipe_id` = the recipe's id
+**⚠️ Don't assume data hygiene — always check/modify both tables, even if one returns empty.**
 
 **Recipe Variations:**
 - Use `parent_recipe_id` to link a variation to its base recipe

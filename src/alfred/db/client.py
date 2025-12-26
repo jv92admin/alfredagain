@@ -17,13 +17,14 @@ def get_client() -> Client:
     Get the Supabase client.
 
     Uses singleton pattern to reuse connection.
+    Uses service role key to bypass RLS (we handle user_id filtering in code).
     """
     global _client
 
     if _client is None:
         _client = create_client(
             settings.supabase_url,
-            settings.supabase_anon_key,
+            settings.supabase_service_role_key,  # Bypass RLS, we filter by user_id in CRUD
         )
 
     return _client

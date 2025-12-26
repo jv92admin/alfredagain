@@ -271,7 +271,7 @@ async def db_update(params: DbUpdateParams, user_id: str) -> list[dict]:
     return result.data
 
 
-async def db_delete(params: DbDeleteParams, user_id: str) -> int:
+async def db_delete(params: DbDeleteParams, user_id: str) -> list[dict]:
     """
     Delete rows matching filters.
 
@@ -280,7 +280,7 @@ async def db_delete(params: DbDeleteParams, user_id: str) -> int:
         user_id: Current user's ID (auto-applied for user-owned tables)
 
     Returns:
-        Count of deleted rows
+        List of deleted rows
     """
     client = get_client()
     
@@ -293,6 +293,7 @@ async def db_delete(params: DbDeleteParams, user_id: str) -> int:
             f"(e.g., recipe_id for recipe_ingredients)."
         )
 
+    # Build delete query
     query = client.table(params.table).delete()
 
     # Auto-filter by user_id for user-owned tables (security)
@@ -303,8 +304,10 @@ async def db_delete(params: DbDeleteParams, user_id: str) -> int:
     for f in params.filters:
         query = apply_filter(query, f)
 
+    # Execute - Supabase returns deleted rows in result.data
     result = query.execute()
-    return len(result.data)
+    
+    return result.data if result.data else []
 
 
 # =============================================================================
