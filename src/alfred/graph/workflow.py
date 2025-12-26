@@ -245,6 +245,8 @@ async def run_alfred_streaming(
     # Track state for step updates
     last_step_index = -1
     total_steps = 0
+    final_response = None
+    final_conversation = None
     
     # Use LangGraph's streaming to get node-by-node updates
     async for event in app.astream(initial_state, stream_mode="updates"):
@@ -308,12 +310,16 @@ async def run_alfred_streaming(
                         "step": last_step_index + 1,
                         "total": total_steps,
                     }
+                # Capture final response
+                final_response = node_output.get("final_response")
+            
+            elif node_name == "summarize" and node_output:
+                # Capture updated conversation
+                final_conversation = node_output.get("conversation")
     
-    # Get final state (run again to get complete state - streaming doesn't return final)
-    final_state = await app.ainvoke(initial_state)
-    
-    response = final_state.get("final_response", "I'm sorry, I couldn't process that request.")
-    updated_conversation = final_state.get("conversation", conv_context)
+    # Use captured state (don't run graph again!)
+    response = final_response or "I'm sorry, I couldn't process that request."
+    updated_conversation = final_conversation or conv_context
     
     yield {
         "type": "done",

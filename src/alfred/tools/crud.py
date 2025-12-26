@@ -151,8 +151,21 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
     if params.table in USER_OWNED_TABLES:
         query = query.eq("user_id", user_id)
 
+    # Smart fuzzy matching for recipe name searches
+    # Converts exact match to ilike with wildcards (LLM doesn't need to remember)
+    filters_to_apply = list(params.filters)
+    if params.table == "recipes":
+        for i, f in enumerate(filters_to_apply):
+            if f.field == "name" and f.op == "=":
+                # Convert exact match to fuzzy match
+                filters_to_apply[i] = FilterClause(
+                    field="name",
+                    op="ilike",
+                    value=f"%{f.value}%"
+                )
+
     # Apply explicit AND filters
-    for f in params.filters:
+    for f in filters_to_apply:
         query = apply_filter(query, f)
 
     # Apply OR filters (combined with OR, then AND'd with other filters)
