@@ -17,8 +17,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from sse_starlette.sse import EventSourceResponse
+
 from alfred.db.client import get_client
-from alfred.graph.workflow import run_alfred
+from alfred.graph.workflow import run_alfred, run_alfred_streaming
 from alfred.memory.conversation import initialize_conversation
 from alfred.graph.state import ConversationContext
 
@@ -189,6 +191,52 @@ async def reset_chat(session: dict = Depends(require_session)):
     return {"success": True}
 
 
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest, request: Request, session: dict = Depends(require_session)):
+    """Send a message to Alfred with streaming progress updates."""
+    from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
+    
+    async def event_generator():
+        try:
+            # Enable prompt logging based on user preference
+            enable_prompt_logging(req.log_prompts)
+            
+            # Get conversation from session
+            conversation = session.get("conversation") or initialize_conversation()
+            
+            # Stream Alfred's progress
+            async for update in run_alfred_streaming(
+                user_message=req.message,
+                user_id=session["user_id"],
+                conversation=conversation,
+            ):
+                if update["type"] == "done":
+                    # Update session with new conversation state
+                    session["conversation"] = update["conversation"]
+                    # Get log directory
+                    log_dir = get_session_log_dir()
+                    yield {
+                        "event": "done",
+                        "data": json.dumps({
+                            "response": update["response"],
+                            "log_dir": str(log_dir) if log_dir else None,
+                        }),
+                    }
+                else:
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(update),
+                    }
+        except Exception as e:
+            logger.exception("Stream chat error")
+            yield {
+                "event": "error",
+                "data": json.dumps({"error": str(e)}),
+            }
+    
+    return EventSourceResponse(event_generator())
+
+
 # =============================================================================
 # Data Endpoints
 # =============================================================================
@@ -235,6 +283,30 @@ async def get_meal_plans(session: dict = Depends(require_session)):
     """Get user's meal plans."""
     client = get_client()
     result = client.table("meal_plans").select("*").eq("user_id", session["user_id"]).order("date", desc=True).execute()
+    return {"data": result.data}
+
+
+@app.get("/api/tables/tasks")
+async def get_tasks(session: dict = Depends(require_session)):
+    """Get user's tasks."""
+    client = get_client()
+    result = client.table("tasks").select("*").eq("user_id", session["user_id"]).order("due_date").execute()
+    return {"data": result.data}
+
+
+@app.get("/api/tables/cooking_log")
+async def get_cooking_log(session: dict = Depends(require_session)):
+    """Get user's cooking history."""
+    client = get_client()
+    result = client.table("cooking_log").select("*").eq("user_id", session["user_id"]).order("cooked_at", desc=True).execute()
+    return {"data": result.data}
+
+
+@app.get("/api/tables/preferences")
+async def get_preferences(session: dict = Depends(require_session)):
+    """Get user's preferences."""
+    client = get_client()
+    result = client.table("preferences").select("*").eq("user_id", session["user_id"]).execute()
     return {"data": result.data}
 
 
@@ -409,9 +481,9 @@ def get_login_html() -> str:
         
         <div class="test-users">
             <strong>Test accounts:</strong><br>
-            alice@test.local / alfred123<br>
-            bob@test.local / alfred123<br>
-            carol@test.local / alfred123
+            alice@test.local<br>
+            bob@test.local<br>
+            carol@test.local
         </div>
     </div>
     
@@ -850,6 +922,10 @@ def get_frontend_html() -> str:
                 <button class="tab active" data-tab="inventory">Inventory</button>
                 <button class="tab" data-tab="recipes">Recipes</button>
                 <button class="tab" data-tab="shopping">Shopping</button>
+                <button class="tab" data-tab="meal_plans">Meal Plan</button>
+                <button class="tab" data-tab="tasks">Tasks</button>
+                <button class="tab" data-tab="cooking_log">History</button>
+                <button class="tab" data-tab="preferences">Preferences</button>
             </div>
             <div class="data-content" id="dataContent">
                 <div class="loading">
@@ -968,6 +1044,56 @@ def get_frontend_html() -> str:
                         </tr>`).join('')}</tbody>
                     </table>`;
                     
+                case 'meal_plans':
+                    return `<table>
+                        <thead><tr><th>Date</th><th>Meal</th><th>Notes</th><th>Servings</th></tr></thead>
+                        <tbody>${data.map(m => `<tr>
+                            <td>${m.date}</td>
+                            <td><span class="badge">${m.meal_type}</span></td>
+                            <td>${m.notes || '-'}</td>
+                            <td>${m.servings || 1}</td>
+                        </tr>`).join('')}</tbody>
+                    </table>`;
+                    
+                case 'tasks':
+                    return `<table>
+                        <thead><tr><th>Task</th><th>Due</th><th>Category</th><th>Status</th></tr></thead>
+                        <tbody>${data.map(t => `<tr>
+                            <td>${t.title}</td>
+                            <td>${t.due_date || '-'}</td>
+                            <td><span class="badge">${t.category || 'other'}</span></td>
+                            <td><span class="badge ${t.completed ? 'green' : ''}">${t.completed ? 'Done' : 'Pending'}</span></td>
+                        </tr>`).join('')}</tbody>
+                    </table>`;
+                    
+                case 'cooking_log':
+                    return `<table>
+                        <thead><tr><th>Date</th><th>Recipe</th><th>Rating</th><th>Notes</th></tr></thead>
+                        <tbody>${data.map(l => `<tr>
+                            <td>${new Date(l.cooked_at).toLocaleDateString()}</td>
+                            <td>${l.recipe_id ? '(Recipe)' : '-'}</td>
+                            <td>${l.rating ? '★'.repeat(l.rating) + '☆'.repeat(5 - l.rating) : '-'}</td>
+                            <td>${l.notes || '-'}</td>
+                        </tr>`).join('')}</tbody>
+                    </table>`;
+                    
+                case 'preferences':
+                    if (data.length === 0) return `<div class="empty-state">No preferences set yet. Chat with Alfred to set them!</div>`;
+                    const p = data[0];
+                    return `<table>
+                        <tbody>
+                            <tr><td><strong>Household Size</strong></td><td>${p.household_size || '-'}</td></tr>
+                            <tr><td><strong>Dietary Restrictions</strong></td><td>${p.dietary_restrictions || '-'}</td></tr>
+                            <tr><td><strong>Allergies</strong></td><td>${(p.allergies || []).join(', ') || '-'}</td></tr>
+                            <tr><td><strong>Cuisine Preferences</strong></td><td>${(p.cuisine_preferences || []).join(', ') || '-'}</td></tr>
+                            <tr><td><strong>Skill Level</strong></td><td>${p.skill_level || '-'}</td></tr>
+                            <tr><td><strong>Nutrition Goals</strong></td><td>${(p.nutrition_goals || []).join(', ') || '-'}</td></tr>
+                            <tr><td><strong>Cooking Frequency</strong></td><td>${p.cooking_frequency || '-'}</td></tr>
+                            <tr><td><strong>Equipment</strong></td><td>${(p.available_equipment || []).join(', ') || '-'}</td></tr>
+                            <tr><td><strong>Time Budget</strong></td><td>${p.time_budget_minutes ? p.time_budget_minutes + ' min' : '-'}</td></tr>
+                        </tbody>
+                    </table>`;
+                    
                 default:
                     return `<div class="empty-state">Unknown tab</div>`;
             }
@@ -998,10 +1124,13 @@ def get_frontend_html() -> str:
             input.value = '';
             btn.disabled = true;
             typing.classList.add('visible');
+            typing.textContent = 'Alfred is thinking...';
             
             try {
                 const logPrompts = document.getElementById('logPrompts').checked;
-                const res = await fetch('/api/chat', {
+                
+                // Use streaming endpoint
+                const res = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message, log_prompts: logPrompts }),
@@ -1009,12 +1138,39 @@ def get_frontend_html() -> str:
                 
                 if (!res.ok) throw new Error('Chat failed');
                 
-                const data = await res.json();
-                addMessage('assistant', data.response);
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let currentEvent = 'progress';
                 
-                // Show log directory if logging was enabled
-                if (data.log_dir) {
-                    document.getElementById('logDir').textContent = 'Logs: ' + data.log_dir;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\\n');
+                    buffer = lines.pop();
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) {
+                            currentEvent = line.slice(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (currentEvent === 'done') {
+                                    // Final response
+                                    addMessage('assistant', data.response);
+                                    if (data.log_dir) {
+                                        document.getElementById('logDir').textContent = 'Logs: ' + data.log_dir;
+                                    }
+                                } else if (currentEvent === 'error') {
+                                    addMessage('assistant', 'Error: ' + data.error);
+                                } else {
+                                    handleStreamEvent(data);
+                                }
+                            } catch {}
+                        }
+                    }
                 }
                 
                 // Refresh current data tab
@@ -1024,6 +1180,25 @@ def get_frontend_html() -> str:
             } finally {
                 btn.disabled = false;
                 typing.classList.remove('visible');
+            }
+        }
+        
+        function handleStreamEvent(data) {
+            const typing = document.getElementById('typingIndicator');
+            
+            switch (data.type) {
+                case 'thinking':
+                    typing.textContent = data.message;
+                    break;
+                case 'plan':
+                    typing.textContent = data.message;
+                    break;
+                case 'step':
+                    typing.textContent = `Step ${data.step}/${data.total}: ${data.description}`;
+                    break;
+                case 'step_complete':
+                    typing.textContent = `Step ${data.step}/${data.total} complete ✓`;
+                    break;
             }
         }
         

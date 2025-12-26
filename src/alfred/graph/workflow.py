@@ -186,3 +186,128 @@ async def run_alfred_simple(
     """
     response, _ = await run_alfred(user_message, user_id, conversation_id)
     return response
+
+
+async def run_alfred_streaming(
+    user_message: str,
+    user_id: str,
+    conversation_id: str | None = None,
+    conversation: dict | None = None,
+):
+    """
+    Run Alfred with streaming updates.
+    
+    Yields status updates as the workflow progresses:
+    - {"type": "thinking", "message": "Planning..."}
+    - {"type": "step", "step": 1, "total": 4, "description": "Reading inventory..."}
+    - {"type": "step_complete", "step": 1, "total": 4}
+    - {"type": "done", "response": "...", "conversation": {...}}
+    
+    Args:
+        user_message: The user's input message
+        user_id: The user's ID for context retrieval
+        conversation_id: Optional conversation ID
+        conversation: Optional existing conversation context
+        
+    Yields:
+        Dict with status updates
+    """
+    from alfred.memory.conversation import initialize_conversation
+    
+    # Compile the graph
+    app = compile_alfred_graph()
+    
+    # Initialize or use existing conversation context
+    conv_context = conversation if conversation else initialize_conversation()
+    initial_archive = conv_context.get("content_archive", {})
+    
+    initial_state: AlfredState = {
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+        "user_message": user_message,
+        "router_output": None,
+        "think_output": None,
+        "context": {},
+        "current_step_index": 0,
+        "step_results": {},
+        "current_step_tool_results": [],
+        "current_subdomain": None,
+        "schema_requests": 0,
+        "pending_action": None,
+        "content_archive": initial_archive,
+        "conversation": conv_context,
+        "final_response": None,
+        "error": None,
+    }
+    
+    yield {"type": "thinking", "message": "Planning..."}
+    
+    # Track state for step updates
+    last_step_index = -1
+    total_steps = 0
+    
+    # Use LangGraph's streaming to get node-by-node updates
+    async for event in app.astream(initial_state, stream_mode="updates"):
+        # event is {node_name: node_output}
+        for node_name, node_output in event.items():
+            if node_name == "think" and node_output:
+                think_output = node_output.get("think_output")
+                if think_output and hasattr(think_output, "steps"):
+                    total_steps = len(think_output.steps)
+                    yield {
+                        "type": "plan",
+                        "message": f"Planning {total_steps} step{'s' if total_steps != 1 else ''}...",
+                        "goal": think_output.goal,
+                        "total_steps": total_steps,
+                    }
+            
+            elif node_name == "act" and node_output:
+                current_index = node_output.get("current_step_index", 0)
+                think_output = node_output.get("think_output")
+                
+                # Get step description
+                step_desc = ""
+                if think_output and hasattr(think_output, "steps"):
+                    total_steps = len(think_output.steps)
+                    if current_index < total_steps:
+                        step_desc = think_output.steps[current_index].description
+                
+                # Check if step advanced
+                if current_index > last_step_index:
+                    # Previous step completed
+                    if last_step_index >= 0:
+                        yield {
+                            "type": "step_complete",
+                            "step": last_step_index + 1,
+                            "total": total_steps,
+                        }
+                    
+                    # New step started
+                    yield {
+                        "type": "step",
+                        "step": current_index + 1,
+                        "total": total_steps,
+                        "description": step_desc,
+                    }
+                    last_step_index = current_index
+            
+            elif node_name == "reply" and node_output:
+                # Final step complete
+                if last_step_index >= 0 and total_steps > 0:
+                    yield {
+                        "type": "step_complete",
+                        "step": last_step_index + 1,
+                        "total": total_steps,
+                    }
+    
+    # Get final state (run again to get complete state - streaming doesn't return final)
+    final_state = await app.ainvoke(initial_state)
+    
+    response = final_state.get("final_response", "I'm sorry, I couldn't process that request.")
+    updated_conversation = final_state.get("conversation", conv_context)
+    
+    yield {
+        "type": "done",
+        "response": response,
+        "conversation": updated_conversation,
+    }
