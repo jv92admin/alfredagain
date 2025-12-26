@@ -17,6 +17,11 @@ COPY prompts/ ./prompts/
 # Install Python dependencies
 RUN pip install --no-cache-dir .
 
+# Copy prompts to where the installed package can find them
+# The code looks 5 levels up from site-packages/alfred/graph/nodes/
+RUN mkdir -p /usr/local/lib/python3.11/prompts && \
+    cp -r prompts/* /usr/local/lib/python3.11/prompts/
+
 # Expose port (Railway will set PORT env var)
 EXPOSE 8000
 
