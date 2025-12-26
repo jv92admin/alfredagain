@@ -2,14 +2,15 @@
 Alfred V2 - Model Router.
 
 Selects the appropriate OpenAI model based on task complexity.
-Currently using GPT-4.1-mini for testing (faster than GPT-5 reasoning models).
+Uses different models for different complexity levels:
+- low: gpt-4.1-mini (fast, cheap)
+- medium: gpt-4.1 (capable, good latency)
+- high: gpt-5.1 (full reasoning model)
 
-Complexity levels:
-- low: Simple lookups, confirmations, basic CRUD → gpt-4.1-mini
-- medium: Multi-step reasoning, recipe suggestions → gpt-4.1-mini
-- high: Complex planning, novel problem solving → gpt-4.1-mini (upgrade to gpt-5 later)
+Set ALFRED_USE_ADVANCED_MODELS=false to use gpt-4.1-mini for all levels (dev mode).
 """
 
+import os
 from typing import Literal, TypedDict
 
 
@@ -18,30 +19,53 @@ class ModelConfig(TypedDict, total=False):
 
     model: str
     temperature: float
-    reasoning_effort: str  # "minimal", "low", "medium", "high"
+    reasoning_effort: str  # "minimal", "low", "medium", "high" (for o1 models)
     verbosity: str  # "low", "medium", "high"
 
 
+# Check if advanced models are enabled (default: True for production)
+USE_ADVANCED_MODELS = os.environ.get("ALFRED_USE_ADVANCED_MODELS", "true").lower() == "true"
+
+
 # Model configurations by complexity
-# GPT-4.1-mini for testing (faster, non-reasoning)
-# TODO: Switch to GPT-5 series with reasoning_effort when ready
-MODEL_CONFIGS: dict[str, ModelConfig] = {
-    "low": {
-        "model": "gpt-4.1-mini",
-        "temperature": 0.2,  # Very deterministic for simple CRUD
-        "verbosity": "low",  # Terse output
-    },
-    "medium": {
-        "model": "gpt-4.1-mini",
-        "temperature": 0.5,  # Some flexibility for reasoning
-        "verbosity": "medium",  # Default detail level
-    },
-    "high": {
-        "model": "gpt-4.1-mini",  # TODO: gpt-5 for complex tasks
-        "temperature": 0.7,  # More creative for generation
-        "verbosity": "high",  # Detailed output
-    },
-}
+# When USE_ADVANCED_MODELS is False, all use gpt-4.1-mini for testing
+if USE_ADVANCED_MODELS:
+    MODEL_CONFIGS: dict[str, ModelConfig] = {
+        "low": {
+            "model": "gpt-4.1-mini",
+            "temperature": 0.2,  # Very deterministic for simple CRUD
+            "verbosity": "low",  # Terse output
+        },
+        "medium": {
+            "model": "gpt-4.1",  # Capable with good latency
+            "temperature": 0.5,  # Balanced reasoning
+            "verbosity": "medium",  # Default detail level
+        },
+        "high": {
+            "model": "gpt-5.1",  # Full reasoning model
+            "temperature": 0.7,  # Higher creativity for complex tasks
+            "verbosity": "high",  # Detailed output
+        },
+    }
+else:
+    # Dev mode: all use gpt-4.1-mini
+    MODEL_CONFIGS: dict[str, ModelConfig] = {
+        "low": {
+            "model": "gpt-4.1-mini",
+            "temperature": 0.2,
+            "verbosity": "low",
+        },
+        "medium": {
+            "model": "gpt-4.1-mini",
+            "temperature": 0.5,
+            "verbosity": "medium",
+        },
+        "high": {
+            "model": "gpt-4.1-mini",
+            "temperature": 0.7,
+            "verbosity": "high",
+        },
+    }
 
 # Default config if complexity not recognized
 DEFAULT_CONFIG: ModelConfig = {

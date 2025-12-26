@@ -12,6 +12,7 @@ Now includes full conversation context (last 2 turns, last 2 steps full data).
 Each iteration emits a structured action.
 """
 
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -31,6 +32,7 @@ from alfred.graph.state import (
     StepCompleteAction,
     ToolCallAction,
 )
+from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
 from alfred.tools.crud import execute_crud
@@ -125,7 +127,7 @@ class ActDecision(BaseModel):
     """
 
     action: Literal[
-        "tool_call", "step_complete", "request_schema", "retrieve_step", "ask_user", "blocked", "fail"
+        "tool_call", "step_complete", "request_schema", "retrieve_step", "retrieve_archive", "ask_user", "blocked", "fail"
     ] = Field(description="The action to take")
 
     # For tool_call
@@ -148,6 +150,11 @@ class ActDecision(BaseModel):
     # For retrieve_step (fetch older step data)
     step_index: int | None = Field(
         default=None, description="Index of the step to retrieve (0-based)"
+    )
+    
+    # For retrieve_archive (fetch generated content from previous turns)
+    archive_key: str | None = Field(
+        default=None, description="Key of archived content to retrieve (e.g., 'generated_recipes')"
     )
 
     # For ask_user
@@ -231,62 +238,44 @@ def _get_system_prompt() -> str:
 
 
 def _format_step_results(step_results: dict[int, Any], current_index: int) -> str:
-    """Format previous step results for context - showing actual tool outputs as FACTS."""
+    """Format previous step results for context.
+    
+    Last FULL_DETAIL_STEPS get FULL data (essential for analyze steps).
+    Older steps get summarized.
+    """
     import json
     
     if not step_results:
         return "### Previous Step Results\n*No previous steps completed yet.*"
 
     lines = ["### Previous Step Results", ""]
+    
+    # Determine which steps get full detail
+    max_step = max(step_results.keys()) if step_results else -1
+    full_detail_threshold = max_step - FULL_DETAIL_STEPS + 1  # Last N steps get full detail
 
     for idx in sorted(step_results.keys()):
         result = step_results[idx]
         step_num = idx + 1
-
-        # Handle tuple format from current_step_tool_results: [(tool_name, result), ...]
-        if isinstance(result, list) and result and isinstance(result[0], tuple):
-            lines.append(f"**Step {step_num}** completed with {len(result)} tool calls:")
-            for tool_name, tool_result in result:
-                if isinstance(tool_result, list):
-                    if len(tool_result) == 0:
-                        lines.append(f"  - `{tool_name}`: 0 records (empty)")
-                    else:
-                        lines.append(f"  - `{tool_name}`: {len(tool_result)} records")
-                        # Show first few items
-                        for item in tool_result[:3]:
-                            if isinstance(item, dict):
-                                name = item.get("name", item.get("id", "?"))
-                                lines.append(f"    - {name}")
-                        if len(tool_result) > 3:
-                            lines.append(f"    - ... and {len(tool_result) - 3} more")
-                elif isinstance(tool_result, dict):
-                    name = tool_result.get("name", tool_result.get("id", "record"))
-                    lines.append(f"  - `{tool_name}`: created/updated '{name}'")
-                else:
-                    lines.append(f"  - `{tool_name}`: {tool_result}")
-        # Handle simple list of dicts (normal step completion with data)
-        elif isinstance(result, list):
-            if len(result) == 0:
-                lines.append(f"**Step {step_num}**: 0 records (empty)")
-            else:
-                lines.append(f"**Step {step_num}**: {len(result)} records:")
-                for item in result[:5]:
-                    if isinstance(item, dict):
-                        name = item.get("name", item.get("id", "item"))
-                        qty = item.get("quantity", "")
-                        unit = item.get("unit", "")
-                        if qty and unit:
-                            lines.append(f"  - {name}: {qty} {unit}")
-                        else:
-                            lines.append(f"  - {name}")
-                if len(result) > 5:
-                    lines.append(f"  - ... and {len(result) - 5} more")
-        elif isinstance(result, dict):
+        is_recent = idx >= full_detail_threshold
+        
+        # Recent steps: FULL JSON data (critical for analyze steps)
+        if is_recent:
             lines.append(f"**Step {step_num}**: {json.dumps(result, default=str)}")
-        elif isinstance(result, int):
-            lines.append(f"**Step {step_num}**: Affected {result} records")
+        # Older steps: summarized
         else:
-            lines.append(f"**Step {step_num}**: {result}")
+            if isinstance(result, list) and result and isinstance(result[0], tuple):
+                lines.append(f"**Step {step_num}** completed with {len(result)} tool calls")
+            elif isinstance(result, list):
+                lines.append(f"**Step {step_num}**: {len(result)} records")
+            elif isinstance(result, dict):
+                # Show key facts only
+                keys = list(result.keys())[:3]
+                lines.append(f"**Step {step_num}**: Data with keys: {', '.join(keys)}")
+            elif isinstance(result, int):
+                lines.append(f"**Step {step_num}**: Affected {result} records")
+            else:
+                lines.append(f"**Step {step_num}**: (use retrieve_step for details)")
         
         lines.append("")
 
@@ -502,6 +491,17 @@ async def act_node(state: AlfredState) -> dict:
     conversation_section = format_full_context(
         conversation, step_results, current_step_index, ACT_CONTEXT_THRESHOLD
     )
+    
+    # Content archive (generated content from previous turns)
+    content_archive = state.get("content_archive", {})
+    archive_section = ""
+    if content_archive:
+        archive_lines = ["### Available Archives (from previous turns)"]
+        archive_lines.append("Use `{\"action\": \"retrieve_archive\", \"archive_key\": \"...\"}` to fetch full content.")
+        for key, val in content_archive.items():
+            desc = val.get("description", "No description")[:80]
+            archive_lines.append(f"- `{key}`: {desc}")
+        archive_section = "\n".join(archive_lines) + "\n"
 
     # Common context block (reused across all step types)
     # NOTE: We intentionally DON'T show "Original Goal" here.
@@ -514,11 +514,23 @@ async def act_node(state: AlfredState) -> dict:
 ### Conversation History
 {conversation_section}
 
+{archive_section}
 {prev_step_section}
 
 {this_step_section}
 
 ---"""
+
+    # Fetch user profile for analyze/generate steps (async enrichment)
+    profile_section = ""
+    if step_type in ("analyze", "generate"):
+        try:
+            user_id = state.get("user_id")
+            if user_id:
+                profile = await get_cached_profile(user_id)
+                profile_section = format_profile_for_prompt(profile)
+        except Exception:
+            pass  # Profile is optional, don't fail on errors
 
     # Build prompt based on step type
     # Unified prompt structure for all step types:
@@ -528,13 +540,18 @@ async def act_node(state: AlfredState) -> dict:
     # 4. Context (background: previous steps, conversation)
     # 5. Instructions (what to do next)
     
+    today = date.today().isoformat()
+    
     if step_type == "analyze":
         user_prompt = f"""## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | analyze (no db calls) |
+| Today | {today} |
 
 ---
+
+{profile_section}
 
 ## 1. Task
 
@@ -566,14 +583,22 @@ Analyze the data above and complete the step:
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | generate (create content, no db calls) |
+| Today | {today} |
 
 ---
+
+{profile_section}
 
 ## 1. Task
 
 User said: "{state.get("user_message", "")}"
 
 Your job this step: **{current_step.description}**
+
+**Use the USER PROFILE above to personalize your generation:**
+- Respect dietary restrictions and allergies
+- Consider available equipment and time budget
+- Align with nutrition goals and preferred complexity
 
 ---
 
@@ -614,6 +639,7 @@ Generate the requested content and complete the step:
 | Goal | {current_step.description} |
 | Type | crud |
 | Progress | {tool_calls_made} tool calls{last_tool_summary} |
+| Today | {today} |
 
 ---
 
@@ -768,12 +794,41 @@ What's next?
                 ),
             }
 
+    # Handle retrieve_archive - fetch generated content from previous turns
+    if decision.action == "retrieve_archive" and decision.archive_key:
+        content_archive = state.get("content_archive", {})
+        if decision.archive_key in content_archive:
+            archived = content_archive[decision.archive_key]
+            # Add archived data to current step's tool results so it's visible
+            new_tool_results = current_step_tool_results + [
+                (f"archive:{decision.archive_key}", archived.get("data"))
+            ]
+            return {
+                "pending_action": RetrieveStepAction(step_index=-1),  # Special marker
+                "current_step_tool_results": new_tool_results,
+            }
+        else:
+            # Archive key not found
+            available_keys = list(content_archive.keys())
+            return {
+                "pending_action": BlockedAction(
+                    reason_code="INSUFFICIENT_INFO",
+                    details=f"Archive key '{decision.archive_key}' not found. Available: {available_keys}",
+                    suggested_next="ask_user",
+                ),
+            }
+
     # Handle step_complete - NOW we advance the step
     if decision.action == "step_complete":
-        # Combine current step's tool results with any generated data
-        step_data = current_step_tool_results if current_step_tool_results else None
-        if decision.data is not None:
+        # For CRUD steps: keep the actual tool results (not LLM's summary)
+        # For analyze/generate: use decision.data (LLM's output IS the result)
+        if step_type == "crud" and current_step_tool_results:
+            # Preserve actual DB results - critical for later analyze steps
+            step_data = current_step_tool_results
+        elif decision.data is not None:
             step_data = decision.data
+        else:
+            step_data = current_step_tool_results
         
         # Cache the combined result for this step
         new_step_results = step_results.copy()
@@ -783,6 +838,28 @@ What's next?
             result_summary=decision.result_summary or "Step completed",
             data=step_data,
         )
+        
+        # Archive generate/analyze step results for cross-turn retrieval
+        # This allows "save those recipes" to work even in a later turn
+        new_archive = state.get("content_archive", {}).copy()
+        if step_type in ("generate", "analyze") and step_data:
+            # Create a descriptive archive key
+            archive_key = f"step_{current_step_index}_{step_type}"
+            # Also try to create a semantic key based on step description
+            desc_lower = current_step.description.lower()
+            if "recipe" in desc_lower:
+                archive_key = "generated_recipes"
+            elif "meal" in desc_lower and "plan" in desc_lower:
+                archive_key = "generated_meal_plan"
+            elif "analyz" in desc_lower or "compar" in desc_lower:
+                archive_key = "analysis_result"
+            
+            new_archive[archive_key] = {
+                "step_index": current_step_index,
+                "step_type": step_type,
+                "description": current_step.description,
+                "data": step_data,
+            }
 
         return {
             "pending_action": action,
@@ -790,6 +867,7 @@ What's next?
             "step_results": new_step_results,
             "current_step_tool_results": [],  # Reset for next step
             "schema_requests": 0,
+            "content_archive": new_archive,
         }
 
     # Handle other actions (ask_user, blocked, fail)

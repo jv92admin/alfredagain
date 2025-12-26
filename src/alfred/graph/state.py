@@ -212,6 +212,11 @@ class ConversationContext(TypedDict, total=False):
     # Older step summaries (for reference, Act can retrieve full data)
     step_summaries: list[dict]  # StepSummary as dict
 
+    # Content archive for generated content (persists across turns)
+    # Allows "save those recipes we discussed" to work in later turns
+    # Keys: "generated_recipes", "generated_meal_plan", "analysis_result", etc.
+    content_archive: dict[str, Any]
+    
     # Tracked entities for "that recipe" resolution
     # Key is entity type ("recipe", "inventory_item", etc.)
     # Value is the most recent entity of that type
@@ -259,6 +264,11 @@ class AlfredState(TypedDict, total=False):
     current_subdomain: str | None  # Active subdomain for schema
     schema_requests: int  # Count of schema requests (for safeguard)
     pending_action: ActAction | None
+
+    # Content archive (persists across turns for generate/analyze step results)
+    # Keys: "turn_{turn_num}_step_{step_num}" or descriptive like "recipes_generated"
+    # Allows Act to retrieve generated content from previous turns
+    content_archive: dict[str, Any]
 
     # Conversation context (Phase 5)
     conversation: ConversationContext

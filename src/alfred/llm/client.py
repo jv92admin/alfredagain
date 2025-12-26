@@ -109,17 +109,17 @@ async def call_llm(
         "store": False,  # Explicitly disable conversation storage
     }
 
-    # Note: GPT-5 series models don't support temperature parameter
-    # They use reasoning_effort instead for controlling thinking depth
-    # Only add temperature for non-GPT-5 models
-    if not model.startswith("gpt-5"):
-        # Use explicit temperature from config, or default to 0.5
+    # Handle model-specific parameters
+    if model.startswith("o1"):
+        # o1 models require temperature=1 and use reasoning_effort
+        api_kwargs["temperature"] = 1.0
+        if "reasoning_effort" in config:
+            api_kwargs["reasoning_effort"] = config["reasoning_effort"]
+    elif not model.startswith("gpt-5"):
+        # Standard models use temperature
         temperature = config.get("temperature", 0.5)
         api_kwargs["temperature"] = temperature
-
-    # Note: The actual reasoning and verbosity params depend on the OpenAI API version
-    # Instructor may not support them directly yet, so we log them for now
-    # and apply what we can
+    # GPT-5 models use reasoning_effort without temperature
 
     try:
         # Make the call with Instructor

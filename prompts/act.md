@@ -85,9 +85,17 @@ This finds recipes matching broccoli OR rice.
 |--------|-------------|-------------------|
 | `tool_call` | Execute a CRUD operation | You're called again with the result |
 | `step_complete` | This step is DONE | Next step begins (or Reply) |
-| `retrieve_step` | Need data from an older step | Data appears in "This Step So Far" |
+| `retrieve_step` | Need data from an older step (same turn) | Data appears in "This Step So Far" |
+| `retrieve_archive` | Need generated content from previous turn | Archived data appears in "This Step So Far" |
 | `ask_user` | Need clarification | User responds, you continue |
 | `blocked` | Cannot proceed | Triggers replanning or error |
+
+**Retrieving Archived Content:**
+If the prompt shows "Available Archives", you can fetch full content from a previous turn:
+```json
+{"action": "retrieve_archive", "archive_key": "generated_recipes"}
+```
+Use this when you need data that was generated earlier (e.g., "save those recipes we discussed").
 
 ---
 
@@ -101,6 +109,8 @@ This finds recipes matching broccoli OR rice.
 5. Call `step_complete` AFTER the tool executes
 
 **⚠️ You MUST call a tool before `step_complete`.** CRUD = database operation. No tool call = nothing saved.
+
+**⚠️ Match the step's specificity.** If step says "Read meal plans" with no date range, use `filters: []`. Don't invent filters (like `date = today`) that aren't in the step description. General step = general query.
 
 ### Analyze Steps
 - **No tool calls.** Your job is to reason.
@@ -207,3 +217,44 @@ Only use this when:
 1. (Optional) One `db_read` to check for duplicates → empty = good, proceed
 2. `db_create` with all items to add
 3. `step_complete`
+
+---
+
+## 8. Special Patterns
+
+### Linked Tables
+Some tables have required children (e.g., `recipes` → `recipe_ingredients`).
+**Check the schema for warnings about linked tables.** Create parent first, then children, before `step_complete`.
+
+### Batch Cooking (Meal Plan)
+For experiments, stocks, or batch cooking sessions, use `meal_type = 'other'`:
+```json
+{"tool": "db_create", "params": {"table": "meal_plans", "data": {
+  "date": "2025-01-05",
+  "meal_type": "other",
+  "notes": "Make chicken stock for the week"
+}}}
+```
+
+### Tasks
+For reminders and transient to-dos:
+```json
+{"tool": "db_create", "params": {"table": "tasks", "data": {
+  "title": "Thaw chicken for Tuesday dinner",
+  "due_date": "2025-01-06",
+  "category": "prep"
+}}}
+```
+
+Task categories: `prep`, `shopping`, `cleanup`, `other`
+
+### Preferences Update
+When user mentions equipment, goals, or time constraints:
+```json
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {
+  "available_equipment": ["instant-pot", "air-fryer"],
+  "time_budget_minutes": 30,
+  "nutrition_goals": ["high-protein"]
+}}}
+```
+Empty filters updates the current user's preferences row.

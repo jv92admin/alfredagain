@@ -28,7 +28,9 @@ from alfred.tools.crud import (
 )
 from alfred.tools.schema import (
     SUBDOMAIN_REGISTRY,
+    get_complexity_rules,
     get_schema_with_fallback,
+    get_subdomain_tables,
     schema_cache,
 )
 
@@ -48,5 +50,7 @@ __all__ = [
     # Schema
     "SUBDOMAIN_REGISTRY",
     "get_schema_with_fallback",
+    "get_subdomain_tables",
+    "get_complexity_rules",
     "schema_cache",
 ]

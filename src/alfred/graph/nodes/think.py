@@ -6,15 +6,62 @@ It outputs steps with subdomain hints (not tool names).
 NO data fetching - Act handles all data access via CRUD.
 
 Now includes conversation context for multi-turn awareness.
+Applies automatic complexity escalation for linked-table operations.
 
 Output: Steps with subdomain assignments for Act node to execute.
 """
 
+from datetime import date
 from pathlib import Path
 
-from alfred.graph.state import AlfredState, ThinkOutput
+from alfred.graph.state import AlfredState, PlannedStep, ThinkOutput
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
+from alfred.tools.schema import get_complexity_rules
+
+
+# Mutation verbs that trigger complexity escalation
+MUTATION_VERBS = frozenset([
+    "create", "save", "add", "update", "delete", "remove", 
+    "insert", "modify", "generate", "write", "set", "change"
+])
+
+
+def adjust_step_complexity(step: PlannedStep) -> PlannedStep:
+    """
+    Auto-escalate step complexity based on subdomain rules.
+    
+    Linked-table operations (e.g., recipes with recipe_ingredients)
+    benefit from stronger models to handle parent-child patterns.
+    
+    Args:
+        step: The planned step from LLM
+        
+    Returns:
+        The step with potentially adjusted complexity
+    """
+    rules = get_complexity_rules(step.subdomain)
+    if not rules:
+        return step
+    
+    # Check if step description contains mutation verbs
+    description_lower = step.description.lower()
+    is_mutation = any(verb in description_lower for verb in MUTATION_VERBS)
+    
+    if is_mutation and rules.get("mutation"):
+        # Only escalate if the rule is higher than current
+        complexity_order = {"low": 0, "medium": 1, "high": 2}
+        current_level = complexity_order.get(step.complexity, 0)
+        rule_level = complexity_order.get(rules["mutation"], 0)
+        
+        if rule_level > current_level:
+            step.complexity = rules["mutation"]
+    
+    elif not is_mutation and rules.get("read"):
+        # Apply read complexity rule if present
+        step.complexity = rules["read"]
+    
+    return step
 
 
 # Load prompt once at module level
@@ -57,6 +104,8 @@ async def think_node(state: AlfredState) -> dict:
     context_section = format_condensed_context(conversation)
     
     # Build the user prompt following: Task → Context → Instructions
+    today = date.today().isoformat()
+    
     user_prompt = f"""## Task
 
 **Goal**: {router_output.goal}
@@ -64,6 +113,8 @@ async def think_node(state: AlfredState) -> dict:
 **User said**: "{state["user_message"]}"
 
 **Agent**: {router_output.agent}
+
+**Today**: {today}
 
 ---
 
@@ -88,6 +139,11 @@ Create an execution plan. For each step, specify:
         user_prompt=user_prompt,
         complexity=router_output.complexity,
     )
+
+    # Apply automatic complexity escalation based on subdomain rules
+    # (e.g., recipe mutations → high complexity for linked tables)
+    adjusted_steps = [adjust_step_complexity(step) for step in result.steps]
+    result.steps = adjusted_steps
 
     return {
         "think_output": result,

@@ -17,15 +17,64 @@ from alfred.db.client import get_client
 # Subdomain Registry
 # =============================================================================
 
-# Maps high-level domains to database tables
-# This is the ONLY place we maintain table groupings
-SUBDOMAIN_REGISTRY: dict[str, list[str]] = {
-    "inventory": ["inventory", "ingredients"],
-    "recipes": ["recipes", "recipe_ingredients", "ingredients"],
-    "shopping": ["shopping_list", "ingredients"],  # shopping_list IS the items (no separate items table)
-    "meal_plan": ["meal_plans", "recipes"],  # meal_plans has recipe_id directly
-    "preferences": ["preferences"],  # Table is named 'preferences', not 'user_preferences'
+# Subdomain configuration type
+SubdomainConfig = dict[str, list[str] | dict[str, str] | None]
+
+# Maps high-level domains to database tables and complexity rules
+# This is the ONLY place we maintain table groupings and auto-escalation rules
+#
+# complexity_rules:
+#   - "mutation": complexity level for create/update/delete operations
+#   - "read": complexity level for read operations (None = LLM decides)
+#
+SUBDOMAIN_REGISTRY: dict[str, SubdomainConfig] = {
+    "inventory": {
+        "tables": ["inventory", "ingredients"],
+        # No complexity rules - simple single-table operations
+    },
+    "recipes": {
+        "tables": ["recipes", "recipe_ingredients", "ingredients"],
+        "complexity_rules": {"mutation": "high"},  # Linked tables require stronger model
+    },
+    "shopping": {
+        "tables": ["shopping_list", "ingredients"],
+        # No complexity rules - simple single-table operations
+    },
+    "meal_plan": {
+        "tables": ["meal_plans", "recipes"],
+        "complexity_rules": {"mutation": "medium"},  # References recipes, moderately complex
+    },
+    "tasks": {
+        "tables": ["tasks"],
+        # No complexity rules - simple single-table operations
+        # Tasks can link to meal_plans, recipes, or be freeform
+    },
+    "preferences": {
+        "tables": ["preferences", "flavor_preferences"],
+        # No complexity rules - simple single-table operations
+    },
+    "history": {
+        "tables": ["cooking_log"],
+        # No complexity rules - event logging
+    },
 }
+
+
+def get_subdomain_tables(subdomain: str) -> list[str]:
+    """Get the list of tables for a subdomain."""
+    config = SUBDOMAIN_REGISTRY.get(subdomain, {})
+    if isinstance(config, dict):
+        return config.get("tables", [])
+    # Backwards compatibility if somehow still a list
+    return config if isinstance(config, list) else []
+
+
+def get_complexity_rules(subdomain: str) -> dict[str, str] | None:
+    """Get complexity rules for a subdomain."""
+    config = SUBDOMAIN_REGISTRY.get(subdomain, {})
+    if isinstance(config, dict):
+        return config.get("complexity_rules")
+    return None
 
 
 # =============================================================================
@@ -82,7 +131,7 @@ async def get_subdomain_schema(subdomain: str) -> str:
     Returns:
         Markdown-formatted schema for LLM consumption
     """
-    tables = SUBDOMAIN_REGISTRY.get(subdomain, [])
+    tables = get_subdomain_tables(subdomain)
 
     if not tables:
         return f"Unknown subdomain: {subdomain}"
@@ -230,10 +279,18 @@ FIELD_ENUMS: dict[str, dict[str, list[str]]] = {
         "category": ["produce", "dairy", "meat", "seafood", "bakery", "frozen", "canned", "dry goods", "beverages", "snacks", "condiments", "spices"],
     },
     "meal_plan": {
-        "meal_type": ["breakfast", "lunch", "dinner", "snack"],
+        "meal_type": ["breakfast", "lunch", "dinner", "snack", "other"],
+    },
+    "tasks": {
+        "category": ["prep", "shopping", "cleanup", "other"],
     },
     "preferences": {
         "cooking_skill_level": ["beginner", "intermediate", "advanced"],
+        "cooking_frequency": ["daily", "3-4x/week", "weekends-only", "rarely"],
+        "preferred_complexity": ["quick-easy", "moderate", "elaborate"],
+    },
+    "history": {
+        "rating": ["1", "2", "3", "4", "5"],
     },
 }
 
@@ -244,8 +301,17 @@ SEMANTIC_NOTES: dict[str, str] = {
 """,
     "recipes": "",
     "shopping": "",
-    "meal_plan": "",
+    "meal_plan": """
+**Note**: Meal plans are cooking sessions (what to cook on what day). For reminders like "thaw chicken" or "buy wine", use the `tasks` subdomain instead.
+""",
+    "tasks": """
+**Note**: Tasks are freeform to-dos. They can optionally link to a meal_plan or recipe, but don't have to.
+""",
     "preferences": "",
+    "history": """
+**Note**: Cooking log is an event log. Each entry represents one time a recipe was cooked.
+Use this to answer "what did I cook last week?" or "how often do I make this?"
+""",
 }
 
 # Subdomain-specific CRUD examples (just 1-2 key examples, not exhaustive)
@@ -306,15 +372,73 @@ Delete specific items by name: `{"tool": "db_delete", "params": {"table": "shopp
 
 Get meal plans: `{"tool": "db_read", "params": {"table": "meal_plans", "filters": [], "limit": 10}}`
 
+Get this week's meals: `{"tool": "db_read", "params": {"table": "meal_plans", "filters": [{"field": "date", "op": ">=", "value": "2025-01-01"}, {"field": "date", "op": "<=", "value": "2025-01-07"}]}}`
+
 Add to meal plan: `{"tool": "db_create", "params": {"table": "meal_plans", "data": {"recipe_id": "<recipe-uuid>", "date": "2025-01-02", "meal_type": "dinner", "servings": 2}}}`
 
-**Note**: `meal_plans` stores items directly (each row is a meal on a date). Not a parent-child structure.
+**Batch cooking session** (making stock, prep bases):
+```json
+{"tool": "db_create", "params": {"table": "meal_plans", "data": {"date": "2025-01-05", "meal_type": "other", "notes": "Make chicken stock for the week"}}}
+```
+
+**Note**: Each row is a meal/cooking session on a date. For reminders/to-dos, use the `tasks` subdomain instead.
+""",
+    "tasks": """## Examples
+
+Get pending tasks: `{"tool": "db_read", "params": {"table": "tasks", "filters": [{"field": "completed", "op": "=", "value": false}]}}`
+
+Create freeform reminder: `{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Buy new chef's knife", "category": "shopping"}}}`
+
+Create task linked to meal plan:
+```json
+{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Thaw chicken", "due_date": "2025-01-06", "category": "prep", "meal_plan_id": "<meal-plan-uuid>"}}}
+```
+
+Create task linked to recipe:
+```json
+{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Prep mise en place", "due_date": "2025-01-06", "category": "prep", "recipe_id": "<recipe-uuid>"}}}
+```
+
+Mark task complete: `{"tool": "db_update", "params": {"table": "tasks", "filters": [{"field": "id", "op": "=", "value": "<task-uuid>"}], "data": {"completed": true}}}`
 """,
     "preferences": """## Examples
 
 Get preferences: `{"tool": "db_read", "params": {"table": "preferences", "filters": [], "limit": 1}}`
 
 Update preferences: `{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"favorite_cuisines": ["italian", "mexican"]}}}`
+
+**Update equipment and time budget:**
+```json
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"available_equipment": ["instant-pot", "air-fryer"], "time_budget_minutes": 30}}}
+```
+
+**Update nutrition goals:**
+```json
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"nutrition_goals": ["high-protein", "low-carb"]}}}
+```
+""",
+    "history": """## Examples
+
+Log a cooked meal:
+```json
+{"tool": "db_create", "params": {"table": "cooking_log", "data": {
+  "recipe_id": "<recipe-uuid>",
+  "servings": 4,
+  "rating": 5,
+  "notes": "Came out great! Added extra garlic."
+}}}
+```
+
+Get recent cooking history: `{"tool": "db_read", "params": {"table": "cooking_log", "filters": [], "limit": 10}}`
+
+Get cooking log for specific recipe:
+```json
+{"tool": "db_read", "params": {"table": "cooking_log", "filters": [
+  {"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}
+]}}
+```
+
+**Note:** Logging a meal auto-updates `flavor_preferences` via trigger.
 """,
 }
 
@@ -393,12 +517,14 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | instructions | text[] | No |
 | tags | text[] | Yes |
 | source_url | text | Yes |
+| parent_recipe_id | uuid | Yes ← FK to recipes.id for variations |
 
 ### recipe_ingredients (REQUIRED for each recipe!)
 | Column | Type | Nullable |
 |--------|------|----------|
 | id | uuid | No |
 | recipe_id | uuid | No ← FK to recipes.id |
+| user_id | uuid | No ← auto-injected |
 | ingredient_id | uuid | Yes |
 | name | text | No |
 | quantity | numeric | Yes |
@@ -406,10 +532,28 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | notes | text | Yes |
 | is_optional | boolean | No |
 
-**⚠️ IMPORTANT: recipes + recipe_ingredients are linked!**
-- When CREATING a recipe: First create `recipes` row, get its `id`, then create `recipe_ingredients` rows with that `recipe_id`
-- When READING ingredients: Query `recipe_ingredients` WHERE `recipe_id` = the recipe's id
-- A recipe without `recipe_ingredients` rows is incomplete!
+**🛑 STOP! Recipe creation requires 2 tool calls:**
+1. `db_create` on `recipes` → note the `id` in the response
+2. `db_create` on `recipe_ingredients` with that `recipe_id` (user_id auto-added)
+
+**DO NOT call `step_complete` until BOTH are done!**
+A recipe without `recipe_ingredients` rows will have no ingredients displayed.
+
+**Deleting ONE recipe requires 2 steps (FK order):**
+1. `db_delete` on `recipe_ingredients` with filter `{"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}`
+2. `db_delete` on `recipes` with filter `{"field": "id", "op": "=", "value": "<recipe-uuid>"}`
+
+**Deleting ALL recipes requires 2 steps:**
+1. `db_delete` on `recipe_ingredients` (empty filters OK - deletes ALL user's ingredients)
+2. `db_delete` on `recipes` (empty filters OK - deletes ALL user's recipes)
+
+⚠️ Empty filters = delete EVERYTHING. To delete ONE recipe, ALWAYS filter by recipe_id/id!
+
+When READING a recipe's ingredients: Query `recipe_ingredients` WHERE `recipe_id` = the recipe's id
+
+**Recipe Variations:**
+- Use `parent_recipe_id` to link a variation to its base recipe
+- Example: "Spicy Butter Chicken" with `parent_recipe_id` pointing to "Butter Chicken"
 
 ### ingredients
 | Column | Type | Nullable |
@@ -433,6 +577,15 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | is_purchased | boolean | No (default false) |
 | source | text | Yes |
 
+**⚠️ Smart Shopping List Updates:**
+When adding ingredients from recipes/meal plans:
+1. **Read first** — Check what's already on the shopping list
+2. **Combine duplicates** — If "olive oil" is already listed, don't add a second row
+3. **Update quantities** — For countable items (2 eggs + 3 eggs = 5 eggs), increase quantity
+4. **Keep separate for staples** — Bottles/jars (soy sauce, olive oil) often don't need quantity math
+
+Pattern: `db_read` → merge in analyze step → `db_create` new items + `db_update` existing quantities
+
 ### ingredients
 | Column | Type | Nullable |
 |--------|------|----------|
@@ -447,10 +600,14 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 |--------|------|----------|
 | id | uuid | No |
 | date | date | No |
-| meal_type | text | No |
-| recipe_id | uuid | Yes |
+| meal_type | text | No ← breakfast, lunch, dinner, snack, or **other** (for experiments/stocks) |
+| recipe_id | uuid | Yes ← Link to recipe being cooked |
 | notes | text | Yes |
 | servings | integer | Yes (default 1) |
+
+**Meal Types:**
+- `breakfast`, `lunch`, `dinner`, `snack` = Standard meals
+- `other` = Experiments, making stock, batch cooking base ingredients
 
 ### recipes
 | Column | Type | Nullable |
@@ -459,6 +616,30 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | name | text | No |
 | cuisine | text | Yes |
 | difficulty | text | Yes |
+""",
+    "tasks": """## Available Tables (subdomain: tasks)
+
+### tasks
+| Column | Type | Nullable |
+|--------|------|----------|
+| id | uuid | No |
+| title | text | No |
+| due_date | date | Yes ← Optional due date |
+| category | text | Yes ← prep, shopping, cleanup, other |
+| completed | boolean | No (default false) |
+| recipe_id | uuid | Yes ← Optional: link to a recipe |
+| meal_plan_id | uuid | Yes ← Optional: link to a meal plan |
+
+**Tasks are freeform by default.** They can optionally link to:
+- A recipe (e.g., "Prep ingredients for butter chicken")
+- A meal plan (e.g., "Thaw chicken for Monday's dinner")
+- Or nothing (e.g., "Buy new chef's knife")
+
+**Categories:**
+- `prep` = Kitchen prep work (thaw, marinate, chop)
+- `shopping` = Buying things
+- `cleanup` = Kitchen maintenance
+- `other` = Everything else
 """,
     "preferences": """## Available Tables (subdomain: preferences)
 
@@ -470,8 +651,42 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | allergies | text[] | Yes |
 | favorite_cuisines | text[] | Yes |
 | disliked_ingredients | text[] | Yes |
-| cooking_skill_level | text | Yes (default 'intermediate') |
+| cooking_skill_level | text | Yes ← beginner, intermediate, advanced |
 | household_size | integer | Yes (default 1) |
+| nutrition_goals | text[] | Yes ← high-protein, low-carb, low-sodium, etc. |
+| cooking_frequency | text | Yes ← daily, 3-4x/week, weekends-only, rarely |
+| available_equipment | text[] | Yes ← instant-pot, air-fryer, grill, sous-vide, etc. |
+| time_budget_minutes | integer | Yes (default 30) ← Typical time per meal |
+| preferred_complexity | text | Yes (default 'moderate') ← quick-easy, moderate, elaborate |
+
+### flavor_preferences
+| Column | Type | Nullable |
+|--------|------|----------|
+| id | uuid | No |
+| ingredient_id | uuid | No ← FK to ingredients |
+| preference_score | numeric | Yes ← Positive = liked, Negative = disliked |
+| times_used | integer | Yes ← Auto-updated from cooking_log |
+| last_used_at | timestamptz | Yes ← Auto-updated from cooking_log |
+
+**Note:** `flavor_preferences` is auto-updated by triggers when you log a cooked meal.
+""",
+    "history": """## Available Tables (subdomain: history)
+
+### cooking_log
+| Column | Type | Nullable |
+|--------|------|----------|
+| id | uuid | No |
+| recipe_id | uuid | Yes ← FK to recipes |
+| cooked_at | timestamptz | Yes (default NOW()) |
+| servings | integer | Yes |
+| rating | integer | Yes ← 1-5 stars |
+| notes | text | Yes |
+| from_meal_plan_id | uuid | Yes ← If cooked from meal plan |
+
+**Cooking Log:**
+- Log when you cook a recipe to track history
+- Rate recipes 1-5 stars
+- Links to flavor_preferences via trigger (auto-updates ingredient usage)
 """,
 }
 
@@ -523,7 +738,8 @@ async def validate_schema_drift() -> list[str]:
     """
     warnings = []
     
-    for subdomain, tables in SUBDOMAIN_REGISTRY.items():
+    for subdomain in SUBDOMAIN_REGISTRY:
+        tables = get_subdomain_tables(subdomain)
         for table in tables:
             try:
                 db_schema = await get_table_schema(table)

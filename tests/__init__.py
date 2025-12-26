@@ -1,2 +1,1 @@
-"""Alfred V2 - Test Suite."""
-
+"""Alfred V2 Test Suite."""

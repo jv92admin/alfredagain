@@ -190,63 +190,42 @@ def _format_execution_summary(
         lines.append(f"### Step {idx + 1}: {step_desc}")
         lines.append(f"Type: {step_type}")
         
-        # Format the outcome
+        # Format the outcome - Reply needs accuracy but NOT raw IDs/schema
+        # Strip internal fields, keep human-readable content
+        
         if isinstance(result, list):
             if len(result) == 0:
                 lines.append("Outcome: No records found")
             else:
                 lines.append(f"Outcome: Found {len(result)} items")
-                # Show items with key details
-                for item in result:
-                    if isinstance(item, dict):
-                        name = item.get("name", item.get("id", "item"))
-                        qty = item.get("quantity", "")
-                        unit = item.get("unit", "")
-                        location = item.get("location", "")
-                        expiry = item.get("expiry_date", "")
-                        
-                        parts = [f"  - {name}"]
-                        if qty and unit:
-                            parts.append(f"({qty} {unit})")
-                        elif qty:
-                            parts.append(f"({qty})")
-                        if location:
-                            parts.append(f"[{location}]")
-                        if expiry:
-                            parts.append(f"expires {expiry}")
-                        lines.append(" ".join(parts))
-                    else:
-                        lines.append(f"  - {item}")
+                # Format as human-readable list, not raw JSON
+                lines.append(_format_items_for_reply(result))
         
         elif isinstance(result, dict):
             # Single record created/updated or structured analysis
             if "deleted" in result:
-                # Deletion result - handle both list and count formats
                 deleted = result.get("deleted", [])
                 remaining = result.get("remaining", [])
                 if isinstance(deleted, int):
-                    # LLM returned count instead of list
                     lines.append(f"Outcome: Deleted {deleted} items")
                 elif isinstance(deleted, list) and deleted:
-                    lines.append(f"Outcome: Deleted {len(deleted)} items ({', '.join(str(d) for d in deleted)})")
+                    lines.append(f"Outcome: Deleted {len(deleted)} items ({', '.join(str(d) for d in deleted[:10])})")
                 else:
                     lines.append("Outcome: Nothing to delete (already empty)")
                 if remaining and isinstance(remaining, list):
-                    lines.append(f"Remaining: {', '.join(str(r) for r in remaining)}")
-            elif _has_single_list_value(result):
-                # Wrapped list result ({"any_key": [...]}) - unwrap and format
-                key, items = _get_single_list_value(result)
-                lines.extend(_format_item_list(items, label=key))
-            elif "name" in result:
-                # Created record
-                name = result.get("name", "record")
-                lines.append(f"Outcome: Created/Updated '{name}'")
-                for key in ["cuisine", "difficulty", "servings", "quantity", "unit"]:
-                    if key in result and result[key]:
-                        lines.append(f"  {key}: {result[key]}")
+                    lines.append(f"Remaining: {len(remaining)} items")
             else:
-                # Generic dict (analysis result, generated content)
-                lines.append(f"Outcome: {_summarize_dict(result)}")
+                # All other dicts: analysis, generated content, created records
+                if step_type == "analyze":
+                    lines.append("Outcome: Analysis complete")
+                elif step_type == "generate":
+                    lines.append("Outcome: Content generated")
+                elif "name" in result:
+                    lines.append(f"Outcome: Created/Updated '{result.get('name', 'record')}'")
+                else:
+                    lines.append("Outcome: Completed")
+                # Format dict as human-readable, stripping IDs
+                lines.append(_format_dict_for_reply(result, step_type))
         
         elif isinstance(result, int):
             lines.append(f"Outcome: Affected {result} records")
@@ -322,3 +301,124 @@ def _summarize_dict(d: dict) -> str:
     # Fall back to key listing
     keys = list(d.keys())[:5]
     return f"Data with keys: {', '.join(keys)}"
+
+
+# =============================================================================
+# Human-Readable Formatting for Reply (strips IDs, keeps useful fields)
+# =============================================================================
+
+# Fields to strip from Reply output (internal/technical)
+_STRIP_FIELDS = {"id", "user_id", "ingredient_id", "recipe_id", "meal_plan_id", 
+                 "parent_recipe_id", "created_at", "updated_at", "is_purchased"}
+
+# Fields to keep and display (human-readable)
+_PRIORITY_FIELDS = ["name", "title", "date", "meal_type", "quantity", "unit", 
+                    "location", "notes", "description", "instructions", "category",
+                    "cuisine", "difficulty", "servings", "tags", "rating"]
+
+
+def _clean_record(record: dict) -> dict:
+    """Strip internal fields from a record, keep human-readable ones."""
+    return {k: v for k, v in record.items() 
+            if k not in _STRIP_FIELDS and v is not None}
+
+
+def _format_items_for_reply(items: list, max_items: int = 50) -> str:
+    """
+    Format a list of items for Reply in human-readable format.
+    
+    Strips IDs, keeps names/quantities/dates/notes.
+    """
+    if not items:
+        return "  (none)"
+    
+    lines = []
+    for item in items[:max_items]:
+        if isinstance(item, dict):
+            clean = _clean_record(item)
+            
+            # Build human-readable line
+            name = clean.get("name") or clean.get("title") or clean.get("date", "item")
+            parts = [f"  - {name}"]
+            
+            # Add key details
+            if clean.get("quantity"):
+                unit = clean.get("unit", "")
+                parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
+            if clean.get("meal_type"):
+                parts.append(f"[{clean['meal_type']}]")
+            if clean.get("location"):
+                parts.append(f"[{clean['location']}]")
+            if clean.get("category"):
+                parts.append(f"({clean['category']})")
+            if clean.get("notes"):
+                notes = clean["notes"][:100] + "..." if len(clean.get("notes", "")) > 100 else clean.get("notes", "")
+                parts.append(f"- {notes}")
+            
+            lines.append(" ".join(parts))
+        else:
+            lines.append(f"  - {item}")
+    
+    if len(items) > max_items:
+        lines.append(f"  ... and {len(items) - max_items} more")
+    
+    return "\n".join(lines)
+
+
+def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000) -> str:
+    """
+    Format a dict result for Reply in human-readable format.
+    
+    For analyze/generate steps, preserves structure but strips IDs.
+    For CRUD, extracts key human-readable fields.
+    """
+    import json
+    
+    def _clean_nested(obj):
+        """Recursively clean nested data structures."""
+        if isinstance(obj, dict):
+            cleaned = {}
+            for k, v in obj.items():
+                if k not in _STRIP_FIELDS and v is not None:
+                    cleaned[k] = _clean_nested(v)
+            return cleaned
+        elif isinstance(obj, list):
+            return [_clean_nested(item) for item in obj]
+        else:
+            return obj
+    
+    # Clean the data
+    clean_data = _clean_nested(data)
+    
+    # Format based on step type
+    if step_type in ("analyze", "generate"):
+        # For analyze/generate, include structured output but cleaned
+        try:
+            json_str = json.dumps(clean_data, indent=2, default=str)
+            if len(json_str) > max_chars:
+                json_str = json_str[:max_chars] + "\n... (truncated)"
+            return f"```\n{json_str}\n```"
+        except Exception:
+            return str(clean_data)[:max_chars]
+    else:
+        # For CRUD results, format as human-readable
+        if "name" in clean_data or "title" in clean_data:
+            # Single record
+            name = clean_data.get("name") or clean_data.get("title", "record")
+            parts = [f"  Created/Updated: {name}"]
+            for field in _PRIORITY_FIELDS:
+                if field in clean_data and field not in ("name", "title"):
+                    val = clean_data[field]
+                    if isinstance(val, list):
+                        val = ", ".join(str(v) for v in val[:5])
+                    parts.append(f"  - {field}: {val}")
+            return "\n".join(parts)
+        else:
+            # Generic dict
+            try:
+                json_str = json.dumps(clean_data, indent=2, default=str)
+                if len(json_str) > max_chars:
+                    json_str = json_str[:max_chars] + "\n..."
+                return f"```\n{json_str}\n```"
+            except Exception:
+                return str(clean_data)[:max_chars]

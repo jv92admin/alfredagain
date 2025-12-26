@@ -141,6 +141,9 @@ async def run_alfred(
     conv_context = conversation if conversation else initialize_conversation()
     
     # Create initial state
+    # Copy content_archive from conversation for cross-turn persistence
+    initial_archive = conv_context.get("content_archive", {})
+    
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
@@ -154,6 +157,7 @@ async def run_alfred(
         "current_subdomain": None,
         "schema_requests": 0,
         "pending_action": None,
+        "content_archive": initial_archive,  # Persisted across turns
         "conversation": conv_context,
         "final_response": None,
         "error": None,

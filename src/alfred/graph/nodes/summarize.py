@@ -117,12 +117,16 @@ async def summarize_node(state: AlfredState) -> dict:
     entity_refs = [EntityRef(**e.model_dump()) for e in new_entities.values()]
     
     # 3. Update conversation context
+    # Include content_archive from state for cross-turn persistence
+    content_archive = state.get("content_archive", {})
+    
     updated_conversation = _update_conversation(
         conversation=conversation,
         current_turn=current_turn,
         step_results=step_results,
         think_output=think_output,
         new_entities=entity_refs,
+        content_archive=content_archive,
     )
     
     # 4. Compress old turns if needed (async LLM call)
@@ -146,12 +150,17 @@ def _update_conversation(
     step_results: dict[int, Any],
     think_output: Any,
     new_entities: list[EntityRef],
+    content_archive: dict[str, Any] | None = None,
 ) -> ConversationContext:
     """
     Update conversation context with new turn and entities.
     
     Does NOT compress - that's done separately with LLM.
     """
+    # Merge existing and new content archive
+    existing_archive = conversation.get("content_archive", {})
+    merged_archive = {**existing_archive, **(content_archive or {})}
+    
     updated: ConversationContext = {
         "engagement_summary": conversation.get("engagement_summary", ""),
         "recent_turns": list(conversation.get("recent_turns", [])),
@@ -159,6 +168,7 @@ def _update_conversation(
         "step_summaries": list(conversation.get("step_summaries", [])),
         "active_entities": dict(conversation.get("active_entities", {})),
         "all_entities": dict(conversation.get("all_entities", {})),
+        "content_archive": merged_archive,
     }
     
     # Add current turn

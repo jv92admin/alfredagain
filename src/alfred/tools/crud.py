@@ -84,15 +84,14 @@ class DbDeleteParams(BaseModel):
 USER_OWNED_TABLES = {
     "inventory",
     "recipes",
+    "recipe_ingredients",  # Denormalized user_id for simpler CRUD
     "meal_plans",
     "shopping_list",  # Note: singular, not plural
-    "user_preferences",
+    "preferences",  # User preferences table
+    "tasks",  # Transient task list
+    "cooking_log",  # Cooking history
+    "flavor_preferences",  # Ingredient usage tracking
 }
-
-# Child tables (no user_id, linked via parent FK) - no auto user_id filter
-# recipe_ingredients → recipe_id
-# meal_plan_items → meal_plan_id  
-# shopping_list_items → shopping_list_id (if exists)
 
 
 # =============================================================================
@@ -271,6 +270,15 @@ async def db_delete(params: DbDeleteParams, user_id: str) -> int:
         Count of deleted rows
     """
     client = get_client()
+    
+    # Safety: Prevent empty-filter deletes on non-user-owned tables
+    # (would result in DELETE with no WHERE clause → blocked by Supabase)
+    if params.table not in USER_OWNED_TABLES and not params.filters:
+        raise ValueError(
+            f"Cannot delete from '{params.table}' with empty filters. "
+            f"This table doesn't have user_id, so you must specify filters "
+            f"(e.g., recipe_id for recipe_ingredients)."
+        )
 
     query = client.table(params.table).delete()
 

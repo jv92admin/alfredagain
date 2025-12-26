@@ -39,6 +39,36 @@ Option C: Create a lookup against `ingredients` table to normalize names
 
 ---
 
+### UX-015: Shopping list additions don't merge duplicates
+**Severity:** moderate  
+**Date:** 2024-12-25  
+**Trigger:** Adding recipe ingredients to shopping list when some already exist
+
+**Observed:**
+When adding ingredients from a recipe to shopping list, Alfred dumps the entire ingredient list without checking for duplicates. User ends up with:
+- olive oil (2 tbsp)
+- olive oil (1 tbsp)  ← duplicate!
+- eggs (3)
+- eggs (2)  ← duplicate!
+
+**Expected:**
+Smart merging:
+- olive oil: keep one entry (staple item, don't sum tbsp)
+- eggs: 5 (sum quantities for countable items)
+
+**Root Cause:**  
+Think/Act don't include explicit guidance to check existing shopping list before adding. Analyze step (when present) may not be merging intelligently.
+
+**Proposed Fix:**  
+Added schema guidance for shopping list with "Smart Shopping List Updates" pattern:
+1. Read existing shopping list first
+2. Combine duplicates in analyze step
+3. Use `db_create` for new items, `db_update` for quantity increases
+
+**Status:** Guidance added to schema. Needs testing.
+
+---
+
 ### UX-001: Inventory readouts missing quantities (Partially Fixed)
 **Severity:** moderate  
 **Date:** 2024-12-24  

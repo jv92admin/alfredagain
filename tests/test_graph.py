@@ -67,48 +67,42 @@ class TestStateModels:
         assert output.complexity == "low"
 
     def test_think_output_with_planned_step(self):
-        """ThinkOutput should use PlannedStep with tool assignments."""
+        """ThinkOutput should use PlannedStep with subdomain hints."""
         output = ThinkOutput(
             goal="Add milk to inventory",
             steps=[
                 PlannedStep(
                     description="Add item to inventory",
-                    tools=["manage_inventory"],
+                    step_type="crud",
+                    subdomain="inventory",
                     complexity="low",
                 ),
             ],
         )
         assert len(output.steps) == 1
         assert output.steps[0].description == "Add item to inventory"
-        assert output.steps[0].tools == ["manage_inventory"]
+        assert output.steps[0].subdomain == "inventory"
 
-    def test_planned_step_with_multiple_tools(self):
-        """PlannedStep can have 1-3 tools assigned."""
+    def test_planned_step_with_step_type(self):
+        """PlannedStep should have step_type for different operations."""
         step = PlannedStep(
             description="Find matching recipes",
-            tools=["suggest_recipes", "query_recipe"],
+            step_type="crud",
+            subdomain="recipes",
             complexity="medium",
         )
-        assert len(step.tools) == 2
-        assert "suggest_recipes" in step.tools
-        assert "query_recipe" in step.tools
+        assert step.step_type == "crud"
+        assert step.subdomain == "recipes"
 
     def test_step_complete_action_creation(self):
-        """StepCompleteAction should be creatable with refs."""
+        """StepCompleteAction should be creatable with result_summary."""
         action = StepCompleteAction(
-            step_name="Add item",
             result_summary="Added 2 cartons of milk",
-            refs=[
-                EntityRef(
-                    type="inventory_item",
-                    id="inv_456",
-                    label="Milk (2 cartons)",
-                    source="created",
-                )
-            ],
+            data={"id": "inv_456", "name": "milk", "quantity": 2},
         )
         assert action.action == "step_complete"
-        assert len(action.refs) == 1
+        assert action.result_summary == "Added 2 cartons of milk"
+        assert action.data is not None
 
 
 class TestAlfredState:

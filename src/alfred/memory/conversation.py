@@ -117,10 +117,10 @@ def _summarize_recipe_content(message: str) -> str:
                         recipe_names.append(match.strip())
     
     if recipe_names:
-        names_str = ", ".join(recipe_names[:3])  # Max 3 recipes
-        return f"Created recipe(s): {names_str}. [Full details saved to database]"
+        names_str = ", ".join(recipe_names[:5])  # Max 5 recipes
+        return f"Generated recipe(s): {names_str}. [Content archived for later retrieval]"
     
-    return "Generated recipe content. [Full details saved to database]"
+    return "Generated recipe content. [Content archived for later retrieval]"
 
 
 def _looks_like_item_list(message: str) -> bool:
