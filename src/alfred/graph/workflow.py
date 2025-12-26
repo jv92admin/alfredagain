@@ -254,11 +254,14 @@ async def run_alfred_streaming(
                 think_output = node_output.get("think_output")
                 if think_output and hasattr(think_output, "steps"):
                     total_steps = len(think_output.steps)
+                    # Send all step descriptions so frontend can build progress trail
+                    step_descriptions = [s.description for s in think_output.steps]
                     yield {
                         "type": "plan",
                         "message": f"Planning {total_steps} step{'s' if total_steps != 1 else ''}...",
                         "goal": think_output.goal,
                         "total_steps": total_steps,
+                        "steps": step_descriptions,
                     }
             
             elif node_name == "act" and node_output:
@@ -290,6 +293,12 @@ async def run_alfred_streaming(
                         "description": step_desc,
                     }
                     last_step_index = current_index
+                else:
+                    # Act loop within same step - show working indicator
+                    yield {
+                        "type": "working",
+                        "step": current_index + 1,
+                    }
             
             elif node_name == "reply" and node_output:
                 # Final step complete

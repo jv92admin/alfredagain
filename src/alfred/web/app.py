@@ -878,6 +878,38 @@ def get_frontend_html() -> str:
             display: block;
         }
         
+        .progress-trail {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-size: 0.85rem;
+        }
+        
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+        }
+        
+        .progress-step.completed {
+            color: var(--success);
+        }
+        
+        .progress-step.active {
+            color: var(--accent);
+            font-weight: 500;
+        }
+        
+        .progress-step.pending {
+            opacity: 0.5;
+        }
+        
+        .step-icon {
+            width: 16px;
+            text-align: center;
+        }
+        
         /* Loading */
         .loading {
             text-align: center;
@@ -1118,6 +1150,13 @@ def get_frontend_html() -> str:
             messages.scrollTop = messages.scrollHeight;
         }
         
+        // Progress state
+        let progressState = {
+            steps: [],
+            currentStep: 0,
+            planComplete: false
+        };
+        
         async function sendMessage() {
             const input = document.getElementById('chatInput');
             const btn = document.getElementById('sendBtn');
@@ -1126,11 +1165,14 @@ def get_frontend_html() -> str:
             
             if (!message) return;
             
+            // Reset progress state
+            progressState = { steps: [], currentStep: 0, planComplete: false };
+            
             addMessage('user', message);
             input.value = '';
             btn.disabled = true;
             typing.classList.add('visible');
-            typing.textContent = 'Alfred is thinking...';
+            typing.innerHTML = '<div class="progress-trail"><div class="progress-step active"><span class="step-icon">◐</span> Planning...</div></div>';
             
             try {
                 const logPrompts = document.getElementById('logPrompts').checked;
@@ -1194,18 +1236,59 @@ def get_frontend_html() -> str:
             
             switch (data.type) {
                 case 'thinking':
-                    typing.textContent = data.message;
+                    typing.innerHTML = '<div class="progress-trail"><div class="progress-step active"><span class="step-icon">◐</span> Planning...</div></div>';
                     break;
                 case 'plan':
-                    typing.textContent = data.message;
+                    progressState.steps = data.steps || [];
+                    progressState.planComplete = true;
+                    renderProgress();
                     break;
                 case 'step':
-                    typing.textContent = `Step ${data.step}/${data.total}: ${data.description}`;
+                    progressState.currentStep = data.step;
+                    renderProgress();
                     break;
                 case 'step_complete':
-                    typing.textContent = `Step ${data.step}/${data.total} complete ✓`;
+                    // Mark current step as complete
+                    renderProgress(data.step);
+                    break;
+                case 'working':
+                    // Act loop within same step - add dots
+                    progressState.workingDots = (progressState.workingDots || 0) + 1;
+                    if (progressState.workingDots > 3) progressState.workingDots = 1;
+                    renderProgress(null, progressState.workingDots);
                     break;
             }
+        }
+        
+        function renderProgress(completedStep, workingDots = 0) {
+            const typing = document.getElementById('typingIndicator');
+            let html = '<div class="progress-trail">';
+            
+            // Planning row
+            html += `<div class="progress-step completed"><span class="step-icon">✓</span> Planned ${progressState.steps.length} steps</div>`;
+            
+            // Step rows
+            for (let i = 0; i < progressState.steps.length; i++) {
+                const stepNum = i + 1;
+                const desc = progressState.steps[i];
+                let status = 'pending';
+                let icon = '○';
+                
+                if (completedStep && stepNum <= completedStep) {
+                    status = 'completed';
+                    icon = '✓';
+                } else if (stepNum === progressState.currentStep) {
+                    status = 'active';
+                    icon = '◐';
+                }
+                
+                // Add working dots for active step
+                const dots = (status === 'active' && workingDots > 0) ? '.'.repeat(workingDots) : '';
+                html += `<div class="progress-step ${status}"><span class="step-icon">${icon}</span> Step ${stepNum}: ${desc}${dots}</div>`;
+            }
+            
+            html += '</div>';
+            typing.innerHTML = html;
         }
         
         function handleKeydown(e) {
