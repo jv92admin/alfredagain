@@ -8,7 +8,7 @@ const typeConfig: Record<string, { icon: string; label: string }> = {
   inventory: { icon: '📦', label: 'Inventory' },
   shopping_list: { icon: '🛒', label: 'Shopping List' },
   tasks: { icon: '✅', label: 'Tasks' },
-  recipe_ingredients: { icon: '🥬', label: 'Ingredients' },
+  // Note: recipe_ingredients excluded - they're internal to recipes
 }
 
 export function EntityCard({ type, count, onClick }: EntityCardProps) {

@@ -63,9 +63,10 @@ export function MessageBubble({ message, onOpenFocus }: MessageBubbleProps) {
   const navigate = useNavigate()
   const isUser = message.role === 'user'
 
-  // Filter entities for aggregate cards (not recipes/meal_plans which are inline)
+  // Filter entities for aggregate cards
+  // Exclude: recipes, meal_plans (inline mentions), recipe_ingredients (internal to recipes)
   const aggregateEntities = message.entities?.filter(
-    (e) => !['recipes', 'meal_plans'].includes(e.type)
+    (e) => !['recipes', 'meal_plans', 'recipe_ingredients'].includes(e.type)
   )
 
   // Dedupe by type for aggregate display
