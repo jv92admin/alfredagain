@@ -315,7 +315,7 @@ def _extract_key_fields(records: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls_made: int) -> str:
+def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int) -> str:
     """Format tool results from current step - show ACTUAL data, not summaries."""
     import json
     
@@ -324,7 +324,12 @@ def _format_current_step_results(tool_results: list[tuple[str, Any]], tool_calls
     
     lines = [f"## What Already Happened This Step ({tool_calls_made} tool calls)", ""]
     
-    for i, (tool_name, result) in enumerate(tool_results, 1):
+    for i, item in enumerate(tool_results, 1):
+        # Handle both (tool, table, result) and (tool, result) formats
+        if len(item) == 3:
+            tool_name, _table, result = item
+        else:
+            tool_name, result = item
         lines.append(f"### Tool Call {i}: `{tool_name}`")
         
         # Show result with semantic meaning
@@ -659,7 +664,12 @@ Generate the requested content and complete the step:
         # Build a quick status summary for the last tool call
         last_tool_summary = ""
         if current_step_tool_results:
-            last_tool, last_result = current_step_tool_results[-1]
+            last_item = current_step_tool_results[-1]
+            # Handle both (tool, table, result) and (tool, result) formats
+            if len(last_item) == 3:
+                last_tool, _table, last_result = last_item
+            else:
+                last_tool, last_result = last_item
             if isinstance(last_result, list):
                 last_tool_summary = f" → Last: `{last_tool}` returned {len(last_result)} records"
             elif isinstance(last_result, dict):
@@ -836,8 +846,9 @@ What's next?
             )
 
             # Append to current step's tool results (accumulate within step)
-            # Store as (tool_name, result) tuple for clear formatting
-            new_tool_results = current_step_tool_results + [(decision.tool, result)]
+            # Store as (tool_name, table, result) tuple for entity card support
+            table_name = fixed_params.get("table", "unknown")
+            new_tool_results = current_step_tool_results + [(decision.tool, table_name, result)]
 
             # Return ToolCallAction - will loop back for more operations
             action = ToolCallAction(

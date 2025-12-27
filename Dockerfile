@@ -1,4 +1,26 @@
 # Alfred V2 - Production Dockerfile
+# Multi-stage build: Node for frontend, Python for backend
+
+# =============================================================================
+# Stage 1: Build React Frontend
+# =============================================================================
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /frontend
+
+# Copy package files
+COPY frontend/package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source and build
+COPY frontend/ ./
+RUN npm run build
+
+# =============================================================================
+# Stage 2: Python Backend + Static Files
+# =============================================================================
 FROM python:3.11-slim
 
 # Set working directory
@@ -21,6 +43,9 @@ RUN pip install --no-cache-dir .
 # The code looks 5 levels up from site-packages/alfred/graph/nodes/
 RUN mkdir -p /usr/local/lib/python3.11/prompts && \
     cp -r prompts/* /usr/local/lib/python3.11/prompts/
+
+# Copy built frontend from Stage 1
+COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
 # Expose port (Railway will set PORT env var)
 EXPOSE 8000

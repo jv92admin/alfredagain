@@ -1,0 +1,194 @@
+import { useState, useRef, useEffect, FormEvent, Dispatch, SetStateAction } from 'react'
+import { MessageBubble, Message } from './MessageBubble'
+import { ChatInput } from './ChatInput'
+import { ProgressTrail, ProgressStep } from './ProgressTrail'
+
+interface ChatViewProps {
+  messages: Message[]
+  setMessages: Dispatch<SetStateAction<Message[]>>
+  onOpenFocus: (item: { type: string; id: string }) => void
+}
+
+interface AffectedEntity {
+  type: string
+  id: string
+  name: string
+  action?: string
+}
+
+export function ChatView({ messages, setMessages, onOpenFocus }: ChatViewProps) {
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState<ProgressStep[]>([])
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages, progress])
+
+  const handleSend = async (e?: FormEvent) => {
+    e?.preventDefault()
+    if (!input.trim() || loading) return
+
+    const userMessage = input.trim()
+    setInput('')
+    setLoading(true)
+    setProgress([{ label: 'Planning...', status: 'active' }])
+
+    // Add user message
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: userMessage,
+    }
+    setMessages((prev) => [...prev, userMsg])
+
+    try {
+      const res = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage, log_prompts: true }),
+        credentials: 'include',
+      })
+
+      if (!res.ok) throw new Error('Chat failed')
+
+      const reader = res.body?.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let currentEvent = 'progress'
+      const affectedEntities: AffectedEntity[] = []
+      const steps: string[] = []
+
+      while (reader) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              if (currentEvent === 'done') {
+                // Final response
+                const assistantMsg: Message = {
+                  id: Date.now().toString(),
+                  role: 'assistant',
+                  content: data.response,
+                  entities: affectedEntities,
+                }
+                setMessages((prev) => [...prev, assistantMsg])
+                setProgress([])
+              } else if (currentEvent === 'error') {
+                throw new Error(data.error)
+              } else if (data.type === 'plan') {
+                // Got the plan
+                steps.push(...(data.steps || []))
+                setProgress(
+                  steps.map((s, i) => ({
+                    label: `Step ${i + 1}: ${s}`,
+                    status: 'pending' as const,
+                  }))
+                )
+              } else if (data.type === 'step') {
+                // Step starting
+                setProgress((prev) =>
+                  prev.map((p, i) => ({
+                    ...p,
+                    status: i === data.step - 1 ? 'active' : i < data.step - 1 ? 'completed' : 'pending',
+                  }))
+                )
+              } else if (data.type === 'step_complete') {
+                // Collect affected entities
+                if (data.data) {
+                  for (const [table, records] of Object.entries(data.data)) {
+                    if (Array.isArray(records)) {
+                      for (const record of records as Record<string, unknown>[]) {
+                        if (record.id) {
+                          affectedEntities.push({
+                            type: table,
+                            id: record.id as string,
+                            name: (record.name as string) || table,
+                          })
+                        }
+                      }
+                    }
+                  }
+                }
+                // Mark step complete
+                setProgress((prev) =>
+                  prev.map((p, i) => ({
+                    ...p,
+                    status: i === data.step - 1 ? 'completed' : p.status,
+                  }))
+                )
+              }
+            } catch {
+              // Ignore parse errors
+            }
+          }
+        }
+      }
+    } catch (err) {
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Sorry, something went wrong: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      }
+      setMessages((prev) => [...prev, errorMsg])
+      setProgress([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="max-w-2xl mx-auto space-y-4">
+          {messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              onOpenFocus={onOpenFocus}
+            />
+          ))}
+
+          {/* Progress indicator */}
+          {loading && progress.length > 0 && (
+            <div className="py-2">
+              <ProgressTrail steps={progress} />
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+      </div>
+
+      {/* Input - Fixed at bottom */}
+      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 flex-shrink-0">
+        <div className="max-w-2xl mx-auto">
+          <ChatInput
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSend}
+            disabled={loading}
+            placeholder="Ask Alfred anything..."
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+

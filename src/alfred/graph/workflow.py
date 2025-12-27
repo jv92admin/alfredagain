@@ -9,6 +9,8 @@ Act receives subdomain schema and uses generic CRUD tools.
 Summarize maintains conversation memory after each exchange.
 """
 
+from typing import Any
+
 from langgraph.graph import END, StateGraph
 
 from alfred.graph.nodes import (
@@ -20,6 +22,77 @@ from alfred.graph.nodes import (
     think_node,
 )
 from alfred.graph.state import AlfredState
+
+
+def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
+    """
+    Extract entity data from a step result for frontend entity cards.
+    
+    Step results can be:
+    - A list of (tool_name, result) tuples (multi-tool pattern)
+    - A dict with table data
+    - None
+    
+    Returns dict like {"inventory": [{"id": "...", "name": "..."}], ...}
+    """
+    if step_result is None:
+        return None
+    
+    entities: dict[str, list[dict]] = {}
+    
+    def add_entity(table: str, record: dict) -> None:
+        """Add an entity record to the collection."""
+        if "id" not in record:
+            return
+        if table not in entities:
+            entities[table] = []
+        entities[table].append({
+            "id": record.get("id"),
+            "name": record.get("name", record.get("title", table)),
+        })
+    
+    def extract_from_result(result: Any, table_hint: str | None = None) -> None:
+        """Extract entities from a result."""
+        if isinstance(result, dict):
+            # Check if this dict IS an entity (has id field)
+            if "id" in result:
+                # Try to determine table from the data
+                table = table_hint or "unknown"
+                add_entity(table, result)
+            else:
+                # Check nested values for entity lists
+                for key, value in result.items():
+                    if isinstance(value, list) and len(value) > 0:
+                        if isinstance(value[0], dict) and "id" in value[0]:
+                            for item in value:
+                                add_entity(key, item)
+                    elif isinstance(value, dict) and "id" in value:
+                        add_entity(key, value)
+        elif isinstance(result, list):
+            for item in result:
+                if isinstance(item, dict) and "id" in item:
+                    table = table_hint or "unknown"
+                    add_entity(table, item)
+                else:
+                    extract_from_result(item, table_hint)
+    
+    # Handle multi-tool pattern: list of (tool_name, table, result) tuples
+    if isinstance(step_result, list):
+        for item in step_result:
+            if isinstance(item, tuple) and len(item) == 3:
+                # New format: (tool_name, table, result)
+                _tool_name, table, result = item
+                extract_from_result(result, table)
+            elif isinstance(item, tuple) and len(item) == 2:
+                # Old format: (tool_name, result) - for backwards compat
+                _tool_name, result = item
+                extract_from_result(result, None)
+            else:
+                extract_from_result(item)
+    else:
+        extract_from_result(step_result)
+    
+    return entities if entities else None
 
 
 def create_alfred_graph() -> StateGraph:
@@ -248,6 +321,9 @@ async def run_alfred_streaming(
     final_response = None
     final_conversation = None
     
+    # Track step results for entity cards
+    all_step_results: dict = {}
+    
     # Use LangGraph's streaming to get node-by-node updates
     async for event in app.astream(initial_state, stream_mode="updates"):
         # event is {node_name: node_output}
@@ -270,6 +346,10 @@ async def run_alfred_streaming(
                 current_index = node_output.get("current_step_index", 0)
                 think_output = node_output.get("think_output")
                 
+                # Track step results for entity cards
+                step_results = node_output.get("step_results", {})
+                all_step_results.update(step_results)
+                
                 # Get step description
                 step_desc = ""
                 if think_output and hasattr(think_output, "steps"):
@@ -279,12 +359,14 @@ async def run_alfred_streaming(
                 
                 # Check if step advanced
                 if current_index > last_step_index:
-                    # Previous step completed
+                    # Previous step completed - include the step's data for entity cards
                     if last_step_index >= 0:
+                        step_data = _extract_step_data(all_step_results.get(last_step_index))
                         yield {
                             "type": "step_complete",
                             "step": last_step_index + 1,
                             "total": total_steps,
+                            "data": step_data,
                         }
                     
                     # New step started
@@ -303,12 +385,14 @@ async def run_alfred_streaming(
                     }
             
             elif node_name == "reply" and node_output:
-                # Final step complete
+                # Final step complete - include the step's data for entity cards
                 if last_step_index >= 0 and total_steps > 0:
+                    step_data = _extract_step_data(all_step_results.get(last_step_index))
                     yield {
                         "type": "step_complete",
                         "step": last_step_index + 1,
                         "total": total_steps,
+                        "data": step_data,
                     }
                 # Capture final response
                 final_response = node_output.get("final_response")

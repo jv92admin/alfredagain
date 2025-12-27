@@ -273,11 +273,15 @@ def extract_entities_from_step_results(
     all_entities: dict[str, EntityRef] = {}
     
     for step_idx, result in step_results.items():
-        # Handle tuple format: [(tool_name, result), ...]
+        # Handle tuple format: [(tool_name, table, result), ...] or [(tool_name, result), ...]
         if isinstance(result, list) and result and isinstance(result[0], tuple):
-            for tool_name, tool_result in result:
-                # Infer table from tool call (best effort)
-                table = _infer_table_from_result(tool_result)
+            for item in result:
+                # Handle both (tool, table, result) and (tool, result) formats
+                if len(item) == 3:
+                    tool_name, table, tool_result = item
+                else:
+                    tool_name, tool_result = item
+                    table = _infer_table_from_result(tool_result)
                 entities = extract_entities_from_result(
                     tool_result, table, step_idx, "db_lookup"
                 )
@@ -541,9 +545,13 @@ def format_step_results_for_context(
 def _format_result_full(result: Any) -> str:
     """Format a result in full detail."""
     if isinstance(result, list) and result and isinstance(result[0], tuple):
-        # Tool result format
+        # Tool result format - handle both 2-tuple and 3-tuple
         lines = []
-        for tool_name, tool_result in result:
+        for item in result:
+            if len(item) == 3:
+                tool_name, _table, tool_result = item
+            else:
+                tool_name, tool_result = item
             lines.append(f"  - `{tool_name}`: {_describe_tool_result(tool_result)}")
         return "\n".join(lines)
     elif isinstance(result, list):
