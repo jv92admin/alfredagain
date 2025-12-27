@@ -14,6 +14,115 @@ from alfred.db.client import get_client
 
 
 # =============================================================================
+# Subdomain Personas
+# =============================================================================
+
+# Persona text injected at top of Act prompts based on subdomain.
+# Two layers: Persona (mindset) + Schema (tables for this step only)
+
+SUBDOMAIN_PERSONAS: dict[str, str | dict[str, str]] = {
+    # Chef persona: recipes subdomain - different for CRUD vs Generate
+    "recipes": {
+        "crud": """You are a **high-end personal chef** managing recipes (organizational mode). The user's preferences are paramount.
+
+**Clean naming:** Use searchable recipe names (e.g., "Spicy Garlic Pasta & Pesto Chicken" not run-on sentences).
+**Useful tags:** Add tags like weekday, fancy, air-fryer, instant-pot, leftovers.
+**Linked tables:** Always handle recipes + recipe_ingredients together as one unit.""",
+        
+        "generate": """You are a **high-end personal chef** creating recipes (creative mode). The user's preferences are paramount — your culinary expertise serves them.
+
+**Balance flavors:** Create harmonious, well-rounded dishes.
+**Respect restrictions:** Honor dietary needs and allergies completely.
+**Match context:** Consider available equipment, time budget, skill level.
+**Personalize:** Align with the user's taste profile and preferences.""",
+    },
+    
+    # Ops Manager persona: inventory, shopping, preferences
+    "inventory": """You are an **operations manager**. Your focus: accurate cataloging, consistent naming, efficient organization.
+
+**Normalize names:** "diced chillies" → "chillies", "boiled eggs" → "eggs". Strip preparation states.
+**Deduplicate:** Check before adding. Consolidate quantities when possible.
+**Tag consistently:** Best-guess location (fridge/frozen/pantry/shelf) and category.
+**Track accurately:** Quantities, units, approximate expiry dates.""",
+    
+    "shopping": """You are an **operations manager**. Your focus: accurate cataloging, consistent naming, efficient organization.
+
+**Normalize names:** "diced chillies" → "chillies", "boiled eggs" → "eggs". Strip preparation states.
+**Check existing:** Before adding, read the current list. Merge duplicates, consolidate quantities.
+**Tag consistently:** Category (produce/dairy/meat/etc.) helps with shopping efficiency.
+**Cross-domain awareness:** Items may come from recipes or meal plans — normalize before adding.""",
+    
+    "preferences": """You are a **personal assistant** managing user preferences.
+
+**Preference types:**
+- **Hard constraints** (dietary_restrictions, allergies): NEVER violated. Confirm changes explicitly.
+- **Planning rhythm** (2-3 tags): How they want to cook. Freeform phrases like "weekends only", "30min weeknights".
+- **Current vibes** (up to 5 tags): Current interests. Phrases like "more vegetables", "fusion experiments", "soup skills".
+- **Other preferences**: Equipment, cuisines, skill — update when mentioned.
+
+**Natural updates:** When user says "I want to focus on quick weeknight meals", update `planning_rhythm`. When they say "trying to get better at salads", update `current_vibes`.
+
+**Tag hygiene:** Keep tags concise but descriptive. Don't over-formalize — "pretty flexible, no tuesdays" is fine.""",
+    
+    # Planner persona: meal_plan, tasks
+    "meal_plan": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
+
+**Meal plan is primary:** Tasks often flow from it. Think about what prep work, shopping, or reminders are needed.
+**Recipe handling:** Real meals (breakfast/lunch/dinner/snack) should reference a recipe. If missing, suggest creating one: "That recipe doesn't exist. Create it for better shopping/planning?"
+**Exception:** "prep" and "other" meal types don't require recipes (batch cooking, stock making, etc.).""",
+    
+    "tasks": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
+
+**Tasks support meal plans:** Most tasks come from meal planning — prep, thaw, shop, etc.
+**Prefer meal_plan_id:** When linking tasks, use meal_plan_id over recipe_id (recipe is derivable from meal plan).
+**Categories:** prep (thaw, marinate, chop), shopping (buy items), cleanup (kitchen maintenance), other (freeform).
+**Can be freeform:** Tasks don't have to link to anything.""",
+    
+    # History: stubbed, no special persona
+    "history": "",  # Basic CRUD, no persona needed
+}
+
+
+# =============================================================================
+# Subdomain Scope
+# =============================================================================
+
+# Scope config for cross-domain awareness and implicit relationships
+SUBDOMAIN_SCOPE: dict[str, dict[str, Any]] = {
+    "recipes": {
+        "implicit_children": ["recipe_ingredients"],  # Always inject together
+        "description": "Recipes and their ingredients. Recipes link to recipe_ingredients.",
+    },
+    "inventory": {
+        "normalization": "async",  # Background process normalizes ingredient_id
+        "description": "User's pantry/fridge/freezer items.",
+    },
+    "shopping": {
+        "normalization": "async",
+        "influenced_by": ["recipes", "meal_plan", "inventory"],
+        "description": "Shopping list. Often populated from recipes or meal plans.",
+    },
+    "preferences": {
+        "description": "User preferences. Changes affect UX significantly.",
+    },
+    "meal_plan": {
+        "implicit_dependencies": ["recipes"],  # Real meals need recipes
+        "exception_meal_types": ["prep", "other"],  # These don't need recipes
+        "related": ["tasks"],
+        "description": "Meal planning calendar. Links to recipes and spawns tasks.",
+    },
+    "tasks": {
+        "primary_inflow": ["meal_plan"],
+        "prefer_reference": "meal_plan_id over recipe_id",
+        "description": "Reminders and to-dos. Often tied to meal plans.",
+    },
+    "history": {
+        "description": "Cooking log. Simple event recording.",
+    },
+}
+
+
+# =============================================================================
 # Subdomain Registry
 # =============================================================================
 
@@ -75,6 +184,177 @@ def get_complexity_rules(subdomain: str) -> dict[str, str] | None:
     if isinstance(config, dict):
         return config.get("complexity_rules")
     return None
+
+
+def get_persona_for_subdomain(subdomain: str, step_type: str = "crud") -> str:
+    """Get the persona text for a subdomain.
+    
+    Args:
+        subdomain: The subdomain (recipes, inventory, shopping, etc.)
+        step_type: The step type (crud, generate, analyze). 
+                   Only recipes has different personas for crud vs generate.
+    """
+    persona = SUBDOMAIN_PERSONAS.get(subdomain, "")
+    
+    # Handle recipes special case: dict with crud/generate variants
+    if isinstance(persona, dict):
+        # For analyze steps, fall back to crud persona
+        effective_type = step_type if step_type in persona else "crud"
+        return persona.get(effective_type, "")
+    
+    # All other subdomains: simple string (same for all step types)
+    return persona
+
+
+def get_scope_for_subdomain(subdomain: str) -> str:
+    """Get a formatted scope description for a subdomain."""
+    scope = SUBDOMAIN_SCOPE.get(subdomain, {})
+    if not scope:
+        return ""
+    
+    lines = []
+    
+    # Description
+    if "description" in scope:
+        lines.append(f"**Scope:** {scope['description']}")
+    
+    # Influenced by
+    if "influenced_by" in scope:
+        influenced = ", ".join(scope["influenced_by"])
+        lines.append(f"**Influenced by:** {influenced}")
+    
+    # Implicit children
+    if "implicit_children" in scope:
+        children = ", ".join(scope["implicit_children"])
+        lines.append(f"**Linked tables:** Always handle {children} together with this subdomain.")
+    
+    # Implicit dependencies
+    if "implicit_dependencies" in scope:
+        deps = ", ".join(scope["implicit_dependencies"])
+        exceptions = scope.get("exception_meal_types", [])
+        if exceptions:
+            exc_str = ", ".join(exceptions)
+            lines.append(f"**Dependencies:** Usually needs {deps} (except for {exc_str} meal types).")
+        else:
+            lines.append(f"**Dependencies:** Usually needs {deps}.")
+    
+    # Related
+    if "related" in scope:
+        related = ", ".join(scope["related"])
+        lines.append(f"**Works with:** {related}")
+    
+    return "\n".join(lines)
+
+
+def get_contextual_examples(
+    subdomain: str, 
+    step_description: str, 
+    prev_subdomain: str | None = None,
+    step_type: str = "crud"
+) -> str:
+    """
+    Get contextual examples based on step verb and cross-domain patterns.
+    
+    Args:
+        subdomain: Current step's subdomain
+        step_description: Natural language step description
+        prev_subdomain: Previous step's subdomain (for cross-domain patterns)
+        step_type: "crud", "analyze", or "generate"
+    
+    Returns:
+        1-2 relevant examples as markdown
+    """
+    desc_lower = step_description.lower()
+    examples = []
+    
+    # Skip examples for analyze/generate steps — they don't use CRUD
+    if step_type != "crud":
+        return ""
+    
+    # === SHOPPING PATTERNS ===
+    if subdomain == "shopping":
+        # Smart shopping pattern (check before adding)
+        if any(verb in desc_lower for verb in ["add", "create", "save", "insert"]):
+            examples.append("""**Smart Add Pattern** (check existing first):
+1. `db_read` shopping_list to check what's already there
+2. In analyze step or your reasoning: merge duplicates, consolidate quantities
+3. `db_create` only NEW items, `db_update` existing quantities if needed""")
+        
+        # Cross-domain: from recipes
+        if prev_subdomain == "recipes":
+            examples.append("""**Recipe → Shopping Pattern**:
+Previous step read recipe ingredients. Use those IDs/names to add to shopping list.
+Normalize names: "diced tomatoes" → "tomatoes".""")
+        
+        # Cross-domain: from meal_plan
+        if prev_subdomain == "meal_plan":
+            examples.append("""**Meal Plan → Shopping Pattern**:
+Previous step read meal plan. For each recipe_id, you may need to read recipe_ingredients, then add to shopping.""")
+    
+    # === RECIPE PATTERNS ===
+    elif subdomain == "recipes":
+        # Linked table create
+        if any(verb in desc_lower for verb in ["create", "save", "add"]):
+            examples.append("""**Create Recipe Pattern** (linked tables):
+1. `db_create` on `recipes` → get the new `id` from response
+2. `db_create` on `recipe_ingredients` with that `recipe_id`
+3. `step_complete` only after BOTH are done""")
+        
+        # Linked table delete
+        if any(verb in desc_lower for verb in ["delete", "remove", "clear"]):
+            examples.append("""**Delete Recipe Pattern** (FK-safe order):
+1. `db_delete` on `recipe_ingredients` WHERE recipe_id = X
+2. `db_delete` on `recipes` WHERE id = X
+Delete children first, then parent.""")
+        
+        # Search
+        if any(verb in desc_lower for verb in ["find", "search", "look"]):
+            examples.append("""**Recipe Search** (use OR for keywords):
+```json
+{"tool": "db_read", "params": {"table": "recipes", "or_filters": [
+  {"field": "name", "op": "ilike", "value": "%chicken%"},
+  {"field": "name", "op": "ilike", "value": "%curry%"}
+], "limit": 10}}
+```""")
+    
+    # === MEAL PLAN PATTERNS ===
+    elif subdomain == "meal_plan":
+        if any(verb in desc_lower for verb in ["create", "add", "save", "plan"]):
+            examples.append("""**Add to Meal Plan**:
+```json
+{"tool": "db_create", "params": {"table": "meal_plans", "data": {
+  "date": "2025-01-02", "meal_type": "dinner", "recipe_id": "<uuid>", "servings": 2
+}}}
+```
+If recipe doesn't exist, suggest creating it first.""")
+    
+    # === INVENTORY PATTERNS ===
+    elif subdomain == "inventory":
+        if any(verb in desc_lower for verb in ["add", "create"]):
+            examples.append("""**Add to Inventory**:
+```json
+{"tool": "db_create", "params": {"table": "inventory", "data": {
+  "name": "eggs", "quantity": 12, "unit": "pieces", "location": "fridge"
+}}}
+```
+Normalize names and add location/category tags.""")
+    
+    # === TASKS PATTERNS ===
+    elif subdomain == "tasks":
+        if any(verb in desc_lower for verb in ["create", "add", "remind"]):
+            examples.append("""**Create Task** (link to meal plan if applicable):
+```json
+{"tool": "db_create", "params": {"table": "tasks", "data": {
+  "title": "Thaw chicken", "due_date": "2025-01-02", "category": "prep",
+  "meal_plan_id": "<uuid>"
+}}}
+```
+Prefer meal_plan_id over recipe_id when possible.""")
+    
+    if not examples:
+        return ""
+    
+    return "## Patterns for This Step\n\n" + "\n\n".join(examples)
 
 
 # =============================================================================
@@ -286,8 +566,7 @@ FIELD_ENUMS: dict[str, dict[str, list[str]]] = {
     },
     "preferences": {
         "cooking_skill_level": ["beginner", "intermediate", "advanced"],
-        "cooking_frequency": ["daily", "3-4x/week", "weekends-only", "rarely"],
-        "preferred_complexity": ["quick-easy", "moderate", "elaborate"],
+        # planning_rhythm and current_vibes are freeform text[], no enum
     },
     "history": {
         "rating": ["1", "2", "3", "4", "5"],
@@ -405,16 +684,24 @@ Mark task complete: `{"tool": "db_update", "params": {"table": "tasks", "filters
 
 Get preferences: `{"tool": "db_read", "params": {"table": "preferences", "filters": [], "limit": 1}}`
 
-Update preferences: `{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"favorite_cuisines": ["italian", "mexican"]}}}`
-
-**Update equipment and time budget:**
+**Update planning rhythm (how they want to cook):**
 ```json
-{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"available_equipment": ["instant-pot", "air-fryer"], "time_budget_minutes": 30}}}
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"planning_rhythm": ["weekends only", "30min weeknights"]}}}
 ```
 
-**Update nutrition goals:**
+**Update current vibes (culinary interests):**
 ```json
-{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"nutrition_goals": ["high-protein", "low-carb"]}}}
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"current_vibes": ["more vegetables", "fusion experiments", "soup skills"]}}}
+```
+
+**Update hard constraints:**
+```json
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"dietary_restrictions": ["vegetarian"], "allergies": ["peanuts"]}}}
+```
+
+**Update equipment:**
+```json
+{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"available_equipment": ["instant-pot", "air-fryer"]}}}
 ```
 """,
     "history": """## Examples
@@ -638,17 +925,27 @@ Pattern: `db_read` → merge in analyze step → `db_create` new items + `db_upd
 | Column | Type | Nullable |
 |--------|------|----------|
 | id | uuid | No |
-| dietary_restrictions | text[] | Yes |
-| allergies | text[] | Yes |
-| favorite_cuisines | text[] | Yes |
-| disliked_ingredients | text[] | Yes |
+| dietary_restrictions | text[] | Yes ← HARD CONSTRAINTS: vegetarian, vegan, halal, kosher, etc. |
+| allergies | text[] | Yes ← HARD CONSTRAINTS: peanuts, shellfish, dairy, etc. |
+| household_size | integer | Yes (default 1) ← For portioning |
 | cooking_skill_level | text | Yes ← beginner, intermediate, advanced |
-| household_size | integer | Yes (default 1) |
-| nutrition_goals | text[] | Yes ← high-protein, low-carb, low-sodium, etc. |
-| cooking_frequency | text | Yes ← daily, 3-4x/week, weekends-only, rarely |
 | available_equipment | text[] | Yes ← instant-pot, air-fryer, grill, sous-vide, etc. |
-| time_budget_minutes | integer | Yes (default 30) ← Typical time per meal |
-| preferred_complexity | text | Yes (default 'moderate') ← quick-easy, moderate, elaborate |
+| favorite_cuisines | text[] | Yes ← italian, thai, mexican, comfort-food, etc. |
+| disliked_ingredients | text[] | Yes |
+| nutrition_goals | text[] | Yes ← high-protein, low-carb, low-sodium, etc. |
+| planning_rhythm | text[] | Yes ← 2-3 freeform schedule tags: "weekends only", "30min weeknights" |
+| current_vibes | text[] | Yes ← Up to 5 current interests: "more vegetables", "fusion experiments" |
+
+**Field guidance:**
+- `dietary_restrictions` and `allergies`: NEVER violated — hard constraints
+- `planning_rhythm`: How they want to cook (schedule/time). Examples:
+  - "just the weekend and reheat weekdays"
+  - "mondays and wednesdays for 30 minutes"
+  - "pretty flexible - no cooking tuesday"
+- `current_vibes`: Current culinary interests/goals. Examples:
+  - "experiment with fusion"
+  - "trying to get more veg in"
+  - "want to get good at salads"
 
 ### flavor_preferences
 | Column | Type | Nullable |

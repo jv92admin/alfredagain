@@ -36,7 +36,12 @@ from alfred.background.profile_builder import format_profile_for_prompt, get_cac
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
 from alfred.tools.crud import execute_crud
-from alfred.tools.schema import get_schema_with_fallback
+from alfred.tools.schema import (
+    get_schema_with_fallback,
+    get_persona_for_subdomain,
+    get_scope_for_subdomain,
+    get_contextual_examples,
+)
 
 
 # =============================================================================
@@ -141,6 +146,9 @@ class ActDecision(BaseModel):
         default=None, description="Brief outcome description"
     )
     data: Any | None = Field(default=None, description="Full result data for caching")
+    note_for_next_step: str | None = Field(
+        default=None, description="Short note for next step (IDs, counts, key info)"
+    )
 
     # For request_schema
     subdomain: str | None = Field(
@@ -438,6 +446,7 @@ async def act_node(state: AlfredState) -> dict:
     user_id = state.get("user_id", "")
     schema_requests = state.get("schema_requests", 0)
     conversation = state.get("conversation", {})
+    prev_step_note = state.get("prev_step_note")
     
     # Circuit breaker - force step_complete if too many tool calls
     if len(current_step_tool_results) >= MAX_TOOL_CALLS_PER_STEP:
@@ -579,7 +588,19 @@ Analyze the data above and complete the step:
 `{{"action": "step_complete", "result_summary": "Analysis: ...", "data": {{"key": "value"}}}}`"""
 
     elif step_type == "generate":
-        user_prompt = f"""## STATUS
+        # Get persona for generate step (only recipes has a different generate persona)
+        generate_persona = get_persona_for_subdomain(current_step.subdomain, step_type="generate")
+        persona_header = ""
+        if generate_persona:
+            persona_header = f"""## Persona
+
+{generate_persona}
+
+---
+
+"""
+        
+        user_prompt = f"""{persona_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | generate (create content, no db calls) |
@@ -594,11 +615,6 @@ Analyze the data above and complete the step:
 User said: "{state.get("user_message", "")}"
 
 Your job this step: **{current_step.description}**
-
-**Use the USER PROFILE above to personalize your generation:**
-- Respect dietary restrictions and allergies
-- Consider available equipment and time budget
-- Align with nutrition goals and preferred complexity
 
 ---
 
@@ -623,6 +639,23 @@ Generate the requested content and complete the step:
         # CRUD step - needs schema as primary resource
         subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
         
+        # Get dynamic persona and scope for this subdomain
+        persona_section = get_persona_for_subdomain(current_step.subdomain, step_type="crud")
+        scope_section = get_scope_for_subdomain(current_step.subdomain)
+        
+        # Get previous step's subdomain for cross-domain pattern detection
+        prev_subdomain = None
+        if current_step_index > 0 and think_output and len(think_output.steps) > current_step_index - 1:
+            prev_subdomain = think_output.steps[current_step_index - 1].subdomain
+        
+        # Get contextual examples based on step verb and cross-domain patterns
+        contextual_examples = get_contextual_examples(
+            subdomain=current_step.subdomain,
+            step_description=current_step.description,
+            prev_subdomain=prev_subdomain,
+            step_type=step_type,
+        )
+        
         # Build a quick status summary for the last tool call
         last_tool_summary = ""
         if current_step_tool_results:
@@ -634,7 +667,37 @@ Generate the requested content and complete the step:
             else:
                 last_tool_summary = f" → Last: `{last_tool}` completed"
         
-        user_prompt = f"""## STATUS
+        # Build prev step note section
+        prev_note_section = ""
+        if prev_step_note:
+            prev_note_section = f"""## Previous Step Note
+
+{prev_step_note}
+
+---
+
+"""
+        
+        # Build persona/scope header (dynamic, at top for orientation)
+        dynamic_header = ""
+        if persona_section:
+            dynamic_header += f"""## Persona
+
+{persona_section}
+
+---
+
+"""
+        if scope_section:
+            dynamic_header += f"""## Scope
+
+{scope_section}
+
+---
+
+"""
+        
+        user_prompt = f"""{dynamic_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | crud |
@@ -643,7 +706,7 @@ Generate the requested content and complete the step:
 
 ---
 
-## 1. Task
+{prev_note_section}## 1. Task
 
 User said: "{state.get("user_message", "")}"
 
@@ -663,6 +726,8 @@ Your job this step: **{current_step.description}**
 
 ---
 
+{contextual_examples if contextual_examples else ""}
+
 ## 4. Previous Steps
 
 {prev_step_section if prev_step_section else "*No previous steps.*"}
@@ -678,9 +743,11 @@ Your job this step: **{current_step.description}**
 ## DECISION
 
 What's next?
-- Step done? → `{{"action": "step_complete", "result_summary": "...", "data": {{...}}}}`
+- Step done? → `{{"action": "step_complete", "result_summary": "...", "data": {{...}}, "note_for_next_step": "..."}}`
 - Need data? → `{{"action": "tool_call", "tool": "db_read", "params": {{"table": "...", "filters": [...], "limit": N}}}}`
-- Need to create? → `{{"action": "tool_call", "tool": "db_create", "params": {{"table": "...", "data": {{...}}}}}}`"""
+- Need to create? → `{{"action": "tool_call", "tool": "db_create", "params": {{"table": "...", "data": {{...}}}}}}`
+
+**Note for next step:** When completing, include a brief note with IDs or key info the next step might need."""
 
     # Call LLM for decision (step_results are already in the prompt)
     decision = await call_llm(
@@ -834,9 +901,15 @@ What's next?
         new_step_results = step_results.copy()
         new_step_results[current_step_index] = step_data
 
+        # Extract note for next step (CRUD steps only)
+        note_for_next = None
+        if step_type == "crud" and hasattr(decision, 'note_for_next_step'):
+            note_for_next = decision.note_for_next_step
+
         action = StepCompleteAction(
             result_summary=decision.result_summary or "Step completed",
             data=step_data,
+            note_for_next_step=note_for_next,
         )
         
         # Archive generate/analyze step results for cross-turn retrieval
@@ -868,6 +941,7 @@ What's next?
             "current_step_tool_results": [],  # Reset for next step
             "schema_requests": 0,
             "content_archive": new_archive,
+            "prev_step_note": note_for_next,  # Pass note to next step
         }
 
     # Handle other actions (ask_user, blocked, fail)

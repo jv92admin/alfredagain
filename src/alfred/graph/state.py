@@ -104,6 +104,7 @@ class StepCompleteAction(BaseModel):
     action: Literal["step_complete"] = "step_complete"
     result_summary: str  # Brief description of outcome
     data: Any = None  # Full result for caching
+    note_for_next_step: str | None = None  # Short note for next step (IDs, counts, etc.)
 
 
 class RequestSchemaAction(BaseModel):
@@ -270,6 +271,9 @@ class AlfredState(TypedDict, total=False):
     # Allows Act to retrieve generated content from previous turns
     content_archive: dict[str, Any]
 
+    # Step notes (CRUD steps leave notes for next step)
+    prev_step_note: str | None  # Note from previous step for context
+    
     # Conversation context (Phase 5)
     conversation: ConversationContext
 

@@ -21,15 +21,24 @@ from alfred.db.client import get_client
 class UserProfile:
     """Pre-computed user profile for prompt injection."""
     
-    # From preferences table
+    # HARD CONSTRAINTS (never violated)
     household_size: int = 1
     dietary_restrictions: list[str] = field(default_factory=list)
     allergies: list[str] = field(default_factory=list)
+    
+    # CAPABILITY (what they can do)
     cooking_skill_level: str = "intermediate"
-    favorite_cuisines: list[str] = field(default_factory=list)
     available_equipment: list[str] = field(default_factory=list)
-    time_budget_minutes: int = 30
+    
+    # TASTE (what they like)
+    favorite_cuisines: list[str] = field(default_factory=list)
     nutrition_goals: list[str] = field(default_factory=list)
+    
+    # PLANNING (how they want to cook - freeform, 2-3 tags)
+    planning_rhythm: list[str] = field(default_factory=list)
+    
+    # VIBES (current interests - freeform, up to 5 tags)
+    current_vibes: list[str] = field(default_factory=list)
     
     # From cooking_log aggregation
     top_recipes: list[dict] = field(default_factory=list)  # [{name, times_cooked, avg_rating}]
@@ -40,6 +49,9 @@ class UserProfile:
     
     # Metadata
     last_updated: datetime | None = None
+    
+    # Legacy (kept for backwards compatibility, prefer planning_rhythm)
+    time_budget_minutes: int = 30
 
 
 async def build_user_profile(user_id: str) -> UserProfile:
@@ -65,14 +77,21 @@ async def build_user_profile(user_id: str) -> UserProfile:
         prefs_result = client.table("preferences").select("*").eq("user_id", user_id).limit(1).execute()
         if prefs_result.data:
             prefs = prefs_result.data[0]
+            # Hard constraints
             profile.household_size = prefs.get("household_size", 1) or 1
             profile.dietary_restrictions = prefs.get("dietary_restrictions") or []
             profile.allergies = prefs.get("allergies") or []
+            # Capability
             profile.cooking_skill_level = prefs.get("cooking_skill_level") or "intermediate"
-            profile.favorite_cuisines = prefs.get("favorite_cuisines") or []
             profile.available_equipment = prefs.get("available_equipment") or []
-            profile.time_budget_minutes = prefs.get("time_budget_minutes", 30) or 30
+            # Taste
+            profile.favorite_cuisines = prefs.get("favorite_cuisines") or []
             profile.nutrition_goals = prefs.get("nutrition_goals") or []
+            # Planning & Vibes (new flexible fields)
+            profile.planning_rhythm = prefs.get("planning_rhythm") or []
+            profile.current_vibes = prefs.get("current_vibes") or []
+            # Legacy
+            profile.time_budget_minutes = prefs.get("time_budget_minutes", 30) or 30
     except Exception:
         pass  # Use defaults if preferences not available
     
@@ -177,52 +196,56 @@ def format_profile_for_prompt(profile: UserProfile) -> str:
     """
     lines = ["## USER PROFILE"]
     
-    # Basic info
-    basic = []
-    if profile.household_size > 1:
-        basic.append(f"Household: {profile.household_size}")
-    if profile.dietary_restrictions:
-        basic.append(f"Diet: {', '.join(profile.dietary_restrictions)}")
-    if profile.allergies:
-        basic.append(f"Allergies: {', '.join(profile.allergies)}")
-    if basic:
-        lines.append(f"- {' | '.join(basic)}")
-    
-    # Skill and constraints
+    # HARD CONSTRAINTS (always show, these are non-negotiable)
     constraints = []
-    if profile.cooking_skill_level != "intermediate":
-        constraints.append(f"Skill: {profile.cooking_skill_level}")
-    if profile.time_budget_minutes != 30:
-        constraints.append(f"Time: {profile.time_budget_minutes} min")
-    if profile.available_equipment:
-        constraints.append(f"Equipment: {', '.join(profile.available_equipment[:3])}")
+    if profile.dietary_restrictions:
+        constraints.append(f"Diet: {', '.join(profile.dietary_restrictions)}")
+    if profile.allergies:
+        constraints.append(f"Allergies: {', '.join(profile.allergies)}")
+    if profile.household_size > 1:
+        constraints.append(f"Portions: {profile.household_size}")
     if constraints:
-        lines.append(f"- {' | '.join(constraints)}")
+        lines.append(f"**Constraints:** {' | '.join(constraints)}")
     
-    # Preferences
+    # CAPABILITY (what they can do)
+    capability = []
+    if profile.available_equipment:
+        capability.append(f"Equipment: {', '.join(profile.available_equipment[:4])}")
+    if profile.cooking_skill_level != "intermediate":
+        capability.append(f"Skill: {profile.cooking_skill_level}")
+    if capability:
+        lines.append(f"**Has:** {' | '.join(capability)}")
+    
+    # TASTE (what they like)
+    tastes = []
     if profile.favorite_cuisines:
-        lines.append(f"- Top cuisines: {', '.join(profile.favorite_cuisines[:3])}")
-    
+        tastes.append(f"Cuisines: {', '.join(profile.favorite_cuisines[:4])}")
     if profile.nutrition_goals:
-        lines.append(f"- Goals: {', '.join(profile.nutrition_goals[:3])}")
+        tastes.append(f"Goals: {', '.join(profile.nutrition_goals[:3])}")
+    if tastes:
+        lines.append(f"**Likes:** {' | '.join(tastes)}")
     
-    # Top ingredients
-    if profile.top_ingredients:
-        lines.append(f"- Frequently used: {', '.join(profile.top_ingredients[:5])}")
+    # PLANNING (how they want to cook right now)
+    if profile.planning_rhythm:
+        lines.append(f"**Planning:** {'; '.join(profile.planning_rhythm[:3])}")
     
-    # Recent activity
+    # VIBES (current culinary interests)
+    if profile.current_vibes:
+        lines.append(f"**Vibes:** {'; '.join(profile.current_vibes[:5])}")
+    
+    # Recent activity (context from cooking history)
     if profile.recent_meals:
         recent_str = ", ".join([
             f"{m['name']}" + (f" (★{m['rating']})" if m.get('rating') else "")
             for m in profile.recent_meals[:3]
         ])
-        lines.append(f"- Recent: {recent_str}")
+        lines.append(f"**Recent:** {recent_str}")
     elif profile.top_recipes:
         top_str = ", ".join([
             f"{r['name']}" + (f" (★{r['avg_rating']})" if r.get('avg_rating') else "")
             for r in profile.top_recipes[:3]
         ])
-        lines.append(f"- Top recipes: {top_str}")
+        lines.append(f"**Favorites:** {top_str}")
     
     return "\n".join(lines) if len(lines) > 1 else ""
 

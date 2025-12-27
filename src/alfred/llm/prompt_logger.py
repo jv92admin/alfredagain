@@ -116,8 +116,6 @@ def log_prompt(
 
 ---
 
-## User Prompt
-
 ```
 {user_prompt}
 ```
