@@ -887,6 +887,13 @@ Pattern: `db_read` → merge in analyze step → `db_create` new items + `db_upd
 - `breakfast`, `lunch`, `dinner`, `snack` = Standard meals
 - `other` = Experiments, making stock, batch cooking base ingredients
 
+**🔗 RELATED: `meal_plans` → `tasks`**
+
+Tasks can link to meal_plans via `meal_plan_id`. On DELETE of a meal_plan:
+- **Linked tasks are PRESERVED** (their meal_plan_id becomes NULL)
+- You do NOT need to delete tasks before deleting the meal plan
+- Just delete the meal_plan directly
+
 ### recipes
 | Column | Type | Nullable |
 |--------|------|----------|
@@ -905,13 +912,16 @@ Pattern: `db_read` → merge in analyze step → `db_create` new items + `db_upd
 | due_date | date | Yes ← Optional due date |
 | category | text | Yes ← prep, shopping, cleanup, other |
 | completed | boolean | No (default false) |
-| recipe_id | uuid | Yes ← Optional: link to a recipe |
-| meal_plan_id | uuid | Yes ← Optional: link to a meal plan |
+| recipe_id | uuid | Yes ← Optional: link to a recipe (SET NULL on delete) |
+| meal_plan_id | uuid | Yes ← Optional: link to a meal plan (SET NULL on delete) |
 
 **Tasks are freeform by default.** They can optionally link to:
 - A recipe (e.g., "Prep ingredients for butter chicken")
 - A meal plan (e.g., "Thaw chicken for Monday's dinner")
 - Or nothing (e.g., "Buy new chef's knife")
+
+**🔗 FK Behavior:** If linked meal_plan or recipe is deleted, task survives with NULL reference.
+You do NOT need to delete tasks before deleting their linked entities.
 
 **Categories:**
 - `prep` = Kitchen prep work (thaw, marinate, chop)

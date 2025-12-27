@@ -452,11 +452,26 @@ async def delete_item(table: str, item_id: str, session: dict = Depends(require_
 # Frontend - React SPA
 # =============================================================================
 
-# React build location
-FRONTEND_DIR = Path(__file__).parent.parent.parent.parent / "frontend" / "dist"
+# React build location - try multiple paths for dev vs Docker
+def find_frontend_dir() -> Path | None:
+    """Find the React build directory in dev or Docker."""
+    candidates = [
+        # Dev: relative to source file
+        Path(__file__).parent.parent.parent.parent / "frontend" / "dist",
+        # Docker: /app/frontend/dist (pip install puts code in site-packages)
+        Path("/app/frontend/dist"),
+        # Alt: current working directory
+        Path.cwd() / "frontend" / "dist",
+    ]
+    for path in candidates:
+        if path.exists() and (path / "index.html").exists():
+            return path
+    return None
+
+FRONTEND_DIR = find_frontend_dir()
 
 # Check if build exists
-if FRONTEND_DIR.exists() and (FRONTEND_DIR / "index.html").exists():
+if FRONTEND_DIR is not None:
     # Mount static assets from React build
     if (FRONTEND_DIR / "assets").exists():
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="static")
