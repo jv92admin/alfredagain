@@ -557,6 +557,18 @@ async def act_node(state: AlfredState) -> dict:
     today = date.today().isoformat()
     
     if step_type == "analyze":
+        # Get analysis guidance based on subdomain
+        prev_subdomain = None
+        if current_step_index > 0 and think_output and len(think_output.steps) > current_step_index - 1:
+            prev_subdomain = think_output.steps[current_step_index - 1].subdomain
+        
+        analyze_guidance = get_contextual_examples(
+            subdomain=current_step.subdomain,
+            step_description=current_step.description,
+            prev_subdomain=prev_subdomain,
+            step_type="analyze",
+        )
+        
         user_prompt = f"""## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
@@ -572,6 +584,10 @@ async def act_node(state: AlfredState) -> dict:
 User said: "{state.get("user_message", "")}"
 
 Your job this step: **{current_step.description}**
+
+---
+
+{analyze_guidance}
 
 ---
 
@@ -605,6 +621,14 @@ Analyze the data above and complete the step:
 
 """
         
+        # Get generation guidance based on subdomain
+        generate_guidance = get_contextual_examples(
+            subdomain=current_step.subdomain,
+            step_description=current_step.description,
+            prev_subdomain=None,  # Less relevant for generate
+            step_type="generate",
+        )
+        
         user_prompt = f"""{persona_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
@@ -620,6 +644,10 @@ Analyze the data above and complete the step:
 User said: "{state.get("user_message", "")}"
 
 Your job this step: **{current_step.description}**
+
+---
+
+{generate_guidance}
 
 ---
 

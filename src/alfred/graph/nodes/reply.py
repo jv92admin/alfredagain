@@ -143,14 +143,26 @@ Generate a helpful response explaining what was accomplished and what we could t
 
 Generate a natural, helpful response. Lead with the outcome, be specific, be concise."""
 
-    result = await call_llm(
-        response_model=ReplyOutput,
-        system_prompt=full_system_prompt,
-        user_prompt=user_prompt,
-        complexity="low",  # Reply generation is straightforward
-    )
-    
-    return {"final_response": result.response}
+    try:
+        result = await call_llm(
+            response_model=ReplyOutput,
+            system_prompt=full_system_prompt,
+            user_prompt=user_prompt,
+            complexity="low",  # Reply generation is straightforward
+        )
+        return {"final_response": result.response}
+    except Exception as e:
+        # Fallback: if Reply LLM fails, generate a basic response from step results
+        import logging
+        logging.getLogger("alfred.reply").exception("Reply LLM call failed")
+        
+        # Build a basic response from what we know
+        if step_results:
+            basic_response = f"I completed the requested steps. {len(step_results)} step(s) were executed."
+        else:
+            basic_response = "I processed your request but encountered an issue generating the response."
+        
+        return {"final_response": basic_response}
 
 
 def _format_execution_summary(

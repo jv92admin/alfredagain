@@ -606,7 +606,8 @@ def _count_records(result: Any) -> int:
     """Count records in a result."""
     if isinstance(result, list):
         if result and isinstance(result[0], tuple):
-            return sum(_count_records(r) for _, r in result)
+            # Handle both (tool, result) and (tool, table, result) formats
+            return sum(_count_records(item[-1]) for item in result)
         return len(result)
     elif isinstance(result, dict):
         return 1

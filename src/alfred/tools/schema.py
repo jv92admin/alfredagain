@@ -267,9 +267,13 @@ def get_contextual_examples(
     desc_lower = step_description.lower()
     examples = []
     
-    # Skip examples for analyze/generate steps — they don't use CRUD
-    if step_type != "crud":
-        return ""
+    # === ANALYZE STEP GUIDANCE ===
+    if step_type == "analyze":
+        return _get_analyze_guidance(subdomain, desc_lower, prev_subdomain)
+    
+    # === GENERATE STEP GUIDANCE ===
+    if step_type == "generate":
+        return _get_generate_guidance(subdomain, desc_lower)
     
     # === SHOPPING PATTERNS ===
     if subdomain == "shopping":
@@ -355,6 +359,175 @@ Prefer meal_plan_id over recipe_id when possible.""")
         return ""
     
     return "## Patterns for This Step\n\n" + "\n\n".join(examples)
+
+
+def _get_analyze_guidance(subdomain: str, desc_lower: str, prev_subdomain: str | None) -> str:
+    """Get guidance for analyze steps based on subdomain and context."""
+    
+    guidance_parts = ["## Analysis Guidance\n"]
+    
+    # === RECIPES ANALYZE ===
+    if subdomain == "recipes":
+        if "preference" in desc_lower or "fit" in desc_lower or "match" in desc_lower or "enough" in desc_lower:
+            guidance_parts.append("""**Matching Recipes to Preferences:**
+- Check dietary_restrictions and allergies — these are HARD constraints (must exclude)
+- Check available_equipment — only suggest recipes using equipment they have
+- Check time_budget_minutes — respect their time constraints
+- Check cuisine_preferences — prioritize their favorite cuisines
+- Check skill_level — match recipe complexity to their skill
+
+**Flag gaps explicitly:** If the request needs N meals but you only found M matching recipes (M < N), say so clearly:
+- "Found 1 matching recipe for 5 requested meals — need 4 more recipes"
+- This helps downstream steps know to generate new recipes
+
+**Output format:**
+```json
+{"matching_recipes": [{"recipe_id": "...", "name": "...", "fit_score": "high/medium", "notes": "..."}], 
+ "excluded_recipes": [{"recipe_id": "...", "name": "...", "reason": "requires wok (not available)"}],
+ "gap": {"requested": 5, "found": 1, "need_new": 4}}
+```""")
+        else:
+            guidance_parts.append("""**Recipe Analysis:**
+Output a structured analysis with clear recommendations. Include recipe IDs for downstream steps.
+If analyzing for meal planning, flag any gaps between what's needed and what's available.""")
+    
+    # === SHOPPING ANALYZE ===
+    elif subdomain == "shopping":
+        if "missing" in desc_lower or "need" in desc_lower or "inventory" in desc_lower:
+            guidance_parts.append("""**Finding Missing Ingredients:**
+1. Compare recipe ingredients (from step N) against inventory (from step M)
+2. Also check current shopping list to avoid duplicates
+3. Output the delta — what's needed but not in inventory AND not already on shopping list
+
+**Output format:**
+```json
+{"missing_items": [{"name": "chicken breast", "quantity": 2, "unit": "lbs", "from_recipe": "Butter Chicken"}],
+ "already_have": ["rice", "garlic", "onion"],
+ "already_on_list": ["tomatoes"]}
+```""")
+        else:
+            guidance_parts.append("""**Shopping Analysis:**
+Compare lists and output clear deltas. Normalize ingredient names (strip prep states).""")
+    
+    # === MEAL PLAN ANALYZE ===
+    elif subdomain == "meal_plan":
+        if "recipe" in desc_lower or "fit" in desc_lower:
+            guidance_parts.append("""**Analyzing Recipes for Meal Plan:**
+1. Look at previous step's recipes and preferences
+2. Consider variety (don't repeat cuisines back-to-back)
+3. Consider schedule (quick meals on busy days, elaborate on weekends)
+4. Output recipe assignments with dates and meal types
+
+**Output format:**
+```json
+{"recommended_assignments": [
+  {"date": "2025-01-06", "meal_type": "dinner", "recipe_id": "...", "recipe_name": "...", "reason": "Quick weeknight option"}
+]}
+```""")
+        elif "prep" in desc_lower or "task" in desc_lower:
+            guidance_parts.append("""**Identifying Prep Tasks:**
+Look at meal plans and identify what needs advance prep:
+- Marinating (needs 2-24 hours)
+- Thawing frozen ingredients
+- Batch cooking components
+- Soaking (beans, grains)
+
+**Output format:**
+```json
+{"prep_tasks": [{"task": "Thaw chicken", "for_meal": "Monday dinner", "due_by": "Sunday evening", "meal_plan_id": "..."}]}
+```""")
+    
+    # === INVENTORY ANALYZE ===
+    elif subdomain == "inventory":
+        if "expir" in desc_lower:
+            guidance_parts.append("""**Expiring Items Analysis:**
+Prioritize by urgency. Group by category. Include usage suggestions.
+
+**Output format:**
+```json
+{"urgent": [{"name": "milk", "expires": "2025-01-02", "suggestion": "Use in breakfast smoothies"}],
+ "this_week": [...]}
+```""")
+    
+    # General guidance if nothing specific matched
+    if len(guidance_parts) == 1:
+        guidance_parts.append(f"""**General Analysis:**
+- Review data from previous steps carefully
+- Output structured JSON in `data` field
+- Include IDs where relevant for downstream CRUD steps
+- Be specific and actionable""")
+    
+    return "\n\n".join(guidance_parts)
+
+
+def _get_generate_guidance(subdomain: str, desc_lower: str) -> str:
+    """Get guidance for generate steps based on subdomain."""
+    
+    guidance_parts = ["## Generation Guidance\n"]
+    
+    # === RECIPES GENERATE ===
+    if subdomain == "recipes":
+        guidance_parts.append("""**Recipe Structure:**
+Generate complete recipe with ALL required fields:
+```json
+{
+  "recipe": {
+    "name": "Spicy Garlic Shrimp Pasta",
+    "description": "A quick weeknight pasta...",
+    "instructions": "1. Cook pasta...\\n2. Sauté shrimp...",
+    "cuisine": "Italian",
+    "difficulty": "easy",
+    "prep_time_minutes": 10,
+    "cook_time_minutes": 20,
+    "servings": 4,
+    "tags": ["weeknight", "quick", "seafood"]
+  },
+  "ingredients": [
+    {"name": "shrimp", "quantity": 1, "unit": "lb", "notes": "peeled and deveined"},
+    {"name": "pasta", "quantity": 8, "unit": "oz"},
+    {"name": "garlic", "quantity": 4, "unit": "cloves", "notes": "minced"}
+  ]
+}
+```
+**Important:** Include BOTH `recipe` and `ingredients` — they'll be saved together.""")
+    
+    # === MEAL PLAN GENERATE ===
+    elif subdomain == "meal_plan":
+        guidance_parts.append("""**Meal Plan Structure:**
+Generate entries with dates, meal types, and recipe references:
+```json
+{
+  "meal_plan": [
+    {"date": "2025-01-06", "meal_type": "breakfast", "recipe_id": "abc123", "recipe_name": "Overnight Oats", "servings": 2},
+    {"date": "2025-01-06", "meal_type": "lunch", "notes": "Leftovers from Sunday"},
+    {"date": "2025-01-06", "meal_type": "dinner", "recipe_id": "def456", "recipe_name": "Butter Chicken", "servings": 4}
+  ]
+}
+```
+**recipe_id is optional** — use it if referencing saved recipes. For "leftovers" or "eating out", just add notes.
+**Use recipe IDs from previous step** if recipes were read/analyzed earlier.""")
+    
+    # === TASKS GENERATE ===
+    elif subdomain == "tasks":
+        guidance_parts.append("""**Task Structure:**
+```json
+{
+  "tasks": [
+    {"title": "Thaw chicken for Tuesday", "due_date": "2025-01-06", "category": "prep", "meal_plan_id": "..."},
+    {"title": "Buy wine for date night", "due_date": "2025-01-08", "category": "shopping"}
+  ]
+}
+```
+Categories: prep, shopping, cleanup, other""")
+    
+    # General guidance if nothing specific matched
+    if len(guidance_parts) == 1:
+        guidance_parts.append("""**General Generation:**
+- Use user profile to personalize content
+- Output structured JSON that can be saved in the next step
+- Include all required fields for the target table""")
+    
+    return "\n\n".join(guidance_parts)
 
 
 # =============================================================================

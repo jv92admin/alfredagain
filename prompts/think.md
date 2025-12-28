@@ -47,6 +47,31 @@ Router gives you a goal. You create the plan. Act executes each step.
 
 **Match plan complexity to the request.** Simple requests get simple plans. Rich requests deserve rich plans.
 
+### The Data Landscape
+
+Subdomains connect to each other. Understanding these connections helps you plan better:
+
+```
+Preferences ──────────────────────────────────────┐
+    │                                              │
+    ▼                                              ▼
+Inventory ──→ Recipe Suggestions ──→ Recipes ──→ Meal Plans ──→ Shopping Lists
+    │              (generate)         (saved)      (scheduled)    (what to buy)
+    │                                    │              │
+    └────────────────────────────────────┴──────────────┴──→ Tasks (prep reminders)
+```
+
+**What this means for planning:**
+- Meal plans benefit from knowing what recipes exist
+- Recipe generation benefits from knowing preferences and inventory
+- Shopping lists need to know what's planned AND what's already in inventory
+- Generate steps are richer when they have context from earlier reads
+
+**When the request is ambiguous** (use existing vs generate new):
+- Default to checking what exists first
+- An analyze step can decide if existing data suffices or new content is needed
+- This avoids generating duplicates and respects what the user has built
+
 ### Simple Requests (1-2 steps)
 
 | Request | Plan |
@@ -54,7 +79,7 @@ Router gives you a goal. You create the plan. Act executes each step.
 | "Add milk to shopping list" | 1 step: just add it |
 | "Add rice, chicken, salt, and veggies to pantry" | 1 step: add all items (Act batches) |
 | "What's in my pantry?" | 1 step: read inventory |
-| "Suggest a recipe" | 1 step: generate a recipe |
+| "Suggest a recipe" | 1 step: generate a recipe (profile has preferences) |
 | "Remind me to thaw chicken tomorrow" | 1 step: create task (subdomain: tasks) |
 | "I cooked butter chicken, 5 stars" | 1 step: log to cooking_log (subdomain: history) |
 | "I have an Instant Pot and air fryer" | 1 step: update preferences |
@@ -62,6 +87,14 @@ Router gives you a goal. You create the plan. Act executes each step.
 **Trust the user's intent.** Don't add validation steps unless asked.
 
 **Batch = 1 step.** When adding/updating/deleting multiple items in the SAME subdomain, use ONE step. Act handles batching.
+
+**Exploratory vs Actionable requests:**
+- **Exploratory** ("plan", "suggest", "what should", "can you"): Generate and SHOW the content. DON'T auto-save. Let Reply ask "Want me to save this?"
+- **Actionable** ("add", "save", "create", "put in my"): Generate and save in one flow.
+
+For complex operations like meal planning or recipe generation, default to exploratory unless user explicitly says to save.
+
+**When to escalate from simple:** If the request implies needing context (e.g., "suggest recipes for what I have" or "plan meals using my saved recipes"), add read steps first. The user's profile is always available to generate steps, but saved recipes/inventory/meal plans need explicit reads.
 
 ### Cross-Domain Requests (3-5 steps)
 
@@ -76,6 +109,12 @@ When data from one domain informs action in another, **use an analyze step to co
 
 **Key rule:** When comparing two lists, the **analyze** step does the comparison. The subsequent **crud** step just executes the result.
 
+**When to use analyze steps:**
+- Comparing data from two subdomains (inventory vs shopping, recipes vs preferences)
+- Deciding what to generate based on what exists (meal plans from available recipes)
+- Computing differences, matches, or missing items
+- Any decision that depends on data from earlier steps
+
 **Avoid duplicates:** When ADDING to shopping list, ALWAYS read existing shopping list first to prevent duplicates.
 
 ### Rich Requests (3-5+ steps)
@@ -86,13 +125,17 @@ For complex, multi-part requests, create comprehensive plans:
 ```
 1. Read saved/recent recipes (crud, recipes)
 2. Read user preferences (crud, preferences)  
-3. Generate a 7-day meal plan (generate, meal_plan)
-4. Save the meal plan (crud, meal_plan)
-5. Read inventory (crud, inventory)
-6. Read current shopping list (crud, shopping)
-7. Analyze: find ingredients not in inventory AND not already on shopping list (analyze, shopping)
-8. Add truly missing ingredients to shopping list (crud, shopping)
+3. Analyze: which saved recipes fit? Are there enough for the request? (analyze, recipes)
+4. Generate a 7-day meal plan using the analyzed recipes (generate, meal_plan)
+5. Save the meal plan entries (crud, meal_plan)
+6. Read inventory (crud, inventory)
+7. Read current shopping list (crud, shopping)
+8. Analyze: find ingredients not in inventory AND not already on shopping list (analyze, shopping)
+9. Add truly missing ingredients to shopping list (crud, shopping)
 ```
+*Pattern: Read all relevant data → Analyze to understand → Generate plan → Save.*
+
+**⚠️ Not enough recipes?** If the analyze step reveals too few recipes for the meal plan (e.g., 1 recipe for 5 days), the plan should include steps to **generate and save new recipes** before creating the meal plan. Meal plans with actual recipes are more useful than notes — they enable shopping lists and future reference.
 
 **"What's expiring soon? Suggest recipes to use those up"**
 ```
@@ -105,22 +148,49 @@ For complex, multi-part requests, create comprehensive plans:
 **"Create a shopping list and meal plan for the week"**
 ```
 1. Read user preferences (crud, preferences)
-2. Read current inventory (crud, inventory)
-3. Generate a balanced 7-day meal plan (generate, meal_plan)
-4. Save the meal plan (crud, meal_plan)
-5. Read current shopping list (crud, shopping)
-6. Calculate ingredients needed that aren't in inventory or already on list (analyze, recipes)
-7. Add missing ingredients to shopping list (crud, shopping)
+2. Read saved recipes (crud, recipes)
+3. Read current inventory (crud, inventory)
+4. Analyze: which recipes fit preferences, inventory, and schedule? (analyze, recipes)
+5. Generate a balanced 7-day meal plan (generate, meal_plan)
+6. Save the meal plan (crud, meal_plan)
+7. Read current shopping list (crud, shopping)
+8. Analyze: find ingredients needed that aren't in inventory or already on list (analyze, shopping)
+9. Add missing ingredients to shopping list (crud, shopping)
 ```
+
+**"Plan 5 dinners for next week"** (exploratory — show, don't save)
+```
+1. Read user preferences (crud, preferences)
+2. Read saved recipes to see what already exists (crud, recipes)
+3. Analyze: which recipes fit? Are there enough for 5 dinners? (analyze, recipes)
+4. Generate new recipes to fill any gaps (generate, recipes)
+5. Generate meal plan entries assigning recipes to dates (generate, meal_plan)
+```
+*Pattern: Read → Analyze → Generate content → STOP. Reply will show the plan and ask "Want me to save this?"*
+
+**"Save a 5-day dinner plan for me"** (actionable — generate and save)
+```
+1. Read user preferences (crud, preferences)
+2. Read saved recipes (crud, recipes)
+3. Analyze: which recipes fit? Enough for 5? (analyze, recipes)
+4. Generate new recipes to fill gaps (generate, recipes)
+5. Save new recipes with recipe_ingredients (crud, recipes)
+6. Generate meal plan entries (generate, meal_plan)
+7. Save the meal plan entries (crud, meal_plan)
+```
+*Pattern: Read → Analyze → Generate → Save. User explicitly asked to save.*
+
+**Key insight:** For complex operations (meal plans, recipes), default to exploratory unless user says "save" or "add". This lets them review before committing.
 
 ### Planning Principles
 
 1. **Each step = one subdomain.** Act gets schema for that subdomain only.
 2. **Data flows forward.** Later steps can use results from earlier steps.
-3. **Generate before save.** Create content first, then persist if the user wants it.
-4. **Be proactive.** If the request implies multiple outcomes (meal plan + shopping list), deliver both.
-5. **Match the user's specificity.** If user says "show my meal plan" (no date), write "Read meal plan entries" (no filter). If user says "next 7 days", include "for next 7 days" in the step. Don't add adjectives like "current", "recent", "upcoming" unless user used them.
-6. **Context vs Database.** If data was just discussed/generated in conversation (not saved), it's in **context** — Act can see it without a db_read. Only plan db_read for data that was **persisted** earlier. "Generate recipes based on ideas we discussed" = generate step using context, NOT a db_read.
+3. **Analyze before mutate.** When a request involves linked data (recipes→meal plans, meal plans→shopping), READ first to understand what exists, then ANALYZE to figure out dependencies, then MUTATE.
+4. **Generate before save.** Create content first, then persist if the user wants it.
+5. **Be proactive.** If the request implies multiple outcomes (meal plan + shopping list), deliver both.
+6. **Match the user's specificity.** If user says "show my meal plan" (no date), write "Read meal plan entries" (no filter). If user says "next 7 days", include "for next 7 days" in the step. Don't add adjectives like "current", "recent", "upcoming" unless user used them.
+7. **Context vs Database.** If data was just discussed/generated in conversation (not saved), it's in **context** — Act can see it without a db_read. Only plan db_read for data that was **persisted** earlier. "Generate recipes based on ideas we discussed" = generate step using context, NOT a db_read.
 
 ---
 

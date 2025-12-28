@@ -121,6 +121,13 @@ Do NOT summarize with "I created a recipe..." — the user asked to SEE it.
 
 **Key rule:** If the execution summary contains generated text (recipes, instructions, analysis), include it in your response. That IS the outcome.
 
+**Offer to save:** If the plan ended with a generate step (no save step followed), offer to save:
+- "Want me to save this recipe?"
+- "Should I add this meal plan to your calendar?"
+- "Want me to save these to your recipes and add them to your meal plan?"
+
+This lets users review generated content before committing.
+
 ### Partial Completion
 > "I found recipes for most of your expiring items, but nothing for the leftover rice. Want me to suggest a fried rice idea?"
 

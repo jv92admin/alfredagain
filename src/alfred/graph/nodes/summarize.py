@@ -346,12 +346,13 @@ def _summarize_step_result(result: Any) -> str:
     if isinstance(result, list):
         if len(result) == 0:
             return "No records found"
-        # Check for tuple format (tool results)
+        # Check for tuple format (tool results) - can be 2-tuple or 3-tuple
         if result and isinstance(result[0], tuple):
-            total = sum(
-                len(r) if isinstance(r, list) else 1
-                for _, r in result
-            )
+            total = 0
+            for item in result:
+                # Handle both (tool, result) and (tool, table, result) formats
+                r = item[-1]  # Result is always the last element
+                total += len(r) if isinstance(r, list) else 1
             return f"Processed {total} records across {len(result)} operations"
         return f"Found/processed {len(result)} records"
     elif isinstance(result, dict):
@@ -382,7 +383,8 @@ def _count_records(result: Any) -> int:
     """Count records in a result."""
     if isinstance(result, list):
         if result and isinstance(result[0], tuple):
-            return sum(_count_records(r) for _, r in result)
+            # Handle both (tool, result) and (tool, table, result) formats
+            return sum(_count_records(item[-1]) for item in result)
         return len(result)
     elif isinstance(result, dict):
         return 1
