@@ -35,9 +35,9 @@ class TestSubdomainRegistry:
         assert "recipe_ingredients" in tables
         assert "ingredients" in tables
     
-    def test_get_subdomain_tables_meal_plan(self):
-        """Meal plan subdomain should include meal_plans and recipes."""
-        tables = get_subdomain_tables("meal_plan")
+    def test_get_subdomain_tables_meal_plans(self):
+        """Meal plans subdomain should include meal_plans and recipes."""
+        tables = get_subdomain_tables("meal_plans")
         assert "meal_plans" in tables
         assert "recipes" in tables
     
@@ -57,9 +57,9 @@ class TestSubdomainRegistry:
         assert rules is not None
         assert rules.get("mutation") == "high"
     
-    def test_meal_plan_has_medium_mutation_complexity(self):
-        """Meal plan subdomain should escalate to medium complexity for mutations."""
-        rules = get_complexity_rules("meal_plan")
+    def test_meal_plans_has_medium_mutation_complexity(self):
+        """Meal plans subdomain should escalate to medium complexity for mutations."""
+        rules = get_complexity_rules("meal_plans")
         assert rules is not None
         assert rules.get("mutation") == "medium"
     
@@ -88,9 +88,9 @@ class TestFallbackSchemas:
         schema = FALLBACK_SCHEMAS["recipes"]
         assert "parent_recipe_id" in schema
     
-    def test_meal_plan_schema_mentions_other(self):
-        """Meal plan schema should mention 'other' as a meal_type option for experiments/stocks."""
-        schema = FALLBACK_SCHEMAS["meal_plan"]
+    def test_meal_plans_schema_mentions_other(self):
+        """Meal plans schema should mention 'other' as a meal_type option for experiments/stocks."""
+        schema = FALLBACK_SCHEMAS["meal_plans"]
         assert "other" in schema
     
     def test_tasks_schema_exists(self):
@@ -106,7 +106,8 @@ class TestFallbackSchemas:
         schema = FALLBACK_SCHEMAS["preferences"]
         assert "nutrition_goals" in schema
         assert "available_equipment" in schema
-        assert "time_budget_minutes" in schema
+        # time_budget_minutes is legacy - replaced by planning_rhythm
+        assert "planning_rhythm" in schema
     
     def test_preferences_schema_includes_flavor_preferences(self):
         """Preferences schema should include flavor_preferences table."""
@@ -119,7 +120,7 @@ class TestFieldEnums:
     
     def test_meal_type_includes_other(self):
         """Meal type enum should include 'other' for experiments/stocks."""
-        meal_types = FIELD_ENUMS.get("meal_plan", {}).get("meal_type", [])
+        meal_types = FIELD_ENUMS.get("meal_plans", {}).get("meal_type", [])
         assert "other" in meal_types
     
     def test_task_category_values(self):
@@ -128,9 +129,10 @@ class TestFieldEnums:
         assert "prep" in categories
         assert "shopping" in categories
     
-    def test_cooking_frequency_values(self):
-        """Preferences should have cooking_frequency values."""
-        frequencies = FIELD_ENUMS.get("preferences", {}).get("cooking_frequency", [])
-        assert "daily" in frequencies
-        assert "weekends-only" in frequencies
+    def test_cooking_skill_values(self):
+        """Preferences should have cooking_skill_level values."""
+        skills = FIELD_ENUMS.get("preferences", {}).get("cooking_skill_level", [])
+        assert "beginner" in skills
+        assert "intermediate" in skills
+        assert "advanced" in skills
 

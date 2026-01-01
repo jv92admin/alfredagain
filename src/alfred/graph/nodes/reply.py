@@ -49,11 +49,69 @@ class ReplyOutput(BaseModel):
     response: str
 
 
+def _format_proposal_response(think_output) -> str:
+    """
+    Format a proposal response for user confirmation.
+    
+    Takes Think's assumptions and presents them in a friendly,
+    confirmable format.
+    """
+    goal = getattr(think_output, "goal", "your request")
+    message = getattr(think_output, "proposal_message", None)
+    assumptions = getattr(think_output, "assumptions", None)
+    
+    if message:
+        # Think provided a nice message - use it
+        response = message
+    else:
+        # Build from assumptions
+        response = f"Here's my plan for {goal}:"
+        
+        if assumptions:
+            response += "\n\n"
+            for assumption in assumptions:
+                response += f"• {assumption}\n"
+    
+    # Add confirmation prompt
+    response += "\n\nSound good? (You can confirm, adjust, or tell me more details.)"
+    
+    return response
+
+
+def _format_clarification_response(think_output) -> str:
+    """
+    Format clarification questions for the user.
+    
+    Presents questions in a friendly, non-interrogative way.
+    """
+    goal = getattr(think_output, "goal", "your request")
+    questions = getattr(think_output, "clarification_questions", None)
+    
+    if not questions:
+        return f"I'd like to help with {goal}, but I need a bit more information. Could you tell me more about what you're looking for?"
+    
+    if len(questions) == 1:
+        # Single question - keep it simple
+        return questions[0]
+    
+    # Multiple questions - format as a friendly list
+    response = f"I'd love to help with {goal}! A few quick questions:\n\n"
+    
+    for i, question in enumerate(questions, 1):
+        response += f"{i}. {question}\n"
+    
+    return response
+
+
 async def reply_node(state: AlfredState) -> dict:
     """
     Reply node - generates final user response.
     
-    Synthesizes execution results into a natural, helpful response.
+    Handles three modes:
+    1. Normal completion: Synthesize execution results
+    2. Propose mode: Present assumptions for user confirmation
+    3. Clarify mode: Ask clarifying questions
+    
     Now includes conversation context for continuity awareness.
     
     Args:
@@ -80,7 +138,27 @@ async def reply_node(state: AlfredState) -> dict:
     # Format conversation context (condensed for Reply)
     conversation_section = format_condensed_context(conversation)
     
-    # Handle special cases
+    # =========================================================================
+    # Handle Think decision modes (propose/clarify) - skip execution
+    # =========================================================================
+    
+    if think_output and hasattr(think_output, "decision"):
+        decision = think_output.decision
+        
+        if decision == "propose":
+            # Format the proposal nicely for user confirmation
+            response = _format_proposal_response(think_output)
+            return {"final_response": response}
+        
+        elif decision == "clarify":
+            # Format the clarification questions
+            response = _format_clarification_response(think_output)
+            return {"final_response": response}
+    
+    # =========================================================================
+    # Handle error cases
+    # =========================================================================
+    
     if error:
         return {
             "final_response": f"I'm sorry, something went wrong: {error}"

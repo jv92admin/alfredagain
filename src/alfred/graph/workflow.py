@@ -2,10 +2,13 @@
 Alfred V2 - Graph Workflow Definition.
 
 This module constructs the LangGraph workflow:
-Router → Think (with subdomain hints) → Act Loop (with CRUD) → Reply → Summarize
+Router → Think (with decision layer) → [Act Loop | Reply] → Summarize
 
-The Think node outputs steps with subdomain assignments.
-Act receives subdomain schema and uses generic CRUD tools.
+The Think node now includes a decision layer:
+- plan_direct: Proceed to Act with steps
+- propose: Skip to Reply to present assumptions for confirmation
+- clarify: Skip to Reply to ask clarifying questions
+
 Summarize maintains conversation memory after each exchange.
 """
 
@@ -21,7 +24,7 @@ from alfred.graph.nodes import (
     summarize_node,
     think_node,
 )
-from alfred.graph.state import AlfredState
+from alfred.graph.state import AlfredState, ThinkOutput
 
 
 def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
@@ -95,14 +98,46 @@ def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
     return entities if entities else None
 
 
+def route_after_think(state: AlfredState) -> str:
+    """
+    Route based on Think's decision.
+    
+    - plan_direct: Proceed to Act with steps
+    - propose: Skip to Reply to present assumptions for confirmation
+    - clarify: Skip to Reply to ask clarifying questions
+    
+    Returns:
+        "act" or "reply"
+    """
+    think_output = state.get("think_output")
+    
+    if not think_output:
+        return "reply"  # Error case, let reply handle it
+    
+    # Check if ThinkOutput is the new format with decision
+    if hasattr(think_output, "decision"):
+        match think_output.decision:
+            case "plan_direct":
+                return "act"
+            case "propose" | "clarify":
+                return "reply"
+            case _:
+                return "act"  # Default fallback
+    
+    # Legacy format (no decision field) - go to act
+    return "act"
+
+
 def create_alfred_graph() -> StateGraph:
     """
     Create the Alfred LangGraph workflow.
     
     Flow:
-        START → router → think → act ⟲ → reply → summarize → END
-                                   ↓
-                              (ask_user/fail)
+        START → router → think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
+                                 │                          ↓
+                                 │                     (ask_user/fail)
+                                 │
+                                 └─(propose/clarify)─→ reply → summarize → END
     
     Returns:
         Compiled StateGraph ready for execution
@@ -130,8 +165,15 @@ def create_alfred_graph() -> StateGraph:
     # Router → Think (always)
     graph.add_edge("router", "think")
     
-    # Think → Act (always)
-    graph.add_edge("think", "act")
+    # Think → conditional routing based on decision
+    graph.add_conditional_edges(
+        "think",
+        route_after_think,
+        {
+            "act": "act",       # plan_direct: proceed with execution
+            "reply": "reply",   # propose/clarify: ask user before acting
+        },
+    )
     
     # Act → conditional routing based on action result
     graph.add_conditional_edges(
@@ -330,17 +372,36 @@ async def run_alfred_streaming(
         for node_name, node_output in event.items():
             if node_name == "think" and node_output:
                 think_output = node_output.get("think_output")
-                if think_output and hasattr(think_output, "steps"):
-                    total_steps = len(think_output.steps)
-                    # Send all step descriptions so frontend can build progress trail
-                    step_descriptions = [s.description for s in think_output.steps]
-                    yield {
-                        "type": "plan",
-                        "message": f"Planning {total_steps} step{'s' if total_steps != 1 else ''}...",
-                        "goal": think_output.goal,
-                        "total_steps": total_steps,
-                        "steps": step_descriptions,
-                    }
+                if think_output:
+                    # Check decision type
+                    decision = getattr(think_output, "decision", "plan_direct")
+                    
+                    if decision == "plan_direct" and hasattr(think_output, "steps"):
+                        total_steps = len(think_output.steps)
+                        # Send all step descriptions so frontend can build progress trail
+                        step_descriptions = [s.description for s in think_output.steps]
+                        yield {
+                            "type": "plan",
+                            "message": f"Planning {total_steps} step{'s' if total_steps != 1 else ''}...",
+                            "goal": think_output.goal,
+                            "total_steps": total_steps,
+                            "steps": step_descriptions,
+                        }
+                    elif decision == "propose":
+                        yield {
+                            "type": "propose",
+                            "message": "Confirming approach...",
+                            "goal": think_output.goal,
+                            "proposal_message": getattr(think_output, "proposal_message", None),
+                            "assumptions": getattr(think_output, "assumptions", None),
+                        }
+                    elif decision == "clarify":
+                        yield {
+                            "type": "clarify",
+                            "message": "Need more information...",
+                            "goal": think_output.goal,
+                            "questions": getattr(think_output, "clarification_questions", None),
+                        }
             
             elif node_name == "act" and node_output:
                 current_index = node_output.get("current_step_index", 0)

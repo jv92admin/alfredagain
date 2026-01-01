@@ -5,19 +5,29 @@ The Think node creates an execution plan based on the goal.
 It outputs steps with subdomain hints (not tool names).
 NO data fetching - Act handles all data access via CRUD.
 
-Now includes conversation context for multi-turn awareness.
-Applies automatic complexity escalation for linked-table operations.
+Now includes:
+- Conversation context for multi-turn awareness
+- User profile injection for personalized decision-making
+- Kitchen dashboard for data availability awareness
+- Subdomain dependencies for relationship understanding
+- Clarify/Propose decision layer
 
-Output: Steps with subdomain assignments for Act node to execute.
+Output: ThinkOutput with decision (plan_direct/propose/clarify) and steps or questions.
 """
 
 from datetime import date
 from pathlib import Path
 
+from alfred.background.profile_builder import (
+    format_dashboard_for_prompt,
+    format_profile_for_prompt,
+    get_cached_dashboard,
+    get_cached_profile,
+)
 from alfred.graph.state import AlfredState, PlannedStep, ThinkOutput
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
-from alfred.tools.schema import get_complexity_rules
+from alfred.tools.schema import get_complexity_rules, get_subdomain_dependencies_summary
 
 
 # Mutation verbs that trigger complexity escalation
@@ -83,16 +93,22 @@ async def think_node(state: AlfredState) -> dict:
 
     This node ONLY plans. It does NOT fetch data.
     Act node handles all data access via CRUD.
-    Now includes condensed conversation context for multi-turn awareness.
+    
+    Now includes:
+    - User profile for personalized decision-making
+    - Kitchen dashboard for data availability awareness
+    - Subdomain dependencies for relationship understanding
+    - Clarify/Propose decision layer
 
     Args:
         state: Current graph state with router_output
 
     Returns:
-        State update with think_output (steps with subdomain hints)
+        State update with think_output (decision + steps or questions)
     """
     router_output = state["router_output"]
     conversation = state.get("conversation", {})
+    user_id = state.get("user_id")
 
     # Set node name for prompt logging
     set_current_node("think")
@@ -103,10 +119,42 @@ async def think_node(state: AlfredState) -> dict:
     # Format conversation context (condensed for Think)
     context_section = format_condensed_context(conversation)
     
+    # Fetch user profile and kitchen dashboard for decision-making
+    profile_section = ""
+    dashboard_section = ""
+    if user_id:
+        try:
+            profile = await get_cached_profile(user_id)
+            profile_section = format_profile_for_prompt(profile)
+        except Exception:
+            pass  # Profile is optional
+        
+        try:
+            dashboard = await get_cached_dashboard(user_id)
+            dashboard_section = format_dashboard_for_prompt(dashboard)
+        except Exception:
+            pass  # Dashboard is optional
+    
+    # Get subdomain dependencies summary
+    dependencies_section = get_subdomain_dependencies_summary()
+    
+    # Check for pending clarification from previous turn
+    pending_clarification = conversation.get("pending_clarification")
+    pending_section = ""
+    if pending_clarification:
+        pending_type = pending_clarification.get("type", "")
+        if pending_type in ("propose", "clarify"):
+            pending_section = f"""## Previous Turn
+
+You asked for {'confirmation' if pending_type == 'propose' else 'clarification'}.
+The user's current message is their response. Use this context to plan.
+
+"""
+    
     # Build the user prompt following: Task → Context → Instructions
     today = date.today().isoformat()
     
-    user_prompt = f"""## Task
+    user_prompt = f"""{pending_section}## Task
 
 **Goal**: {router_output.goal}
 
@@ -118,7 +166,15 @@ async def think_node(state: AlfredState) -> dict:
 
 ---
 
-## Context
+{profile_section}
+
+{dashboard_section}
+
+{dependencies_section}
+
+---
+
+## Conversation Context
 
 {context_section}
 
@@ -126,10 +182,18 @@ async def think_node(state: AlfredState) -> dict:
 
 ## Instructions
 
-Create an execution plan. For each step, specify:
+Decide how to proceed:
+
+1. **plan_direct** — Simple, unambiguous request. Create execution steps.
+2. **propose** — Complex request, but you have enough context. State assumptions for user to confirm.
+3. **clarify** — Missing critical context (empty profile, ambiguous intent). Ask focused questions.
+
+**Default to PROPOSE when you have user profile/preferences.** Only CLARIFY if profile is empty or data is missing.
+
+If plan_direct, include steps:
 - `description`: What this step accomplishes
 - `step_type`: crud, analyze, or generate
-- `subdomain`: inventory, recipes, shopping, meal_plan, or preferences
+- `subdomain`: inventory, recipes, shopping, meal_plan, tasks, or preferences
 - `complexity`: low, medium, or high"""
 
     # Call LLM for planning
@@ -141,9 +205,10 @@ Create an execution plan. For each step, specify:
     )
 
     # Apply automatic complexity escalation based on subdomain rules
-    # (e.g., recipe mutations → high complexity for linked tables)
-    adjusted_steps = [adjust_step_complexity(step) for step in result.steps]
-    result.steps = adjusted_steps
+    # (only for plan_direct with steps)
+    if result.decision == "plan_direct" and result.steps:
+        adjusted_steps = [adjust_step_complexity(step) for step in result.steps]
+        result.steps = adjusted_steps
 
     return {
         "think_output": result,

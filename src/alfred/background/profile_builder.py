@@ -54,6 +54,35 @@ class UserProfile:
     time_budget_minutes: int = 30
 
 
+@dataclass
+class KitchenDashboard:
+    """
+    Lightweight kitchen state summary for Think node.
+    
+    Provides counts and categories (not raw data) so Think can make
+    informed decisions about when to plan_direct vs propose vs clarify.
+    """
+    
+    # Inventory summary
+    inventory_count: int = 0
+    inventory_by_location: dict[str, int] = field(default_factory=dict)  # {"fridge": 12, "pantry": 30}
+    
+    # Recipe summary
+    recipe_count: int = 0
+    recipes_by_cuisine: dict[str, int] = field(default_factory=dict)  # {"Italian": 8, "Indian": 6}
+    
+    # Meal plan summary (next 7 days)
+    meal_plan_next_7_days: int = 0  # How many slots have meals planned
+    meal_plan_days_with_meals: int = 0  # How many distinct days have at least one meal
+    
+    # Shopping & Tasks
+    shopping_list_count: int = 0
+    tasks_incomplete: int = 0
+    
+    # Metadata
+    last_updated: datetime | None = None
+
+
 async def build_user_profile(user_id: str) -> UserProfile:
     """
     Build a complete user profile by aggregating data from multiple tables.
@@ -225,9 +254,9 @@ def format_profile_for_prompt(profile: UserProfile) -> str:
     if tastes:
         lines.append(f"**Likes:** {' | '.join(tastes)}")
     
-    # PLANNING (how they want to cook right now)
+    # PLANNING (when they cook, not when they eat)
     if profile.planning_rhythm:
-        lines.append(f"**Planning:** {'; '.join(profile.planning_rhythm[:3])}")
+        lines.append(f"**Cooking Schedule:** {'; '.join(profile.planning_rhythm[:3])}")
     
     # VIBES (current culinary interests)
     if profile.current_vibes:
@@ -281,4 +310,180 @@ async def get_cached_profile(user_id: str) -> UserProfile:
 def invalidate_profile_cache(user_id: str) -> None:
     """Invalidate cached profile for a user (call after updates)."""
     _profile_cache.pop(user_id, None)
+
+
+# =============================================================================
+# Kitchen Dashboard (for Think node)
+# =============================================================================
+
+
+async def build_kitchen_dashboard(user_id: str) -> KitchenDashboard:
+    """
+    Build a lightweight kitchen state summary.
+    
+    Uses COUNT queries and simple aggregations - no raw data transfer.
+    This is designed for Think node to understand data availability.
+    
+    Args:
+        user_id: The user's UUID
+        
+    Returns:
+        KitchenDashboard with counts and categories
+    """
+    client = get_client()
+    dashboard = KitchenDashboard()
+    
+    # 1. Inventory count and breakdown by location
+    try:
+        inv_result = client.table("inventory").select("id, location").eq("user_id", user_id).execute()
+        if inv_result.data:
+            dashboard.inventory_count = len(inv_result.data)
+            # Group by location
+            location_counts: dict[str, int] = {}
+            for item in inv_result.data:
+                loc = item.get("location") or "unknown"
+                location_counts[loc] = location_counts.get(loc, 0) + 1
+            dashboard.inventory_by_location = location_counts
+    except Exception:
+        pass
+    
+    # 2. Recipe count and breakdown by cuisine
+    try:
+        recipe_result = client.table("recipes").select("id, cuisine").eq("user_id", user_id).execute()
+        if recipe_result.data:
+            dashboard.recipe_count = len(recipe_result.data)
+            # Group by cuisine
+            cuisine_counts: dict[str, int] = {}
+            for recipe in recipe_result.data:
+                cuisine = recipe.get("cuisine") or "Other"
+                cuisine_counts[cuisine] = cuisine_counts.get(cuisine, 0) + 1
+            dashboard.recipes_by_cuisine = cuisine_counts
+    except Exception:
+        pass
+    
+    # 3. Meal plan for next 7 days
+    try:
+        from datetime import date
+        today = date.today().isoformat()
+        week_later = (date.today() + timedelta(days=7)).isoformat()
+        
+        meal_result = client.table("meal_plans").select("id, date").eq(
+            "user_id", user_id
+        ).gte("date", today).lte("date", week_later).execute()
+        
+        if meal_result.data:
+            dashboard.meal_plan_next_7_days = len(meal_result.data)
+            # Count distinct days
+            unique_dates = set(m.get("date") for m in meal_result.data if m.get("date"))
+            dashboard.meal_plan_days_with_meals = len(unique_dates)
+    except Exception:
+        pass
+    
+    # 4. Shopping list count (not purchased)
+    try:
+        shopping_result = client.table("shopping_list").select("id").eq(
+            "user_id", user_id
+        ).eq("is_purchased", False).execute()
+        
+        if shopping_result.data:
+            dashboard.shopping_list_count = len(shopping_result.data)
+    except Exception:
+        pass
+    
+    # 5. Incomplete tasks
+    try:
+        tasks_result = client.table("tasks").select("id").eq(
+            "user_id", user_id
+        ).eq("is_complete", False).execute()
+        
+        if tasks_result.data:
+            dashboard.tasks_incomplete = len(tasks_result.data)
+    except Exception:
+        pass
+    
+    dashboard.last_updated = datetime.utcnow()
+    return dashboard
+
+
+def format_dashboard_for_prompt(dashboard: KitchenDashboard) -> str:
+    """
+    Format the kitchen dashboard as a compact string for Think prompt.
+    
+    Args:
+        dashboard: The pre-computed kitchen dashboard
+        
+    Returns:
+        Markdown-formatted dashboard string
+    """
+    lines = ["## KITCHEN AT A GLANCE"]
+    
+    # Inventory
+    if dashboard.inventory_count > 0:
+        loc_parts = []
+        for loc, count in sorted(dashboard.inventory_by_location.items(), key=lambda x: -x[1]):
+            loc_parts.append(f"{loc}: {count}")
+        loc_str = f" ({', '.join(loc_parts[:3])})" if loc_parts else ""
+        lines.append(f"- **Inventory:** {dashboard.inventory_count} items{loc_str}")
+    else:
+        lines.append("- **Inventory:** Empty")
+    
+    # Recipes
+    if dashboard.recipe_count > 0:
+        cuisine_parts = []
+        for cuisine, count in sorted(dashboard.recipes_by_cuisine.items(), key=lambda x: -x[1]):
+            cuisine_parts.append(f"{cuisine}: {count}")
+        cuisine_str = f" ({', '.join(cuisine_parts[:3])})" if cuisine_parts else ""
+        lines.append(f"- **Recipes:** {dashboard.recipe_count} saved{cuisine_str}")
+    else:
+        lines.append("- **Recipes:** None saved")
+    
+    # Meal Plan
+    if dashboard.meal_plan_next_7_days > 0:
+        lines.append(f"- **Meal Plan:** {dashboard.meal_plan_days_with_meals} of next 7 days planned ({dashboard.meal_plan_next_7_days} meals)")
+    else:
+        lines.append("- **Meal Plan:** Nothing planned for next 7 days")
+    
+    # Shopping & Tasks (combine into one line if both exist)
+    extras = []
+    if dashboard.shopping_list_count > 0:
+        extras.append(f"Shopping: {dashboard.shopping_list_count} items")
+    if dashboard.tasks_incomplete > 0:
+        extras.append(f"Tasks: {dashboard.tasks_incomplete} pending")
+    if extras:
+        lines.append(f"- {' | '.join(extras)}")
+    
+    return "\n".join(lines)
+
+
+# Dashboard cache (separate from profile cache, shorter TTL)
+_dashboard_cache: dict[str, tuple[KitchenDashboard, datetime]] = {}
+DASHBOARD_CACHE_TTL_SECONDS = 60  # 1 minute (more volatile than profile)
+
+
+async def get_cached_dashboard(user_id: str) -> KitchenDashboard:
+    """
+    Get kitchen dashboard from cache or build fresh.
+    
+    Args:
+        user_id: The user's UUID
+        
+    Returns:
+        Cached or freshly built KitchenDashboard
+    """
+    now = datetime.utcnow()
+    
+    if user_id in _dashboard_cache:
+        dashboard, cached_at = _dashboard_cache[user_id]
+        if (now - cached_at).total_seconds() < DASHBOARD_CACHE_TTL_SECONDS:
+            return dashboard
+    
+    # Build fresh dashboard
+    dashboard = await build_kitchen_dashboard(user_id)
+    _dashboard_cache[user_id] = (dashboard, now)
+    return dashboard
+
+
+def invalidate_dashboard_cache(user_id: str) -> None:
+    """Invalidate cached dashboard for a user (call after CRUD operations)."""
+    _dashboard_cache.pop(user_id, None)
 

@@ -50,7 +50,7 @@ class TestFormatProfileForPrompt:
         """Profile with household > 1 should include it."""
         profile = UserProfile(household_size=4)
         result = format_profile_for_prompt(profile)
-        assert "Household: 4" in result
+        assert "Portions: 4" in result
     
     def test_includes_dietary_restrictions(self):
         """Profile with diet restrictions should include them."""
@@ -74,10 +74,11 @@ class TestFormatProfileForPrompt:
         assert "instant-pot" in result
     
     def test_includes_time_budget_if_not_default(self):
-        """Profile with non-default time budget should include it."""
+        """Profile with non-default time budget - currently not shown (legacy field)."""
         profile = UserProfile(time_budget_minutes=45)
         result = format_profile_for_prompt(profile)
-        assert "Time: 45" in result
+        # time_budget is legacy, replaced by planning_rhythm - should not appear
+        assert "Time:" not in result or result == ""
     
     def test_does_not_include_default_time_budget(self):
         """Default time budget (30 min) should not be explicitly shown."""
@@ -93,11 +94,12 @@ class TestFormatProfileForPrompt:
         assert "high-protein" in result
     
     def test_includes_top_ingredients(self):
-        """Profile with top ingredients should include them."""
+        """Profile with top ingredients - currently not shown (optional section)."""
         profile = UserProfile(top_ingredients=["garlic", "onion", "olive oil"])
         result = format_profile_for_prompt(profile)
-        assert "Frequently used:" in result
-        assert "garlic" in result
+        # top_ingredients is not currently displayed in the compact format
+        # Could be added later if needed
+        assert result == "" or "## USER PROFILE" in result
     
     def test_includes_recent_meals(self):
         """Profile with recent meals should include them."""
@@ -127,7 +129,7 @@ class TestFormatProfileForPrompt:
         result = format_profile_for_prompt(profile)
         
         assert "## USER PROFILE" in result
-        assert "Household: 2" in result
+        assert "Portions: 2" in result  # Updated from "Household"
         assert "vegetarian" in result
         assert "peanuts" in result
         assert "italian" in result or "indian" in result

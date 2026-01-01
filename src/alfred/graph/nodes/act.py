@@ -43,6 +43,95 @@ from alfred.tools.schema import (
     get_contextual_examples,
 )
 
+# Entity types to track across steps (user-suggested focus)
+# These are the ones that commonly get linked to each other
+TRACKED_ENTITY_TYPES = {"recipes", "meal_plans", "tasks"}
+
+
+def _extract_turn_entities(step_data: Any, step_index: int) -> list[dict]:
+    """
+    Extract key entity IDs from step results for cross-step reference.
+    
+    Only tracks recipes, meal_plans, and tasks (the ones that link to each other).
+    Returns list of {type, id, label, step} dicts.
+    """
+    entities = []
+    
+    def extract_from_record(record: dict, table: str | None = None) -> None:
+        if not isinstance(record, dict) or "id" not in record:
+            return
+        # Infer table from record if not provided
+        if table is None:
+            # Try to infer from keys
+            if "recipe_id" in record or "instructions" in record:
+                table = "recipes"
+            elif "meal_type" in record and "date" in record:
+                table = "meal_plans"
+            elif "title" in record and ("due_date" in record or "category" in record):
+                table = "tasks"
+        
+        if table in TRACKED_ENTITY_TYPES:
+            entities.append({
+                "type": table,
+                "id": str(record["id"]),
+                "label": record.get("name") or record.get("title") or str(record["id"])[:8],
+                "step": step_index,
+            })
+    
+    def process_item(item: Any, table: str | None = None) -> None:
+        if isinstance(item, dict):
+            if "id" in item:
+                extract_from_record(item, table)
+            else:
+                # Check for nested collections like {"recipes": [...]}
+                for key, val in item.items():
+                    if isinstance(val, list):
+                        for v in val:
+                            process_item(v, key)
+        elif isinstance(item, list):
+            for v in item:
+                process_item(v, table)
+    
+    # Handle tuple format from CRUD: [(tool, table, result), ...]
+    if isinstance(step_data, list):
+        for item in step_data:
+            if isinstance(item, tuple) and len(item) >= 2:
+                if len(item) == 3:
+                    _tool, table, result = item
+                    process_item(result, table)
+                else:
+                    _tool, result = item
+                    process_item(result)
+            else:
+                process_item(item)
+    else:
+        process_item(step_data)
+    
+    return entities
+
+
+def _format_turn_entities(turn_entities: list[dict]) -> str:
+    """Format accumulated turn entities for Act's prompt."""
+    if not turn_entities:
+        return ""
+    
+    lines = ["### Entities Created This Turn (use these IDs for linking)"]
+    
+    # Group by type for readability
+    by_type: dict[str, list[dict]] = {}
+    for e in turn_entities:
+        etype = e["type"]
+        if etype not in by_type:
+            by_type[etype] = []
+        by_type[etype].append(e)
+    
+    for etype, ents in by_type.items():
+        lines.append(f"**{etype}:**")
+        for e in ents:
+            lines.append(f"  - `{e['id']}` — {e['label']} (step {e['step'] + 1})")
+    
+    return "\n".join(lines)
+
 
 # =============================================================================
 # Param Validation (catch LLM hallucinations before Pydantic)
@@ -517,6 +606,12 @@ async def act_node(state: AlfredState) -> dict:
             archive_lines.append(f"- `{key}`: {desc}")
         archive_section = "\n".join(archive_lines) + "\n"
 
+    # Turn entities (IDs created earlier in this turn - for cross-step linking)
+    turn_entities = state.get("turn_entities", [])
+    turn_entities_section = _format_turn_entities(turn_entities)
+    if turn_entities_section:
+        turn_entities_section = turn_entities_section + "\n\n"
+
     # Common context block (reused across all step types)
     # NOTE: We intentionally DON'T show "Original Goal" here.
     # The step description is the ONLY scope for this turn.
@@ -593,7 +688,7 @@ Your job this step: **{current_step.description}**
 
 ## 2. Data Available
 
-{prev_step_section if prev_step_section else "*No previous step data.*"}
+{turn_entities_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
 
 ---
 
@@ -653,7 +748,7 @@ Your job this step: **{current_step.description}**
 
 ## 2. Data Available
 
-{prev_step_section if prev_step_section else "*No previous step data.*"}
+{turn_entities_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
 
 ---
 
@@ -768,7 +863,7 @@ Your job this step: **{current_step.description}**
 
 ## 4. Previous Steps
 
-{prev_step_section if prev_step_section else "*No previous steps.*"}
+{turn_entities_section}{prev_step_section if prev_step_section else "*No previous steps.*"}
 
 ---
 
@@ -973,6 +1068,11 @@ What's next?
                 "data": step_data,
             }
 
+        # Extract entities from this step for cross-step reference
+        new_entities = _extract_turn_entities(step_data, current_step_index)
+        existing_entities = state.get("turn_entities", [])
+        accumulated_entities = existing_entities + new_entities
+
         return {
             "pending_action": action,
             "current_step_index": current_step_index + 1,
@@ -981,6 +1081,7 @@ What's next?
             "schema_requests": 0,
             "content_archive": new_archive,
             "prev_step_note": note_for_next,  # Pass note to next step
+            "turn_entities": accumulated_entities,  # Accumulated entity IDs
         }
 
     # Handle other actions (ask_user, blocked, fail)

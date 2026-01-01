@@ -116,6 +116,17 @@ async def summarize_node(state: AlfredState) -> dict:
     new_entities = extract_entities_from_step_results(step_results)
     entity_refs = [EntityRef(**e.model_dump()) for e in new_entities.values()]
     
+    # Also include turn_entities accumulated during the turn (these are the key linkable entities)
+    turn_entities = state.get("turn_entities", [])
+    for te in turn_entities:
+        # Convert turn_entity dict to EntityRef
+        entity_refs.append(EntityRef(
+            type=te.get("type", "unknown"),
+            id=te.get("id", ""),
+            label=te.get("label", ""),
+            source="step_result",
+        ))
+    
     # 3. Update conversation context
     # Include content_archive from state for cross-turn persistence
     content_archive = state.get("content_archive", {})
@@ -138,6 +149,22 @@ async def summarize_node(state: AlfredState) -> dict:
         updated_conversation = await _update_engagement_summary(
             updated_conversation, user_message, final_response
         )
+    
+    # 6. Track pending clarification for context threading
+    # If Think returned propose/clarify, record it so next turn sees the context
+    if think_output and hasattr(think_output, "decision"):
+        decision = think_output.decision
+        if decision in ("propose", "clarify"):
+            updated_conversation["pending_clarification"] = {
+                "type": decision,
+                "goal": getattr(think_output, "goal", ""),
+                "assumptions": getattr(think_output, "assumptions", None),
+                "questions": getattr(think_output, "clarification_questions", None),
+                "proposal_message": getattr(think_output, "proposal_message", None),
+            }
+        else:
+            # Clear pending clarification if we executed normally
+            updated_conversation["pending_clarification"] = None
     
     return {
         "conversation": updated_conversation,

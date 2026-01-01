@@ -66,6 +66,9 @@ Query results are facts. 0 records means those items don't exist — that's a va
 ### Analyze Steps
 - No tool calls. Reason over the data from previous steps.
 - Call `step_complete` with your analysis in `data`.
+- **CRITICAL: Only analyze data that EXISTS in Previous Step Results.**
+- If Previous Step Results show empty `[]`, report "No data to analyze" — do NOT invent data.
+- Do NOT use Active Entities as a data source for analysis. They're only for ID reference.
 
 ### Generate Steps
 - No tool calls. Create content (recipes, plans, ideas).
@@ -85,6 +88,8 @@ Query results are facts. 0 records means those items don't exist — that's a va
 4. **Hand Off.** When the step is satisfied, call `step_complete`. The next step continues.
 
 5. **Note Forward.** For CRUD steps, include `note_for_next_step` with IDs or key info.
+
+6. **Dates use full year.** Check the "Today" date in STATUS. If Today is Dec 31, 2025 and step mentions "January 3", use 2026-01-03 in filters. Cross-year dates are common in late December!
 
 ---
 

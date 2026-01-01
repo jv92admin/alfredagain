@@ -195,7 +195,7 @@ TABLE_TO_ENTITY_TYPE = {
     "recipes": "recipe",
     "recipe_ingredients": "recipe_ingredient",
     "shopping_list": "shopping_item",
-    "meal_plans": "meal_plan",
+    "meal_plans": "meal_plans",
     "preferences": "preference",
 }
 

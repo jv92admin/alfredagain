@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     
     # Dev user - matches the user created in migrations/001_core_tables.sql
     # Skip auth for now, use this hardcoded user
-    dev_user_id: str = "00000000-0000-0000-0000-000000000001"
+    dev_user_id: str = "00000000-0000-0000-0000-000000000002"  # Alice
 
     @property
     def is_development(self) -> bool:

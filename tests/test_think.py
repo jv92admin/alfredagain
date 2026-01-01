@@ -43,12 +43,12 @@ class TestComplexityAdjustment:
         adjusted = adjust_step_complexity(step)
         assert adjusted.complexity == "low"
     
-    def test_meal_plan_creation_escalates_to_medium(self):
+    def test_meal_plans_creation_escalates_to_medium(self):
         """Creating a meal plan should escalate to medium complexity."""
         step = PlannedStep(
             description="Add prep work to meal plan",
             step_type="crud",
-            subdomain="meal_plan",
+            subdomain="meal_plans",
             complexity="low",
         )
         adjusted = adjust_step_complexity(step)
@@ -81,7 +81,7 @@ class TestComplexityAdjustment:
         step = PlannedStep(
             description="Read meal plans",
             step_type="crud",
-            subdomain="meal_plan",
+            subdomain="meal_plans",
             complexity="high",  # Already high, shouldn't go down
         )
         adjusted = adjust_step_complexity(step)

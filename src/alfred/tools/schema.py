@@ -65,7 +65,7 @@ SUBDOMAIN_PERSONAS: dict[str, str | dict[str, str]] = {
 **Tag hygiene:** Keep tags concise but descriptive. Don't over-formalize — "pretty flexible, no tuesdays" is fine.""",
     
     # Planner persona: meal_plan, tasks
-    "meal_plan": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
+    "meal_plans": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
 
 **Meal plan is primary:** Tasks often flow from it. Think about what prep work, shopping, or reminders are needed.
 **Recipe handling:** Real meals (breakfast/lunch/dinner/snack) should reference a recipe. If missing, suggest creating one: "That recipe doesn't exist. Create it for better shopping/planning?"
@@ -99,20 +99,20 @@ SUBDOMAIN_SCOPE: dict[str, dict[str, Any]] = {
     },
     "shopping": {
         "normalization": "async",
-        "influenced_by": ["recipes", "meal_plan", "inventory"],
+        "influenced_by": ["recipes", "meal_plans", "inventory"],
         "description": "Shopping list. Often populated from recipes or meal plans.",
     },
     "preferences": {
         "description": "User preferences. Changes affect UX significantly.",
     },
-    "meal_plan": {
+    "meal_plans": {
         "implicit_dependencies": ["recipes"],  # Real meals need recipes
         "exception_meal_types": ["prep", "other"],  # These don't need recipes
         "related": ["tasks"],
         "description": "Meal planning calendar. Links to recipes and spawns tasks.",
     },
     "tasks": {
-        "primary_inflow": ["meal_plan"],
+        "primary_inflow": ["meal_plans"],
         "prefer_reference": "meal_plan_id over recipe_id",
         "description": "Reminders and to-dos. Often tied to meal plans.",
     },
@@ -149,7 +149,7 @@ SUBDOMAIN_REGISTRY: dict[str, SubdomainConfig] = {
         "tables": ["shopping_list", "ingredients"],
         # No complexity rules - simple single-table operations
     },
-    "meal_plan": {
+    "meal_plans": {
         "tables": ["meal_plans", "recipes"],
         "complexity_rules": {"mutation": "medium"},  # References recipes, moderately complex
     },
@@ -246,6 +246,31 @@ def get_scope_for_subdomain(subdomain: str) -> str:
     return "\n".join(lines)
 
 
+def get_subdomain_dependencies_summary() -> str:
+    """
+    Get a compact summary of subdomain dependencies for Think node.
+    
+    This helps Think understand relationships between domains when planning.
+    
+    Returns:
+        Markdown-formatted summary of key domain relationships
+    """
+    lines = [
+        "## DOMAIN KNOWLEDGE",
+        "",
+        "Key relationships between data domains:",
+        "",
+        "- **Meal plans → Recipes**: Real meals (breakfast/lunch/dinner/snack) should have recipes. Exception: `prep` and `other` meal types don't require recipes.",
+        "- **Recipes → Recipe Ingredients**: Always created together as one unit. Recipe saves include ingredients.",
+        "- **Shopping ← Multiple sources**: Shopping lists are influenced by recipes, meal plans, and inventory. Check what exists before adding.",
+        "- **Tasks ← Meal plans**: Tasks often flow from meal plans (prep reminders, shopping tasks). Prefer linking to meal_plan_id.",
+        "- **Inventory ↔ Shopping**: Items in inventory shouldn't need to be on shopping list. Cross-check when adding.",
+        "",
+        "**About Cooking Schedule:** The user's cooking schedule describes WHEN THEY COOK (batch cook, prep), not when they eat. 'weekends only' = they cook on weekends (maybe batch for the week). 'dinner wednesdays' = they cook dinner on Wednesdays.",
+    ]
+    return "\n".join(lines)
+
+
 def get_contextual_examples(
     subdomain: str, 
     step_description: str, 
@@ -291,7 +316,7 @@ Previous step read recipe ingredients. Use those IDs/names to add to shopping li
 Normalize names: "diced tomatoes" → "tomatoes".""")
         
         # Cross-domain: from meal_plan
-        if prev_subdomain == "meal_plan":
+        if prev_subdomain == "meal_plans":
             examples.append("""**Meal Plan → Shopping Pattern**:
 Previous step read meal plan. For each recipe_id, you may need to read recipe_ingredients, then add to shopping.""")
     
@@ -322,7 +347,7 @@ Delete children first, then parent.""")
 ```""")
     
     # === MEAL PLAN PATTERNS ===
-    elif subdomain == "meal_plan":
+    elif subdomain == "meal_plans":
         if any(verb in desc_lower for verb in ["create", "add", "save", "plan"]):
             examples.append("""**Add to Meal Plan**:
 ```json
@@ -410,7 +435,7 @@ If analyzing for meal planning, flag any gaps between what's needed and what's a
 Compare lists and output clear deltas. Normalize ingredient names (strip prep states).""")
     
     # === MEAL PLAN ANALYZE ===
-    elif subdomain == "meal_plan":
+    elif subdomain == "meal_plans":
         if "recipe" in desc_lower or "fit" in desc_lower:
             guidance_parts.append("""**Analyzing Recipes for Meal Plan:**
 1. Look at previous step's recipes and preferences
@@ -492,7 +517,7 @@ Generate complete recipe with ALL required fields:
 **Important:** Include BOTH `recipe` and `ingredients` — they'll be saved together.""")
     
     # === MEAL PLAN GENERATE ===
-    elif subdomain == "meal_plan":
+    elif subdomain == "meal_plans":
         guidance_parts.append("""**Meal Plan Structure:**
 Generate entries with dates, meal types, and recipe references:
 ```json
@@ -731,7 +756,7 @@ FIELD_ENUMS: dict[str, dict[str, list[str]]] = {
     "shopping": {
         "category": ["produce", "dairy", "meat", "seafood", "bakery", "frozen", "canned", "dry goods", "beverages", "snacks", "condiments", "spices"],
     },
-    "meal_plan": {
+    "meal_plans": {
         "meal_type": ["breakfast", "lunch", "dinner", "snack", "other"],
     },
     "tasks": {
@@ -753,11 +778,13 @@ SEMANTIC_NOTES: dict[str, str] = {
 """,
     "recipes": "",
     "shopping": "",
-    "meal_plan": """
+    "meal_plans": """
 **Note**: Meal plans are cooking sessions (what to cook on what day). For reminders like "thaw chicken" or "buy wine", use the `tasks` subdomain instead.
 """,
     "tasks": """
 **Note**: Tasks are freeform to-dos. They can optionally link to a meal_plan or recipe, but don't have to.
+
+**⚠️ When linking**: Use `meal_plan_id` (not `meal_plans_id`) in the task record, but if you need to query meal plans, the table is `meal_plans` (plural).
 """,
     "preferences": "",
     "history": """
@@ -820,7 +847,7 @@ Delete all purchased items: `{"tool": "db_delete", "params": {"table": "shopping
 
 Delete specific items by name: `{"tool": "db_delete", "params": {"table": "shopping_list", "filters": [{"field": "name", "op": "in", "value": ["milk", "eggs"]}]}}`
 """,
-    "meal_plan": """## Examples
+    "meal_plans": """## Examples
 
 Get meal plans: `{"tool": "db_read", "params": {"table": "meal_plans", "filters": [], "limit": 10}}`
 
@@ -1044,7 +1071,7 @@ Pattern: `db_read` → merge in analyze step → `db_create` new items + `db_upd
 | name | text | No |
 | category | text | Yes |
 """,
-    "meal_plan": """## Available Tables (subdomain: meal_plan)
+    "meal_plans": """## Available Tables (subdomain: meal_plans)
 
 ### meal_plans
 | Column | Type | Nullable |

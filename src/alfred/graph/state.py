@@ -74,15 +74,35 @@ class PlannedStep(BaseModel):
 
     description: str  # Natural language step description
     step_type: Literal["crud", "analyze", "generate"] = "crud"
-    subdomain: str  # "inventory", "recipes", "shopping", "meal_plan", "preferences"
+    subdomain: str  # "inventory", "recipes", "shopping", "meal_plans", "preferences"
     complexity: Literal["low", "medium", "high"] = "low"
 
 
 class ThinkOutput(BaseModel):
-    """Output from the Think node."""
+    """
+    Output from the Think node.
+    
+    Think can decide to:
+    - plan_direct: Proceed with execution (simple, unambiguous requests)
+    - propose: State assumptions and ask for confirmation (complex requests with known context)
+    - clarify: Ask questions before planning (missing critical context)
+    """
 
+    # Decision determines the flow
+    decision: Literal["plan_direct", "propose", "clarify"] = "plan_direct"
+    
+    # Always present
     goal: str
-    steps: list[PlannedStep]
+    
+    # If plan_direct: steps to execute
+    steps: list[PlannedStep] = Field(default_factory=list)
+    
+    # If propose: state assumptions for user to confirm/correct
+    proposal_message: str | None = None
+    assumptions: list[str] | None = None
+    
+    # If clarify: questions to ask before planning
+    clarification_questions: list[str] | None = None
 
 
 # =============================================================================
@@ -226,6 +246,11 @@ class ConversationContext(TypedDict, total=False):
     # All entities from this conversation (for retrieval)
     # Key is entity ID, value is EntityRef
     all_entities: dict[str, dict]  # EntityRef as dict
+    
+    # Pending clarification/proposal from Think (for context threading)
+    # When Think returns propose/clarify, this tracks what was asked
+    # Next turn's Think can see user's response in context
+    pending_clarification: dict[str, Any] | None  # {type, message, assumptions/questions}
 
 
 # =============================================================================
@@ -273,6 +298,10 @@ class AlfredState(TypedDict, total=False):
 
     # Step notes (CRUD steps leave notes for next step)
     prev_step_note: str | None  # Note from previous step for context
+    
+    # Within-turn entity tracking (IDs created this turn, for cross-step reference)
+    # Accumulated as steps complete; merged into conversation.active_entities by Summarize
+    turn_entities: list[dict]  # List of {type, id, label, step} dicts
     
     # Conversation context (Phase 5)
     conversation: ConversationContext
