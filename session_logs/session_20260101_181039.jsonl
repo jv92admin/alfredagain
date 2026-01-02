@@ -1,6 +1,0 @@
-{"ts": "2026-01-01T18:10:39.927514", "event": "session_start", "session_id": "20260101_181039", "version": "v3"}
-{"ts": "2026-01-01T18:10:50.182816", "event": "turn_start", "turn": 1, "user_message": "what is on my shopping list?", "mode": "plan"}
-{"ts": "2026-01-01T18:11:31.479246", "event": "turn_end", "turn": 1, "response_len": 1800, "response_preview": "Here's your current shopping list:\n\n- Cooking spray (condiments)\n- Avocado oil (condiments)\n- 4 whole bell peppers (produce)\n- 1 bag frozen stir fry v...", "entities_created": null, "entities_updated": null}
-{"ts": "2026-01-01T18:11:50.461030", "event": "turn_start", "turn": 2, "user_message": "can you create 2 interesting recipes based on these ingredients?", "mode": "plan"}
-{"ts": "2026-01-01T18:11:59.507817", "event": "turn_end", "turn": 2, "response_len": 1434, "response_preview": "Here are two interesting recipes based on your shopping list ingredients:\n\n**1. Spicy Chickpea and Spinach Curry**\n*Serves 4 | 30 minutes*\n\n**Ingredie...", "entities_created": null, "entities_updated": null}
-{"ts": "2026-01-01T18:12:57.240421", "event": "session_end", "total_turns": 2}

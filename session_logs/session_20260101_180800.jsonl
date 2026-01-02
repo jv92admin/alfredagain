@@ -1,7 +1,0 @@
-{"ts": "2026-01-01T18:08:00.120893", "event": "session_start", "session_id": "20260101_180800", "version": "v3"}
-{"ts": "2026-01-01T18:08:00.121026", "event": "turn_start", "turn": 1, "user_message": "test message", "mode": "plan"}
-{"ts": "2026-01-01T18:08:00.121098", "event": "node_enter", "node": "think", "turn": 1, "inputs": {"goal": "test"}}
-{"ts": "2026-01-01T18:08:00.121136", "event": "node_exit", "node": "think", "turn": 1, "duration_ms": 0, "outputs": {"steps": 3}, "error": null}
-{"ts": "2026-01-01T18:08:00.121162", "event": "step_start", "turn": 1, "step": 0, "type": "read", "subdomain": "inventory", "group": 0, "description": "Check pantry items"}
-{"ts": "2026-01-01T18:08:00.121286", "event": "step_complete", "turn": 1, "step": 0, "result_summary": "Found 5 items", "record_count": 5, "tool_calls": null}
-{"ts": "2026-01-01T18:08:00.121323", "event": "session_end", "total_turns": 1}
