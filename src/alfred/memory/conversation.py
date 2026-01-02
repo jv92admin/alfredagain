@@ -190,13 +190,17 @@ def estimate_context_tokens(context: ConversationContext) -> int:
 
 # Map table names to entity types
 TABLE_TO_ENTITY_TYPE = {
-    "inventory": "inventory_item",
+    "inventory": "inventory",
     "ingredients": "ingredient",
     "recipes": "recipe",
     "recipe_ingredients": "recipe_ingredient",
-    "shopping_list": "shopping_item",
-    "meal_plans": "meal_plans",
+    "shopping_list": "shopping_list",
+    "meal_plans": "meal_plan",
+    "tasks": "task",
     "preferences": "preference",
+    # Generated content types (from step results, not DB)
+    "salad_recipes": "recipe",
+    "recipes_with_chickpeas": "recipe",
 }
 
 
@@ -322,10 +326,15 @@ def _infer_table_from_result(result: Any) -> str | None:
         return "shopping_list"
     if "meal_type" in sample and "date" in sample:
         return "meal_plans"
+    if "due_date" in sample or ("title" in sample and "completed" in sample):
+        return "tasks"
     if "dietary_restrictions" in sample:
         return "preferences"
     if "aliases" in sample or "category" in sample:
         return "ingredients"
+    # Fallback: if it looks like a recipe (has name + id), call it a recipe
+    if "name" in sample and "id" in sample and not any(k in sample for k in ["location", "quantity", "is_purchased"]):
+        return "recipes"
     
     return None
 
@@ -333,17 +342,52 @@ def _infer_table_from_result(result: Any) -> str | None:
 def update_active_entities(
     active: dict[str, dict],
     new_entities: list[EntityRef],
+    max_per_type: int = 5,
 ) -> dict[str, dict]:
     """
     Update active entities with new ones.
     
-    Keeps the most recent entity of each type for "that recipe" resolution.
+    V3: Store by ID (not type) to allow multiple entities of the same type.
+    Limit to max_per_type most recent entities per type to prevent bloat.
+    
+    **CRITICAL**: Only store entities from DB operations (state=active).
+    PENDING entities (from generate steps) are NOT stored here - they don't
+    exist in the database yet and can't be used for FK references.
+    
+    Lower limit (5) to prevent context pollution in prompts.
     """
     updated = active.copy()
     
     for entity in new_entities:
-        # Store by type - most recent wins
-        updated[entity.type] = entity.model_dump()
+        entity_dict = entity.model_dump()
+        
+        # CRITICAL: Only store entities that exist in DB (state=active or from DB source)
+        # Skip PENDING entities - they're from generate steps and don't exist in DB yet
+        state = entity_dict.get("state", "pending")
+        source = entity_dict.get("source", "")
+        
+        # Allow: db_read results, successful db_write results, explicitly active entities
+        if state == "pending" and source not in ("db_read", "db_write"):
+            continue  # Skip generate-step entities
+        
+        # Store by ID - allows multiple entities of same type
+        updated[entity.id] = entity_dict
+    
+    # Prune: keep only max_per_type most recent per type
+    # Group by type
+    by_type: dict[str, list[str]] = {}
+    for entity_id, entity_data in updated.items():
+        etype = entity_data.get("type", "unknown")
+        if etype not in by_type:
+            by_type[etype] = []
+        by_type[etype].append(entity_id)
+    
+    # Keep only max_per_type per type (most recent = last added)
+    for etype, entity_ids in by_type.items():
+        if len(entity_ids) > max_per_type:
+            # Remove oldest (first) entries
+            for old_id in entity_ids[:-max_per_type]:
+                del updated[old_id]
     
     return updated
 
@@ -380,9 +424,10 @@ def format_condensed_context(
     active = conversation.get("active_entities", {})
     if active:
         entity_lines = ["**Recent items**:"]
-        for entity_type, entity_data in active.items():
+        for entity_id, entity_data in active.items():
+            etype = entity_data.get("type", "unknown")
             label = entity_data.get("label", "unknown")
-            entity_lines.append(f"  - {entity_type}: {label}")
+            entity_lines.append(f"  - {etype}: {label}")
         section = "\n".join(entity_lines)
         parts.append(section)
         tokens_used += estimate_tokens(section)
@@ -444,10 +489,10 @@ def format_full_context(
     active = conversation.get("active_entities", {})
     if active:
         entity_lines = ["### Active Entities (for reference resolution)"]
-        for entity_type, entity_data in active.items():
+        for entity_id, entity_data in active.items():
+            etype = entity_data.get("type", "unknown")
             label = entity_data.get("label", "unknown")
-            entity_id = entity_data.get("id", "?")
-            entity_lines.append(f"- **{entity_type}**: {label} (id: `{entity_id}`)")
+            entity_lines.append(f"- **{etype}**: {label} (id: `{entity_id}`)")
         section = "\n".join(entity_lines)
         parts.append(section)
         tokens_used += estimate_tokens(section)

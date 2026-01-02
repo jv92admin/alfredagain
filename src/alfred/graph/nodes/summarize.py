@@ -1,20 +1,28 @@
 """
-Alfred V2 - Summarize Node.
+Alfred V3 - Summarize Node.
 
 The Summarize node runs after Reply to:
 1. Add the current turn to conversation history
-2. Extract and track entities from step results
-3. Compress older turns if we exceed FULL_DETAIL_TURNS
-4. Update engagement summary
+2. Merge turn_entities into entity registry
+3. Garbage collect stale entities
+4. Compress older turns if we exceed FULL_DETAIL_TURNS
+5. Update engagement summary
 
-This maintains conversation memory across turns.
+V3 Changes:
+- Entity lifecycle management (merge turn entities, garbage collect)
+- EntityRegistry integration for state transitions
+- Persist entity_registry and current_turn in conversation
+
+This maintains conversation memory and entity lifecycle across turns.
 """
 
+import logging
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
 
+from alfred.core.entities import Entity, EntityRegistry, EntityState
 from alfred.graph.state import (
     FULL_DETAIL_STEPS,
     FULL_DETAIL_TURNS,
@@ -29,6 +37,8 @@ from alfred.memory.conversation import (
     extract_entities_from_step_results,
     update_active_entities,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -65,20 +75,21 @@ SUMMARIZE_THRESHOLD = 400  # ~100 tokens
 
 async def summarize_node(state: AlfredState) -> dict:
     """
-    Summarize node - maintains conversation memory.
+    Summarize node - maintains conversation memory and entity lifecycle.
     
-    Runs after Reply to:
+    V3 Runs after Reply to:
     1. Add current turn to history
-    2. Extract entities from step results
-    3. Compress old turns to history_summary
-    4. Compress old step results to step_summaries
-    5. Update engagement summary if significant
+    2. Merge turn_entities into entity registry
+    3. Garbage collect stale entities
+    4. Compress old turns to history_summary
+    5. Compress old step results to step_summaries
+    6. Update engagement summary if significant
     
     Args:
         state: Current graph state with final_response
         
     Returns:
-        State update with updated conversation context
+        State update with updated conversation context and entity registry
     """
     set_current_node("summarize")
     
@@ -88,6 +99,7 @@ async def summarize_node(state: AlfredState) -> dict:
     step_results = state.get("step_results", {})
     think_output = state.get("think_output")
     conversation = state.get("conversation", {})
+    current_turn_num = state.get("current_turn", 0)
     
     # Skip if no response (error case)
     if not final_response:
@@ -102,8 +114,13 @@ async def summarize_node(state: AlfredState) -> dict:
             "complexity": router_output.complexity,
         }
     
+    # Detect if this was a proposal (Think decided propose/clarify, not plan_direct)
+    is_proposal = False
+    if think_output and hasattr(think_output, "decision"):
+        is_proposal = think_output.decision in ("propose", "clarify")
+    
     # Generate summary for long responses (used in conversation context)
-    assistant_summary = await _summarize_assistant_response(final_response)
+    assistant_summary = await _summarize_assistant_response(final_response, is_proposal)
     
     current_turn = create_conversation_turn(
         user_message=user_message,
@@ -112,23 +129,37 @@ async def summarize_node(state: AlfredState) -> dict:
         routing=routing_info,
     )
     
-    # 2. Extract entities from step results
+    # 2. V3: Merge turn_entities into entity registry
+    entity_registry_data = state.get("entity_registry", {})
+    registry = EntityRegistry.from_dict(entity_registry_data) if entity_registry_data else EntityRegistry()
+    
+    turn_entities_data = state.get("turn_entities", [])
+    for te_dict in turn_entities_data:
+        try:
+            entity = Entity.from_dict(te_dict)
+            registry.add(entity)
+        except Exception as e:
+            logger.warning(f"Failed to add entity to registry: {e}")
+    
+    # 3. V3: Garbage collect stale entities
+    removed_ids = registry.garbage_collect(current_turn_num)
+    if removed_ids:
+        logger.info(f"Summarize: Garbage collected {len(removed_ids)} stale entities")
+    
+    # 4. Extract entities from step results (legacy support)
     new_entities = extract_entities_from_step_results(step_results)
     entity_refs = [EntityRef(**e.model_dump()) for e in new_entities.values()]
     
-    # Also include turn_entities accumulated during the turn (these are the key linkable entities)
-    turn_entities = state.get("turn_entities", [])
-    for te in turn_entities:
-        # Convert turn_entity dict to EntityRef
+    # Also convert turn_entities to EntityRefs for legacy conversation tracking
+    for te in turn_entities_data:
         entity_refs.append(EntityRef(
             type=te.get("type", "unknown"),
             id=te.get("id", ""),
             label=te.get("label", ""),
-            source="step_result",
+            source=te.get("source", "step_result"),
         ))
     
-    # 3. Update conversation context
-    # Include content_archive from state for cross-turn persistence
+    # 5. Update conversation context
     content_archive = state.get("content_archive", {})
     
     updated_conversation = _update_conversation(
@@ -140,18 +171,17 @@ async def summarize_node(state: AlfredState) -> dict:
         content_archive=content_archive,
     )
     
-    # 4. Compress old turns if needed (async LLM call)
+    # 6. Compress old turns if needed (async LLM call)
     if len(updated_conversation.get("recent_turns", [])) > FULL_DETAIL_TURNS:
         updated_conversation = await _compress_old_turns(updated_conversation)
     
-    # 5. Update engagement summary if this was significant
+    # 7. Update engagement summary if this was significant
     if _is_significant_action(router_output, step_results):
         updated_conversation = await _update_engagement_summary(
             updated_conversation, user_message, final_response
         )
     
-    # 6. Track pending clarification for context threading
-    # If Think returned propose/clarify, record it so next turn sees the context
+    # 8. Track pending clarification for context threading
     if think_output and hasattr(think_output, "decision"):
         decision = think_output.decision
         if decision in ("propose", "clarify"):
@@ -163,11 +193,24 @@ async def summarize_node(state: AlfredState) -> dict:
                 "proposal_message": getattr(think_output, "proposal_message", None),
             }
         else:
-            # Clear pending clarification if we executed normally
             updated_conversation["pending_clarification"] = None
+    
+    # Check Understand output for clarification (V3)
+    understand_output = state.get("understand_output")
+    if understand_output and hasattr(understand_output, "needs_clarification"):
+        if understand_output.needs_clarification:
+            updated_conversation["pending_clarification"] = {
+                "type": "understand",
+                "questions": getattr(understand_output, "clarification_questions", None),
+            }
+    
+    # V3: Persist entity registry and current turn in conversation
+    updated_conversation["entity_registry"] = registry.to_dict()
+    updated_conversation["current_turn"] = current_turn_num
     
     return {
         "conversation": updated_conversation,
+        "entity_registry": registry.to_dict(),  # Also update top-level for next turn
     }
 
 
@@ -201,7 +244,7 @@ def _update_conversation(
     # Add current turn
     updated["recent_turns"].append(current_turn)
     
-    # Update active entities (most recent of each type)
+    # Update active entities (keyed by ID, allows multiple per type)
     updated["active_entities"] = update_active_entities(
         updated["active_entities"], new_entities
     )
@@ -235,7 +278,47 @@ def _update_conversation(
     return updated
 
 
-async def _summarize_assistant_response(response: str) -> str:
+def _extract_entity_names(response: str) -> list[str]:
+    """
+    Extract likely entity names from a response using simple patterns.
+    
+    Looks for:
+    - **Bold headings** (common for recipe names)
+    - Numbered/bulleted lists with names
+    - Quoted names
+    """
+    import re
+    names = []
+    
+    # Pattern 1: **Bold text** (recipe/entity names in markdown)
+    bold_matches = re.findall(r'\*\*([^*]+)\*\*', response)
+    for match in bold_matches:
+        # Filter out common non-entity bold text
+        if len(match) > 5 and len(match) < 100 and not any(skip in match.lower() for skip in 
+            ['ingredient', 'instruction', 'serve', 'step', 'note', 'tip', 'prep', 'cook time']):
+            names.append(match.strip())
+    
+    # Pattern 2: Lines starting with - or * followed by a name (bulleted lists)
+    bullet_matches = re.findall(r'^[\s]*[-*]\s+([A-Z][^-\n]{10,60})(?:\s*[-–]|\s*$)', response, re.MULTILINE)
+    names.extend(bullet_matches)
+    
+    # Pattern 3: "Name" or 'Name' in quotes
+    quoted_matches = re.findall(r'["\']([A-Z][^"\']{10,60})["\']', response)
+    names.extend(quoted_matches)
+    
+    # Dedupe while preserving order
+    seen = set()
+    unique_names = []
+    for name in names:
+        name_clean = name.strip()
+        if name_clean not in seen and len(name_clean) > 5:
+            seen.add(name_clean)
+            unique_names.append(name_clean)
+    
+    return unique_names[:10]  # Cap at 10 entities
+
+
+async def _summarize_assistant_response(response: str, is_proposal: bool = False) -> str:
     """
     LLM-summarize a long assistant response for conversation context.
     
@@ -244,21 +327,61 @@ async def _summarize_assistant_response(response: str) -> str:
     
     Principle: Conversation history conveys INTENT, not DATA.
     Tool results are the source of truth for specifics.
+    
+    CRITICAL: The summary must use EXACT entity names from the response,
+    not paraphrased or generalized names. Wrong names in summaries cause
+    hallucinations in subsequent turns.
+    
+    Args:
+        response: The assistant's response text
+        is_proposal: True if Think decided "propose" or "clarify" (not executed yet)
     """
     if len(response) < SUMMARIZE_THRESHOLD:
         return response  # Short enough, keep as-is
     
+    # If we KNOW this is a proposal, skip LLM and use deterministic summary
+    if is_proposal:
+        # Extract a brief mention of what was proposed
+        if "save" in response.lower():
+            return "Proposed a plan and awaiting user confirmation before proceeding."
+        elif "clarif" in response.lower():
+            return "Asked clarifying questions before proceeding."
+        else:
+            return "Proposed an approach and awaiting user confirmation."
+    
+    # CRITICAL: Extract entity names from FULL response before truncation
+    # This prevents losing entity names that appear late in long responses
+    extracted_names = _extract_entity_names(response)
+    names_hint = ""
+    if extracted_names:
+        names_hint = f"\n\n**Entities found in full text (use these EXACT names):** {', '.join(extracted_names)}"
+    
     try:
         result = await call_llm(
             response_model=AssistantResponseSummary,
-            system_prompt="""Summarize what was accomplished in ONE brief sentence.
+            system_prompt="""Summarize what was accomplished in ONE sentence.
 Focus on: what action was taken, what was created/found/updated.
-Do NOT include full details like ingredient lists or instructions.
-Example: "Created 2 recipes: Butter Chicken and Lemon Fish."
-Example: "Found 5 items in pantry including milk and eggs."
-Example: "Updated shopping list with 3 new items."
+
+**CRITICAL: Proposals ≠ Completed actions**
+If the text says "I'll do X" or "Here's my plan" or "Does this sound good?" — that's a PROPOSAL.
+Do NOT summarize proposals as completed actions.
+
+- Proposal: "I'll save the recipes" → Summary: "Proposed to save recipes; awaiting confirmation."
+- Completed: "Done! I saved the recipes." → Summary: "Saved recipes: [names]"
+
+**CRITICAL: Use EXACT entity names from the text.** Do NOT paraphrase or generalize.
+If the text says "Mediterranean Chickpea & Herb Rice Bowl", use that EXACT name.
+Do NOT make up names that sound similar but aren't in the original text.
+
+Good: "Saved recipes: Mediterranean Chickpea & Herb Rice Bowl."
+Bad: "Saved the recipes." (too vague)
+Bad: "Saved Minty Chickpea Salad." (made up name not in original)
+Bad: "Saved three rice bowl recipes." (when text says "I'll save" = proposal, not done)
+
+Keep summaries specific with exact names or IDs when available.
 """,
-            user_prompt=f"Summarize this response:\n\n{response[:1000]}",
+            # Include beginning (intro/outcome) + extracted names from full text
+            user_prompt=f"Summarize this response using EXACT names from the text:{names_hint}\n\n{response[:2000]}",
             complexity="low",
         )
         return result.summary
@@ -292,7 +415,15 @@ async def _compress_old_turns(
     try:
         result = await call_llm(
             response_model=TurnSummary,
-            system_prompt="Summarize this conversation exchange in ONE brief sentence. Focus on: what the user asked, what action was taken, any entities created/modified.",
+            system_prompt="""Summarize this conversation exchange in ONE brief sentence.
+Focus on: what the user asked, what action was taken, any entities created/modified.
+
+**CRITICAL: Proposals ≠ Completed actions**
+If Alfred says "I'll do X" or "Here's my plan" → that's a PROPOSAL, not a completed action.
+- Proposal: "I'll save the recipes" → "User requested X; assistant proposed a plan"
+- Completed: "Done! I saved the recipes" → "Assistant saved recipes: [names]"
+
+Use EXACT entity names from the text. Don't invent names.""",
             user_prompt=f"User: {user_text[:500]}\nAssistant: {assistant_text[:500]}",
             complexity="low",
         )

@@ -1,0 +1,409 @@
+"""
+Alfred V3 - Step-Type-Specific Prompt Injection.
+
+This module assembles Act prompts based on step_type, mode, and context.
+
+Step Types:
+- read: Schema + filter syntax, minimal context
+- analyze: Previous results prominently, no schema
+- generate: User profile + creative guidance
+- write: Schema + FK handling + entity tagging
+
+Mode affects verbosity and example inclusion.
+
+Note: Schema is passed in as a parameter (fetched by caller) to avoid async issues.
+"""
+
+from typing import Any
+
+from alfred.core.entities import Entity
+from alfred.core.modes import Mode, MODE_CONFIG
+from alfred.prompts.personas import get_persona_for_subdomain, get_full_subdomain_content
+
+
+def get_verbosity_label(mode: Mode) -> str:
+    """Get human-readable verbosity label for prompt injection."""
+    return MODE_CONFIG[mode]["verbosity"]
+
+
+def build_act_prompt(
+    step_description: str,
+    step_type: str,
+    subdomain: str,
+    mode: Mode,
+    entities: list[Entity] | None = None,
+    prev_group_results: list[dict] | None = None,
+    user_profile: dict | None = None,
+    schema: str | None = None,  # Schema passed in by caller
+) -> str:
+    """
+    Assemble Act prompt based on step_type.
+    
+    Returns the dynamic context sections to inject into the Act prompt.
+    The base Act instructions are in prompts/act/ directory (base.md + step_type.md).
+    
+    Args:
+        step_description: What this step does
+        step_type: read/analyze/generate/write
+        subdomain: Which subdomain (for persona lookup)
+        mode: Current mode (affects verbosity)
+        entities: Available entities for context
+        prev_group_results: Results from previous execution groups
+        user_profile: User preferences (for generate steps)
+        schema: Database schema (passed in by caller, async fetched)
+    """
+    sections = []
+    
+    # Step context (always)
+    sections.append(build_step_context(step_description, step_type))
+    
+    # Step-type-specific sections
+    if step_type == "read":
+        sections.append(build_read_sections(subdomain, entities, schema))
+    elif step_type == "analyze":
+        sections.append(build_analyze_sections(prev_group_results))
+    elif step_type == "generate":
+        sections.append(build_generate_sections(subdomain, mode, user_profile, prev_group_results))
+    elif step_type == "write":
+        sections.append(build_write_sections(subdomain, entities, prev_group_results, schema))
+    else:
+        # Fallback: include schema
+        sections.append(build_read_sections(subdomain, entities, schema))
+    
+    return "\n\n".join(sections)
+
+
+def build_step_context(step_description: str, step_type: str) -> str:
+    """Build the step context section."""
+    return f"""## Current Step
+
+**Type:** {step_type}
+**Description:** {step_description}"""
+
+
+def build_read_sections(
+    subdomain: str, 
+    entities: list[Entity] | None = None,
+    schema: str | None = None,
+) -> str:
+    """
+    Build sections for READ steps.
+    
+    Includes:
+    - Schema for the subdomain
+    - Filter syntax examples
+    - Referenced entity IDs (if any)
+    """
+    parts = []
+    
+    # Schema (passed in by caller)
+    if schema:
+        parts.append(f"""## Database Schema
+
+{schema}""")
+    
+    # Persona (read mode)
+    persona = _get_persona(subdomain, "read")
+    if persona:
+        parts.append(f"""## Role for This Step
+
+{persona}""")
+    
+    # Referenced entities (just IDs for joins)
+    if entities:
+        active_refs = [e.to_ref() for e in entities if e.state.value == "active"]
+        if active_refs:
+            refs_text = _format_entity_refs(active_refs)
+            parts.append(f"""## Available Entity IDs
+
+{refs_text}
+
+Use these IDs for joins or filters when needed.""")
+    
+    return "\n\n".join(parts)
+
+
+def build_analyze_sections(prev_group_results: list[dict] | None = None) -> str:
+    """
+    Build sections for ANALYZE steps.
+    
+    Includes:
+    - Previous results prominently
+    - Critical warning about data sources
+    
+    Does NOT include:
+    - Schema (not querying DB)
+    - Entity data (only results)
+    """
+    parts = []
+    
+    # Previous results (THE data source)
+    if prev_group_results:
+        results_text = _format_prev_results(prev_group_results)
+        parts.append(f"""## Data to Analyze
+
+{results_text}""")
+    else:
+        parts.append("""## Data to Analyze
+
+No data from previous steps. Report "No data to analyze" in your step_complete.""")
+    
+    # Critical warning
+    parts.append("""## CRITICAL
+
+Only analyze the data shown above in "Data to Analyze".
+- If the data is empty `[]`, report "No data to analyze"
+- Do NOT invent or hallucinate data
+- Do NOT use entity references as data sources
+- Your analysis must be grounded in the actual results shown""")
+    
+    return "\n\n".join(parts)
+
+
+def build_generate_sections(
+    subdomain: str,
+    mode: Mode,
+    user_profile: dict | None = None,
+    prev_group_results: list[dict] | None = None,
+) -> str:
+    """
+    Build sections for GENERATE steps.
+    
+    Includes:
+    - Persona (generate mode)
+    - User profile for personalization
+    - Verbosity guidance
+    - Prior context (summary)
+    - Entity tagging instructions
+    """
+    parts = []
+    
+    # Persona (generate mode)
+    persona = _get_persona(subdomain, "generate")
+    if persona:
+        parts.append(f"""## Role for This Step
+
+{persona}""")
+    
+    # User profile
+    if user_profile:
+        profile_text = _format_user_profile(user_profile, mode)
+        parts.append(f"""## User Preferences
+
+{profile_text}""")
+    
+    # Prior context (summary, not full data)
+    if prev_group_results:
+        summary = _summarize_prev_results(prev_group_results)
+        parts.append(f"""## Prior Context
+
+{summary}""")
+    
+    # Generation guidance
+    verbosity = get_verbosity_label(mode)
+    parts.append(f"""## Generation Guidelines
+
+- **Verbosity:** {verbosity}
+- **Personalize:** Use user preferences shown above
+- **Be creative:** But stay grounded in user's context""")
+    
+    # Entity tagging
+    parts.append("""## Entity Tagging
+
+When generating content, tag it for tracking:
+```json
+{
+  "temp_id": "temp_recipe_1",
+  "type": "recipe",
+  "label": "Quick Weeknight Pasta"
+}
+```
+
+Use `temp_id` prefix for generated content. This allows the system to track it.""")
+    
+    return "\n\n".join(parts)
+
+
+def build_write_sections(
+    subdomain: str,
+    entities: list[Entity] | None = None,
+    prev_group_results: list[dict] | None = None,
+    schema: str | None = None,
+) -> str:
+    """
+    Build sections for WRITE steps.
+    
+    Includes:
+    - Schema for the subdomain
+    - FK handling guidance
+    - Entity IDs from prior steps
+    - Entity tagging instructions
+    """
+    parts = []
+    
+    # Schema (passed in by caller)
+    if schema:
+        parts.append(f"""## Database Schema
+
+{schema}""")
+    
+    # Persona
+    persona = _get_persona(subdomain, "write")
+    if persona:
+        parts.append(f"""## Role for This Step
+
+{persona}""")
+    
+    # Entity IDs for FK references
+    if entities:
+        pending_refs = [e.to_ref() for e in entities if e.state.value == "pending"]
+        active_refs = [e.to_ref() for e in entities if e.state.value == "active"]
+        
+        if pending_refs or active_refs:
+            parts.append("## Entity IDs from Prior Steps")
+            if active_refs:
+                parts.append(f"**Active (confirmed):**\n{_format_entity_refs(active_refs)}")
+            if pending_refs:
+                parts.append(f"**Pending (awaiting confirmation):**\n{_format_entity_refs(pending_refs)}")
+    
+    # IDs from prev group results
+    if prev_group_results:
+        ids_text = _extract_ids_from_results(prev_group_results)
+        if ids_text:
+            parts.append(f"""## IDs from Previous Steps
+
+{ids_text}""")
+    
+    # Entity tagging for writes
+    parts.append("""## Entity Tagging on Write
+
+When creating records:
+- Tag new entities with state: "pending" (awaiting user confirmation)
+- Include temp_id if no DB ID yet
+- Report created entities in step_complete data
+
+```json
+{
+  "new_entities": [
+    {"id": "uuid-from-db", "type": "recipe", "label": "Butter Chicken", "state": "pending"}
+  ]
+}
+```""")
+    
+    return "\n\n".join(parts)
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def _get_persona(subdomain: str, step_type: str = "read") -> str | None:
+    """Get persona text for subdomain."""
+    persona = get_persona_for_subdomain(subdomain, step_type)
+    return persona if persona else None
+
+
+def _format_entity_refs(refs: list[dict]) -> str:
+    """Format entity refs for prompt injection."""
+    if not refs:
+        return "None"
+    
+    lines = []
+    for ref in refs[:10]:  # Limit to 10
+        lines.append(f"- {ref['type']}: {ref['label']} (ID: {ref['id']})")
+    
+    if len(refs) > 10:
+        lines.append(f"... and {len(refs) - 10} more")
+    
+    return "\n".join(lines)
+
+
+def _format_prev_results(results: list[dict]) -> str:
+    """Format previous results for analyze steps."""
+    if not results:
+        return "[]"
+    
+    import json
+    # Limit size for prompt
+    formatted = json.dumps(results, indent=2, default=str)
+    if len(formatted) > 4000:
+        # Truncate with note
+        formatted = formatted[:4000] + "\n... (truncated, showing first 4000 chars)"
+    
+    return f"```json\n{formatted}\n```"
+
+
+def _summarize_prev_results(results: list[dict]) -> str:
+    """Summarize previous results for generate steps (not full data)."""
+    if not results:
+        return "No prior data available."
+    
+    summaries = []
+    for i, result in enumerate(results):
+        if isinstance(result, dict):
+            if "result_summary" in result:
+                summaries.append(f"Step {i}: {result['result_summary']}")
+            elif "data" in result:
+                data = result["data"]
+                if isinstance(data, list):
+                    summaries.append(f"Step {i}: {len(data)} records")
+                else:
+                    summaries.append(f"Step {i}: Data available")
+    
+    return "\n".join(summaries) if summaries else "Prior steps completed."
+
+
+def _extract_ids_from_results(results: list[dict]) -> str:
+    """Extract entity IDs from previous results for write steps."""
+    ids = []
+    for result in results:
+        if isinstance(result, dict):
+            # Check for IDs in various formats
+            if "id" in result:
+                ids.append(result["id"])
+            if "data" in result:
+                data = result["data"]
+                if isinstance(data, dict) and "id" in data:
+                    ids.append(data["id"])
+                elif isinstance(data, list):
+                    for item in data[:5]:  # Limit
+                        if isinstance(item, dict) and "id" in item:
+                            ids.append(item["id"])
+    
+    if not ids:
+        return ""
+    
+    return "Available IDs: " + ", ".join(str(id) for id in ids[:10])
+
+
+def _format_user_profile(profile: dict, mode: Mode) -> str:
+    """Format user profile based on mode verbosity."""
+    if not profile:
+        return "No user profile available."
+    
+    detail = MODE_CONFIG[mode]["profile_detail"]
+    
+    if detail == "minimal":
+        # Just restrictions and allergies
+        parts = []
+        if profile.get("dietary_restrictions"):
+            parts.append(f"Restrictions: {', '.join(profile['dietary_restrictions'])}")
+        if profile.get("allergies"):
+            parts.append(f"Allergies: {', '.join(profile['allergies'])}")
+        return "\n".join(parts) if parts else "No restrictions."
+    
+    elif detail == "compact":
+        # Restrictions + current focus
+        parts = []
+        if profile.get("dietary_restrictions"):
+            parts.append(f"Restrictions: {', '.join(profile['dietary_restrictions'])}")
+        if profile.get("current_vibes"):
+            parts.append(f"Current focus: {', '.join(profile['current_vibes'])}")
+        return "\n".join(parts) if parts else "No profile data."
+    
+    else:  # full
+        # Everything
+        import json
+        return json.dumps(profile, indent=2)
+

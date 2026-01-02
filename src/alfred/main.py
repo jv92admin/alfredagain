@@ -1,10 +1,14 @@
 """
-Alfred V2 - CLI Entry Point.
+Alfred V3 - CLI Entry Point.
 
 Usage:
     alfred chat              Start interactive chat
+    alfred chat --mode quick Start in quick mode
     alfred health            Check system health
     alfred --help            Show help
+
+V3 Changes:
+    --mode flag for mode selection (quick/cook/plan/create)
 """
 
 import asyncio
@@ -14,6 +18,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.live import Live
+
+from alfred.core.modes import Mode, ModeContext
 
 app = typer.Typer(
     name="alfred",
@@ -26,23 +32,43 @@ console = Console()
 @app.command()
 def chat(
     log_prompts: bool = typer.Option(False, "--log-prompts", "-l", help="Log all LLM prompts to prompt_logs/"),
+    log_session: bool = typer.Option(False, "--log", help="Enable session logging to session_logs/"),
+    mode: str = typer.Option("plan", "--mode", "-m", help="Mode: quick, cook, plan, create"),
 ) -> None:
     """Start an interactive chat session with Alfred."""
     from alfred.config import settings
     from alfred.graph import run_alfred
     from alfred.memory.conversation import initialize_conversation
     from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
+    from alfred.observability.session_logger import init_session_logger, close_session_logger
 
     if log_prompts:
         enable_prompt_logging(True)
         console.print("[dim]Prompt logging enabled. Check prompt_logs/ after the session.[/dim]")
+    
+    # V3: Session logging (lightweight observability)
+    session_logger = None
+    if log_session:
+        session_logger = init_session_logger()
+        console.print(f"[dim]Session logging enabled: {session_logger.log_path}[/dim]")
+
+    # V3: Parse and validate mode
+    try:
+        selected_mode = Mode(mode.lower())
+    except ValueError:
+        console.print(f"[red]Invalid mode: {mode}. Using 'plan' mode.[/red]")
+        selected_mode = Mode.PLAN
+    
+    mode_context = ModeContext(selected_mode=selected_mode)
 
     console.print(
         Panel.fit(
-            "[bold green]Alfred V2[/bold green]\n"
-            "Your intelligent assistant for kitchen, fitness, and wine.\n\n"
+            f"[bold green]Alfred V3[/bold green]\n"
+            f"Your intelligent assistant for kitchen, fitness, and wine.\n\n"
+            f"[dim]Mode: [bold]{selected_mode.value}[/bold] (--mode to change)[/dim]\n"
             "[dim]Type 'exit' or 'quit' to end the session.[/dim]\n"
-            "[dim]Type 'context' to see current conversation state.[/dim]",
+            "[dim]Type 'context' to see current conversation state.[/dim]\n"
+            "[dim]Type 'mode <quick|cook|plan|create>' to switch modes.[/dim]",
             title="Welcome",
             border_style="green",
         )
@@ -56,7 +82,9 @@ def chat(
 
     while True:
         try:
-            user_input = console.input("\n[bold blue]You:[/bold blue] ").strip()
+            # Show mode in prompt
+            mode_badge = f"[dim][{selected_mode.value}][/dim] "
+            user_input = console.input(f"\n{mode_badge}[bold blue]You:[/bold blue] ").strip()
 
             if user_input.lower() in ("exit", "quit", "q"):
                 console.print("\n[dim]Goodbye![/dim]")
@@ -69,8 +97,26 @@ def chat(
             if user_input.lower() == "context":
                 _show_conversation_context(conversation, turn_count)
                 continue
+            
+            # V3: Mode switching command
+            if user_input.lower().startswith("mode "):
+                new_mode_str = user_input.split(" ", 1)[1].strip().lower()
+                try:
+                    selected_mode = Mode(new_mode_str)
+                    mode_context = ModeContext(selected_mode=selected_mode)
+                    console.print(f"[green]Mode switched to: {selected_mode.value}[/green]")
+                except ValueError:
+                    console.print(f"[red]Invalid mode: {new_mode_str}. Options: quick, cook, plan, create[/red]")
+                continue
 
             # Run through the graph with conversation context
+            # V3: Pass mode context to conversation for workflow
+            conversation["mode_context"] = mode_context.to_dict()
+            
+            # V3: Log turn start
+            if session_logger:
+                session_logger.turn_start(user_input, selected_mode.value)
+            
             with Live(Spinner("dots", text="Thinking..."), console=console, transient=True):
                 response, conversation = asyncio.run(run_alfred(
                     user_message=user_input,
@@ -79,6 +125,25 @@ def chat(
                 ))
 
             turn_count += 1
+            
+            # V3: Log turn end with entities from conversation
+            if session_logger:
+                # Extract any new entities from the conversation context
+                active_entities = conversation.get("active_entities", {})
+                entities_created = []
+                for entity_type, entities in active_entities.items():
+                    if isinstance(entities, list):
+                        for e in entities:
+                            if isinstance(e, dict):
+                                entities_created.append({"type": entity_type, **e})
+                    elif isinstance(entities, dict):
+                        entities_created.append({"type": entity_type, **entities})
+                
+                session_logger.turn_end(
+                    response, 
+                    entities_created=entities_created if entities_created else None
+                )
+            
             console.print(f"\n[bold green]Alfred:[/bold green] {response}")
 
         except KeyboardInterrupt:
@@ -88,6 +153,13 @@ def chat(
             console.print(f"\n[red]Error: {e}[/red]")
             import traceback
             console.print(f"[dim]{traceback.format_exc()}[/dim]")
+            if session_logger:
+                session_logger.log("error", error=str(e))
+    
+    # V3: Close session logger
+    if session_logger:
+        log_path = close_session_logger()
+        console.print(f"[dim]Session log saved: {log_path}[/dim]")
 
 
 def _show_conversation_context(conversation: dict, turn_count: int) -> None:
@@ -160,7 +232,7 @@ def health() -> None:
     """Check system health and configuration."""
     from alfred.config import get_settings
 
-    console.print("\n[bold]Alfred V2 Health Check[/bold]\n")
+    console.print("\n[bold]Alfred V3 Health Check[/bold]\n")
 
     try:
         settings = get_settings()
@@ -199,7 +271,7 @@ def version() -> None:
     """Show version information."""
     from alfred import __version__
 
-    console.print(f"Alfred V2 version {__version__}")
+    console.print(f"Alfred V3 version {__version__}")
 
 
 @app.command()

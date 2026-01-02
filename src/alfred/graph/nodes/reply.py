@@ -18,6 +18,7 @@ from alfred.graph.state import (
     BlockedAction,
     FailAction,
     StepCompleteAction,
+    UnderstandOutput,
 )
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
@@ -103,6 +104,33 @@ def _format_clarification_response(think_output) -> str:
     return response
 
 
+def _format_understand_clarification(understand_output) -> str:
+    """
+    Format Understand's clarification questions for the user.
+    
+    V3: Understand may need clarification before Think can plan.
+    This handles ambiguous references, missing context, etc.
+    """
+    questions = getattr(understand_output, "clarification_questions", None)
+    reason = getattr(understand_output, "clarification_reason", None)
+    processed = getattr(understand_output, "processed_message", "")
+    
+    if not questions:
+        # Fallback if no questions provided
+        return "I'd like to help, but I need a bit more context. Could you tell me more about what you're looking for?"
+    
+    if len(questions) == 1:
+        # Single question - keep it conversational
+        return questions[0]
+    
+    # Multiple questions
+    response = "Before I proceed, I have a few questions:\n\n"
+    for i, question in enumerate(questions, 1):
+        response += f"{i}. {question}\n"
+    
+    return response
+
+
 async def reply_node(state: AlfredState) -> dict:
     """
     Reply node - generates final user response.
@@ -132,11 +160,21 @@ async def reply_node(state: AlfredState) -> dict:
     step_results = state.get("step_results", {})
     pending_action = state.get("pending_action")
     think_output = state.get("think_output")
+    understand_output = state.get("understand_output")
     error = state.get("error")
     conversation = state.get("conversation", {})
     
     # Format conversation context (condensed for Reply)
     conversation_section = format_condensed_context(conversation)
+    
+    # =========================================================================
+    # V3: Handle Understand clarification - MUST check this first
+    # =========================================================================
+    
+    if understand_output and getattr(understand_output, "needs_clarification", False):
+        # Understand needs clarification - format and return the questions
+        response = _format_understand_clarification(understand_output)
+        return {"final_response": response}
     
     # =========================================================================
     # Handle Think decision modes (propose/clarify) - skip execution
@@ -205,6 +243,29 @@ Generate a helpful response explaining what was accomplished and what we could t
         )
         return {"final_response": result.response}
     
+    # =========================================================================
+    # Guard: Handle empty execution (no steps ran)
+    # =========================================================================
+    
+    # If no steps were executed and we have think_output, something went wrong
+    if not step_results and think_output:
+        # Check if there's a proposal_message we can show
+        proposal = getattr(think_output, "proposal_message", None)
+        if proposal:
+            # Think provided a proposal but no steps ran - show the proposal
+            return {"final_response": proposal}
+        
+        # No steps and no proposal = bug in Think
+        # Don't ask LLM to hallucinate - return an honest error
+        import logging
+        logging.getLogger("alfred.reply").warning(
+            f"Empty execution: Think planned {len(think_output.steps)} steps but none ran"
+        )
+        return {
+            "final_response": "I understood your request but couldn't complete it. "
+                              "Could you try rephrasing or providing more details?"
+        }
+    
     # Normal completion - generate response from results
     user_prompt = f"""## Original Request
 {state.get("user_message", "Unknown request")}
@@ -263,6 +324,10 @@ def _format_execution_summary(
     total_steps = len(steps)
     completed_steps = len(step_results)
     
+    # Track what was generated vs saved for final summary
+    generated_items: list[str] = []
+    saved_items: list[str] = []
+    
     lines = [
         "## Execution Summary",
         f"Plan: {total_steps} steps | Completed: {completed_steps} | Status: {'✅ Success' if completed_steps >= total_steps else '⚠️ Partial'}",
@@ -275,16 +340,62 @@ def _format_execution_summary(
         
         # Get step description from plan
         step_desc = steps[idx].description if idx < len(steps) else f"Step {idx + 1}"
-        step_type = getattr(steps[idx], "step_type", "crud") if idx < len(steps) else "crud"
+        step_type = getattr(steps[idx], "step_type", "read") if idx < len(steps) else "read"
+        
+        # Use clear labels for generate vs write
+        type_label = {
+            "generate": "generate (NOT YET SAVED)",
+            "write": "write (SAVED TO DATABASE)",
+            "read": "read",
+            "analyze": "analyze",
+        }.get(step_type, step_type)
         
         lines.append(f"### Step {idx + 1}: {step_desc}")
-        lines.append(f"Type: {step_type}")
+        lines.append(f"Type: {type_label}")
         
         # Format the outcome - Reply needs accuracy but NOT raw IDs/schema
         # Strip internal fields, keep human-readable content
         
         if isinstance(result, list):
-            if len(result) == 0:
+            # Check if this is a list of tool call tuples: [(tool, table, data), ...]
+            # vs a list of actual records: [{"id": ..., "name": ...}, ...]
+            if result and isinstance(result[0], tuple) and len(result[0]) >= 3:
+                # It's tool call tuples - group by table for clarity
+                records_by_table: dict[str, list] = {}
+                for item in result:
+                    if len(item) >= 3:
+                        _tool, table, data = item[0], item[1], item[2]
+                        if table not in records_by_table:
+                            records_by_table[table] = []
+                        if isinstance(data, list):
+                            records_by_table[table].extend(data)
+                        elif isinstance(data, dict):
+                            records_by_table[table].append(data)
+                
+                total_records = sum(len(recs) for recs in records_by_table.values())
+                
+                # Track items for write steps
+                if step_type == "write":
+                    for recs in records_by_table.values():
+                        _track_items_from_records(recs, saved_items)
+                
+                if total_records == 0:
+                    lines.append("Outcome: No records found")
+                elif len(records_by_table) == 1:
+                    # Single table - simple format
+                    table_name = list(records_by_table.keys())[0]
+                    records = records_by_table[table_name]
+                    outcome_verb = "✅ SAVED" if step_type == "write" else "Found"
+                    lines.append(f"Outcome: {outcome_verb} {len(records)} {table_name}")
+                    lines.append(_format_items_for_reply(records))
+                else:
+                    # Multiple tables - show per-table breakdown
+                    outcome_verb = "✅ SAVED" if step_type == "write" else "Found"
+                    lines.append(f"Outcome: {outcome_verb} records from {len(records_by_table)} tables")
+                    for table_name, records in records_by_table.items():
+                        lines.append(f"  **{table_name}**: {len(records)} records")
+                        lines.append(_format_items_for_reply(records, indent=4))
+            elif len(result) == 0:
                 lines.append("Outcome: No records found")
             else:
                 lines.append(f"Outcome: Found {len(result)} items")
@@ -309,7 +420,16 @@ def _format_execution_summary(
                 if step_type == "analyze":
                     lines.append("Outcome: Analysis complete")
                 elif step_type == "generate":
-                    lines.append("Outcome: Content generated")
+                    lines.append("Outcome: Content generated (NOT YET SAVED)")
+                    # Track generated items
+                    _track_items_from_dict(result, generated_items)
+                elif step_type == "write":
+                    if "name" in result:
+                        name = result.get("name", "record")
+                        lines.append(f"Outcome: ✅ SAVED '{name}'")
+                        saved_items.append(name)
+                    else:
+                        lines.append("Outcome: ✅ SAVED")
                 elif "name" in result:
                     lines.append(f"Outcome: Created/Updated '{result.get('name', 'record')}'")
                 else:
@@ -330,7 +450,48 @@ def _format_execution_summary(
         
         lines.append("")
     
+    # Add final summary if there's a mismatch between generated and saved
+    if generated_items and saved_items:
+        # Check for mismatch
+        gen_set = set(generated_items)
+        saved_set = set(saved_items)
+        unsaved = gen_set - saved_set
+        
+        if unsaved:
+            lines.append("---")
+            lines.append("## ⚠️ Generated vs Saved Mismatch")
+            lines.append(f"- **Generated**: {len(generated_items)} items ({', '.join(generated_items[:5])})")
+            lines.append(f"- **Actually Saved**: {len(saved_items)} items ({', '.join(saved_items[:5])})")
+            lines.append(f"- **NOT SAVED**: {', '.join(unsaved)}")
+            lines.append("")
+    elif generated_items and not saved_items:
+        lines.append("---")
+        lines.append("## 📝 Note: Content was GENERATED but NOT SAVED")
+        lines.append(f"Generated items: {', '.join(generated_items[:5])}")
+        lines.append("Offer to save if appropriate.")
+        lines.append("")
+    
     return "\n".join(lines)
+
+
+def _track_items_from_dict(result: dict, items_list: list[str]) -> None:
+    """Extract item names from a dict result and add to tracking list."""
+    # Check for 'recipes' or similar list keys
+    for key in ["recipes", "meal_plans", "tasks", "items"]:
+        if key in result and isinstance(result[key], list):
+            for item in result[key]:
+                if isinstance(item, dict) and "name" in item:
+                    items_list.append(item["name"])
+    # Check for direct name
+    if "name" in result:
+        items_list.append(result["name"])
+
+
+def _track_items_from_records(records: list, items_list: list[str]) -> None:
+    """Extract item names from a list of records and add to tracking list."""
+    for record in records:
+        if isinstance(record, dict) and "name" in record:
+            items_list.append(record["name"])
 
 
 def _has_single_list_value(d: dict) -> bool:
@@ -413,15 +574,22 @@ def _clean_record(record: dict) -> dict:
             if k not in _STRIP_FIELDS and v is not None}
 
 
-def _format_items_for_reply(items: list, max_items: int = 50) -> str:
+def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -> str:
     """
     Format a list of items for Reply in human-readable format.
     
     Strips IDs, keeps names/quantities/dates/notes.
+    
+    Args:
+        items: List of records to format
+        max_items: Maximum items to show
+        indent: Number of spaces for indentation
     """
     if not items:
-        return "  (none)"
+        prefix = " " * indent
+        return f"{prefix}(none)"
     
+    prefix = " " * indent
     lines = []
     for item in items[:max_items]:
         if isinstance(item, dict):
@@ -429,7 +597,7 @@ def _format_items_for_reply(items: list, max_items: int = 50) -> str:
             
             # Build human-readable line
             name = clean.get("name") or clean.get("title") or clean.get("date", "item")
-            parts = [f"  - {name}"]
+            parts = [f"{prefix}- {name}"]
             
             # Add key details
             if clean.get("quantity"):
@@ -447,10 +615,10 @@ def _format_items_for_reply(items: list, max_items: int = 50) -> str:
             
             lines.append(" ".join(parts))
         else:
-            lines.append(f"  - {item}")
+            lines.append(f"{prefix}- {item}")
     
     if len(items) > max_items:
-        lines.append(f"  ... and {len(items) - max_items} more")
+        lines.append(f"{prefix}... and {len(items) - max_items} more")
     
     return "\n".join(lines)
 

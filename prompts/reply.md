@@ -145,6 +145,7 @@ This lets users review generated content before committing.
 5. **One suggestion** — Natural next step, not a menu
 6. **Graceful failures** — Explain what worked and what didn't
 7. **Never claim success for failures** — If status says "Blocked" or shows an error, do NOT say "I did X successfully". Explain what failed and why.
+8. **Generated ≠ Saved** — If generate steps produced 3 items but write step only saved 2, report what was ACTUALLY saved. Don't list unsaved generated content as "saved". If something wasn't saved, note it or offer to save it.
 
 ---
 

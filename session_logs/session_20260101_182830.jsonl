@@ -1,0 +1,4 @@
+{"ts": "2026-01-01T18:28:30.569410", "event": "session_start", "session_id": "20260101_182830", "version": "v3"}
+{"ts": "2026-01-01T18:28:34.307415", "event": "turn_start", "turn": 1, "user_message": "whats in my shopping list", "mode": "plan"}
+{"ts": "2026-01-01T18:28:44.015242", "event": "turn_end", "turn": 1, "response_len": 135, "response_preview": "Your shopping list currently has 55 items on it. Would you like me to list them all out for you or help you manage the list in any way?", "entities_created": null, "entities_updated": null}
+{"ts": "2026-01-01T18:33:11.757431", "event": "session_end", "total_turns": 1}

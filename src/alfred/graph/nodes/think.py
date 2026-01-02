@@ -1,18 +1,21 @@
 """
-Alfred V2 - Think Node.
+Alfred V3 - Think Node.
 
 The Think node creates an execution plan based on the goal.
-It outputs steps with subdomain hints (not tool names).
+It outputs steps with:
+- subdomain hints (not tool names)
+- step_type (read/analyze/generate/write)
+- group field for parallelization
+
 NO data fetching - Act handles all data access via CRUD.
 
-Now includes:
-- Conversation context for multi-turn awareness
-- User profile injection for personalized decision-making
-- Kitchen dashboard for data availability awareness
-- Subdomain dependencies for relationship understanding
-- Clarify/Propose decision layer
+V3 Changes:
+- Steps include group field (same group = can run in parallel)
+- Mode-aware planning depth
+- Simplified step_types (read/analyze/generate/write)
+- Proposal flow for complex Plan mode requests
 
-Output: ThinkOutput with decision (plan_direct/propose/clarify) and steps or questions.
+Output: ThinkOutput with steps (including group) or proposal/clarification.
 """
 
 from datetime import date
@@ -24,10 +27,13 @@ from alfred.background.profile_builder import (
     get_cached_dashboard,
     get_cached_profile,
 )
-from alfred.graph.state import AlfredState, PlannedStep, ThinkOutput
+from alfred.core.entities import EntityRegistry
+from alfred.core.modes import Mode, ModeContext
+from alfred.graph.state import AlfredState, ThinkStep, ThinkOutput
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
-from alfred.tools.schema import get_complexity_rules, get_subdomain_dependencies_summary
+from alfred.tools.schema import get_complexity_rules
+from alfred.prompts.personas import get_subdomain_dependencies_summary
 
 
 # Mutation verbs that trigger complexity escalation
@@ -37,7 +43,7 @@ MUTATION_VERBS = frozenset([
 ])
 
 
-def adjust_step_complexity(step: PlannedStep) -> PlannedStep:
+def adjust_step_complexity(step: ThinkStep) -> ThinkStep:
     """
     Auto-escalate step complexity based on subdomain rules.
     
@@ -54,24 +60,34 @@ def adjust_step_complexity(step: PlannedStep) -> PlannedStep:
     if not rules:
         return step
     
-    # Check if step description contains mutation verbs
-    description_lower = step.description.lower()
-    is_mutation = any(verb in description_lower for verb in MUTATION_VERBS)
-    
-    if is_mutation and rules.get("mutation"):
-        # Only escalate if the rule is higher than current
-        complexity_order = {"low": 0, "medium": 1, "high": 2}
-        current_level = complexity_order.get(step.complexity, 0)
-        rule_level = complexity_order.get(rules["mutation"], 0)
-        
-        if rule_level > current_level:
-            step.complexity = rules["mutation"]
-    
-    elif not is_mutation and rules.get("read"):
-        # Apply read complexity rule if present
-        step.complexity = rules["read"]
-    
+    # V3: step.complexity is a property derived from step_type
+    # For now, we don't modify the step itself, but this could
+    # be used for model selection hints in the future
     return step
+
+
+def _get_mode_planning_guidance(mode: Mode) -> str:
+    """Get planning guidance based on mode."""
+    if mode == Mode.QUICK:
+        return """**Mode: QUICK**
+- Maximum 2 steps
+- No proposal needed - execute directly
+- Simple operations only"""
+    elif mode == Mode.COOK:
+        return """**Mode: COOK**
+- Maximum 4 steps
+- Focus on recipe operations
+- Light proposal for complex requests"""
+    elif mode == Mode.PLAN:
+        return """**Mode: PLAN**
+- Up to 8 steps for complex operations
+- Propose for multi-step plans
+- Full planning with parallelization"""
+    else:  # CREATE
+        return """**Mode: CREATE**
+- Focus on generation steps
+- Up to 4 steps
+- Rich output, creative freedom"""
 
 
 # Load prompt once at module level
@@ -89,22 +105,22 @@ def _get_system_prompt() -> str:
 
 async def think_node(state: AlfredState) -> dict:
     """
-    Think node - creates execution plan with subdomain hints.
+    Think node - creates execution plan with subdomain hints and groups.
 
     This node ONLY plans. It does NOT fetch data.
     Act node handles all data access via CRUD.
     
-    Now includes:
-    - User profile for personalized decision-making
-    - Kitchen dashboard for data availability awareness
-    - Subdomain dependencies for relationship understanding
-    - Clarify/Propose decision layer
+    V3 Features:
+    - Steps include group field for parallelization
+    - Mode-aware planning depth
+    - Entity counts (not full data) for context
+    - Simplified step_types: read/analyze/generate/write
 
     Args:
         state: Current graph state with router_output
 
     Returns:
-        State update with think_output (decision + steps or questions)
+        State update with think_output (steps with groups, or proposal/clarification)
     """
     router_output = state["router_output"]
     conversation = state.get("conversation", {})
@@ -115,6 +131,20 @@ async def think_node(state: AlfredState) -> dict:
 
     if router_output is None:
         return {"error": "Router output missing"}
+
+    # Get mode context
+    mode_data = state.get("mode_context", {})
+    mode_context = ModeContext.from_dict(mode_data) if mode_data else ModeContext.default()
+    mode = mode_context.selected_mode
+    mode_guidance = _get_mode_planning_guidance(mode)
+    
+    # Get entity counts (not full data)
+    registry_data = state.get("entity_registry", {})
+    entity_counts = {}
+    if registry_data:
+        registry = EntityRegistry.from_dict(registry_data)
+        entity_counts = registry.get_counts_by_type()
+    entity_counts_section = f"**Entity counts:** {entity_counts}" if entity_counts else ""
 
     # Format conversation context (condensed for Think)
     context_section = format_condensed_context(conversation)
@@ -138,7 +168,7 @@ async def think_node(state: AlfredState) -> dict:
     # Get subdomain dependencies summary
     dependencies_section = get_subdomain_dependencies_summary()
     
-    # Check for pending clarification from previous turn
+    # Check for pending clarification/proposal from previous turn
     pending_clarification = conversation.get("pending_clarification")
     pending_section = ""
     if pending_clarification:
@@ -164,6 +194,10 @@ The user's current message is their response. Use this context to plan.
 
 **Today**: {today}
 
+{mode_guidance}
+
+{entity_counts_section}
+
 ---
 
 {profile_section}
@@ -182,19 +216,32 @@ The user's current message is their response. Use this context to plan.
 
 ## Instructions
 
-Decide how to proceed:
+Plan steps with **group** field for parallelization:
+- Steps in the same group have NO dependencies on each other → can run in parallel
+- Steps in later groups depend on earlier groups → run sequentially
+- Group 0 runs first, then Group 1, then Group 2, etc.
 
-1. **plan_direct** — Simple, unambiguous request. Create execution steps.
-2. **propose** — Complex request, but you have enough context. State assumptions for user to confirm.
-3. **clarify** — Missing critical context (empty profile, ambiguous intent). Ask focused questions.
+**Step types (V3):**
+- `read` — Query database (replaces "crud" for reads)
+- `write` — Create/update/delete in database (replaces "crud" for mutations)
+- `analyze` — Reason over data from previous steps (no DB calls)
+- `generate` — Create new content (no DB calls)
 
-**Default to PROPOSE when you have user profile/preferences.** Only CLARIFY if profile is empty or data is missing.
+**Group patterns:**
+- Independent reads → same group (parallel)
+- Writes before dependent reads → write in earlier group
+- Analyze depends on reads → analyze in later group
 
-If plan_direct, include steps:
+**Example:**
+"What can I make?" →
+  Group 0: [read recipes, read inventory]  (parallel)
+  Group 1: [analyze: match recipes to inventory]  (needs Group 0)
+
+If plan_direct, include steps with:
 - `description`: What this step accomplishes
-- `step_type`: crud, analyze, or generate
-- `subdomain`: inventory, recipes, shopping, meal_plan, tasks, or preferences
-- `complexity`: low, medium, or high"""
+- `step_type`: read | analyze | generate | write
+- `subdomain`: inventory | recipes | shopping | meal_plans | tasks | preferences
+- `group`: 0, 1, 2... (execution order)"""
 
     # Call LLM for planning
     result = await call_llm(
@@ -205,7 +252,6 @@ If plan_direct, include steps:
     )
 
     # Apply automatic complexity escalation based on subdomain rules
-    # (only for plan_direct with steps)
     if result.decision == "plan_direct" and result.steps:
         adjusted_steps = [adjust_step_complexity(step) for step in result.steps]
         result.steps = adjusted_steps
@@ -214,5 +260,6 @@ If plan_direct, include steps:
         "think_output": result,
         "current_step_index": 0,
         "step_results": {},
+        "group_results": {},  # V3: track results by group
         "schema_requests": 0,
     }

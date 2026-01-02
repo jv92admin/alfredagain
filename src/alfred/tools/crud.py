@@ -210,6 +210,26 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
     return result.data
 
 
+def _sanitize_uuid_fields(record: dict) -> dict:
+    """
+    Convert empty strings to None for UUID-type fields.
+    
+    Common UUID fields: id, user_id, recipe_id, meal_plan_id, ingredient_id, parent_recipe_id
+    LLMs sometimes output "" instead of null for optional FK fields.
+    """
+    uuid_fields = {
+        "id", "user_id", "recipe_id", "meal_plan_id", "ingredient_id",
+        "parent_recipe_id", "from_meal_plan_id", "from_recipe_id"
+    }
+    sanitized = {}
+    for key, value in record.items():
+        if key in uuid_fields and value == "":
+            sanitized[key] = None
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
 async def db_create(params: DbCreateParams, user_id: str) -> dict | list[dict]:
     """
     Insert one or more rows into a table.
@@ -230,6 +250,9 @@ async def db_create(params: DbCreateParams, user_id: str) -> dict | list[dict]:
     # Normalize to list for processing
     is_batch = isinstance(params.data, list)
     records = params.data if is_batch else [params.data]
+    
+    # Sanitize UUID fields (empty string → None)
+    records = [_sanitize_uuid_fields(rec) for rec in records]
 
     # Auto-add user_id for user-owned tables
     if params.table in USER_OWNED_TABLES:

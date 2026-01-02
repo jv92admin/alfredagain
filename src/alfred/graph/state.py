@@ -1,13 +1,23 @@
 """
-Alfred V2 - Graph State Definition.
+Alfred V3 - Graph State Definition.
 
 The AlfredState is the shared state passed through all nodes.
+
+V3 Architecture:
+- ThinkStep uses V3 step types: read, analyze, generate, write
+- Group-based parallelization (same group = can run in parallel)
+- UnderstandOutput for entity state management
+- EntityRegistry integration for lifecycle tracking
+- ModeContext for complexity adaptation
 """
 
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from alfred.core.entities import Entity, EntityRegistry, EntityState
+from alfred.core.modes import Mode, ModeContext
 
 
 # =============================================================================
@@ -61,48 +71,119 @@ class RouterOutput(BaseModel):
     # NOTE: No context_needs - Act handles ALL data access via CRUD
 
 
-class PlannedStep(BaseModel):
-    """
-    A step in the execution plan with subdomain hint.
-    
-    Think node outputs these - each step has:
-    - A natural language description
-    - A step type (crud, analyze, or generate)
-    - A subdomain hint (Act gets schema for CRUD steps)
-    - Complexity for model selection
-    """
+# =============================================================================
+# V3 Step Types
+# =============================================================================
 
+
+class ThinkStep(BaseModel):
+    """
+    V3 Step definition with group-based parallelization.
+    
+    Steps in the same group have no dependencies and can run in parallel.
+    Groups execute in order: 0 → 1 → 2 → ...
+    """
+    
     description: str  # Natural language step description
-    step_type: Literal["crud", "analyze", "generate"] = "crud"
+    step_type: Literal["read", "analyze", "generate", "write"]
     subdomain: str  # "inventory", "recipes", "shopping", "meal_plans", "preferences"
-    complexity: Literal["low", "medium", "high"] = "low"
+    group: int = 0  # Execution group (same group = can run in parallel)
+    referenced_entities: list[str] | None = None  # Entity IDs this step uses
+    
+    # Legacy compatibility
+    @property
+    def complexity(self) -> str:
+        """Map step_type to complexity for model selection."""
+        if self.step_type in ("read", "write"):
+            return "low"
+        elif self.step_type == "analyze":
+            return "medium"
+        else:  # generate
+            return "high"
+
+
+# =============================================================================
+# V3 Node Outputs
+# =============================================================================
+
+
+class UnderstandOutput(BaseModel):
+    """
+    Output from the Understand node (V3).
+    
+    Understand handles:
+    - Entity state updates (confirmation/rejection signals)
+    - Entity reference resolution ("that recipe" → specific ID)
+    - Clarification detection
+    
+    Understand does NOT plan steps.
+    """
+    
+    # Entity state updates
+    entity_updates: list[dict] = Field(default_factory=list)  # [{"id": "x", "new_state": "active"}]
+    referenced_entities: list[str] = Field(default_factory=list)  # Entity IDs user is referring to
+    
+    # Clarification
+    needs_clarification: bool = False
+    clarification_questions: list[str] | None = None
+    clarification_reason: str | None = None  # "ambiguous_reference", "missing_info"
+    
+    # Pass-through
+    processed_message: str = ""  # User message with resolved references
 
 
 class ThinkOutput(BaseModel):
     """
     Output from the Think node.
     
+    V3 Changes:
+    - steps now use ThinkStep with group field
+    - needs_proposal replaces decision for cleaner flow
+    
     Think can decide to:
-    - plan_direct: Proceed with execution (simple, unambiguous requests)
-    - propose: State assumptions and ask for confirmation (complex requests with known context)
-    - clarify: Ask questions before planning (missing critical context)
+    - Execute directly (simple requests)
+    - Propose plan for confirmation (complex requests in Plan mode)
+    - Clarify (rare - most clarification handled by Understand)
     """
 
-    # Decision determines the flow
-    decision: Literal["plan_direct", "propose", "clarify"] = "plan_direct"
-    
     # Always present
     goal: str
     
-    # If plan_direct: steps to execute
-    steps: list[PlannedStep] = Field(default_factory=list)
+    # Steps to execute (with group field for parallelization)
+    steps: list[ThinkStep] = Field(default_factory=list)
     
-    # If propose: state assumptions for user to confirm/correct
+    # Proposal flow (replaces V2 decision field)
+    needs_proposal: bool = False  # If True, show user before executing
     proposal_message: str | None = None
-    assumptions: list[str] | None = None
     
-    # If clarify: questions to ask before planning
+    # Legacy fields (kept for migration)
+    decision: Literal["plan_direct", "propose", "clarify"] = "plan_direct"
+    assumptions: list[str] | None = None
     clarification_questions: list[str] | None = None
+    
+    @model_validator(mode="after")
+    def validate_decision_consistency(self) -> "ThinkOutput":
+        """
+        Ensure output is consistent with the decision type.
+        
+        Fix common LLM errors:
+        - plan_direct with empty steps → convert to propose if proposal_message exists
+        - plan_direct with proposal fields → convert to propose
+        """
+        if self.decision == "plan_direct":
+            # If LLM said plan_direct but gave empty steps + proposal_message,
+            # it actually meant propose
+            if not self.steps and self.proposal_message:
+                self.decision = "propose"
+            # If empty steps and no proposal, this is an error - but we can't
+            # fix it here without more context. At least log it.
+            elif not self.steps and not self.proposal_message:
+                import logging
+                logging.getLogger("alfred.state").warning(
+                    "ThinkOutput: plan_direct with empty steps and no proposal - "
+                    "this will result in no action taken"
+                )
+        return self
 
 
 # =============================================================================
@@ -264,6 +345,13 @@ class AlfredState(TypedDict, total=False):
 
     This is a TypedDict so LangGraph can properly type-check
     and merge state updates from each node.
+    
+    V3 Additions:
+    - entity_registry: EntityRegistry for lifecycle tracking
+    - mode_context: ModeContext for complexity adaptation
+    - understand_output: UnderstandOutput from Understand node
+    - group_results: Results organized by execution group
+    - current_turn: Turn counter for entity GC
     """
 
     # User context
@@ -273,8 +361,20 @@ class AlfredState(TypedDict, total=False):
     # Input
     user_message: str
 
+    # V3: Mode context (from CLI/UI)
+    mode_context: dict[str, Any]  # ModeContext serialized
+
+    # V3: Entity registry (lifecycle tracking)
+    entity_registry: dict[str, Any]  # EntityRegistry serialized
+    
+    # V3: Current turn number (for entity GC)
+    current_turn: int
+
     # Router output
     router_output: RouterOutput | None
+    
+    # V3: Understand output (entity state updates)
+    understand_output: UnderstandOutput | None
 
     # Think output
     think_output: ThinkOutput | None
@@ -290,6 +390,11 @@ class AlfredState(TypedDict, total=False):
     current_subdomain: str | None  # Active subdomain for schema
     schema_requests: int  # Count of schema requests (for safeguard)
     pending_action: ActAction | None
+    
+    # V3: Group-based results (for parallelization)
+    # Keys: group number (0, 1, 2, ...)
+    # Values: list of step results from that group
+    group_results: dict[int, list[dict]]
 
     # Content archive (persists across turns for generate/analyze step results)
     # Keys: "turn_{turn_num}_step_{step_num}" or descriptive like "recipes_generated"
@@ -300,8 +405,8 @@ class AlfredState(TypedDict, total=False):
     prev_step_note: str | None  # Note from previous step for context
     
     # Within-turn entity tracking (IDs created this turn, for cross-step reference)
-    # Accumulated as steps complete; merged into conversation.active_entities by Summarize
-    turn_entities: list[dict]  # List of {type, id, label, step} dicts
+    # Accumulated as steps complete; merged into entity_registry by Summarize
+    turn_entities: list[dict]  # List of Entity.to_dict() dicts
     
     # Conversation context (Phase 5)
     conversation: ConversationContext

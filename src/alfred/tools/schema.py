@@ -1,16 +1,38 @@
 """
-Alfred V2 - Schema Generation System.
+Alfred V3 - Schema Generation System.
 
 Provides:
 - SUBDOMAIN_REGISTRY: Maps subdomains to tables
 - Auto-generation of table schemas from database
 - Schema caching for performance
+
+V3 Note: Personas and contextual examples have been moved to:
+- alfred.prompts.personas (SUBDOMAIN_PERSONAS, get_persona_for_subdomain, etc.)
+- alfred.prompts.examples (get_contextual_examples)
+
+Backwards-compatible re-exports are provided for existing code.
 """
 
 import time
 from typing import Any
 
 from alfred.db.client import get_client
+
+# =============================================================================
+# V3 Re-exports (moved to alfred.prompts, kept here for backwards compat)
+# =============================================================================
+# New code should import from alfred.prompts directly
+
+# These will be defined later in this file for now (duplicated)
+# In a future cleanup, remove the local definitions and uncomment these:
+# from alfred.prompts.personas import (
+#     SUBDOMAIN_PERSONAS,
+#     SUBDOMAIN_SCOPE,
+#     get_persona_for_subdomain,
+#     get_scope_for_subdomain,
+#     get_subdomain_dependencies_summary,
+# )
+# from alfred.prompts.examples import get_contextual_examples
 
 
 # =============================================================================
@@ -73,10 +95,14 @@ SUBDOMAIN_PERSONAS: dict[str, str | dict[str, str]] = {
     
     "tasks": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
 
-**Tasks support meal plans:** Most tasks come from meal planning — prep, thaw, shop, etc.
-**Prefer meal_plan_id:** When linking tasks, use meal_plan_id over recipe_id (recipe is derivable from meal plan).
-**Categories:** prep (thaw, marinate, chop), shopping (buy items), cleanup (kitchen maintenance), other (freeform).
-**Can be freeform:** Tasks don't have to link to anything.""",
+**Tasks are flexible reminders:**
+- Standalone: "Stop by butcher", "Brew tea", "Pickle onions"
+- Prep-linked: "Thaw chicken for Monday" (can use meal_plan_id)
+- Shopping: "Buy wine for date night"
+- Kitchen: "Clean fridge", "Sharpen knives"
+
+**Categories:** prep, shopping, cleanup, other
+**Linking is optional:** Use meal_plan_id when task is for a specific meal. Otherwise leave null.""",
     
     # History: stubbed, no special persona
     "history": "",  # Basic CRUD, no persona needed
@@ -112,9 +138,9 @@ SUBDOMAIN_SCOPE: dict[str, dict[str, Any]] = {
         "description": "Meal planning calendar. Links to recipes and spawns tasks.",
     },
     "tasks": {
-        "primary_inflow": ["meal_plans"],
-        "prefer_reference": "meal_plan_id over recipe_id",
-        "description": "Reminders and to-dos. Often tied to meal plans.",
+        "can_link_to": ["meal_plans", "recipes"],
+        "linking_optional": True,
+        "description": "Reminders and to-dos. Can be standalone or linked to meals/recipes.",
     },
     "history": {
         "description": "Cooking log. Simple event recording.",

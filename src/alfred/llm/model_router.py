@@ -114,8 +114,18 @@ def get_model_config(
 
 # Node-specific defaults
 # Different nodes may want different verbosity even at same complexity
+#
+# V3 Node Complexity Recommendations:
+#   router    → low    (simple classification)
+#   understand→ medium (context inference needs smarter model)
+#   think     → medium (planning with parallelization)
+#   act       → varies (read/write=low, analyze/generate=medium-high)
+#   reply     → low    (synthesis from structured data)
+#   summarize → low    (deterministic context updates)
+#
 NODE_VERBOSITY: dict[str, str] = {
     "router": "low",  # Just classification
+    "understand": "low",  # Structured JSON output
     "think": "medium",  # Plans need some detail
     "act": "low",  # Tool calls should be terse
     "reply": "medium",  # User-facing needs balance
@@ -125,6 +135,7 @@ NODE_VERBOSITY: dict[str, str] = {
 # Lower = more deterministic, higher = more creative
 NODE_TEMPERATURE: dict[str, float] = {
     "router": 0.15,  # Classification should be consistent
+    "understand": 0.2,  # Context inference but still deterministic
     "act": 0.25,  # CRUD needs precision but also context awareness
     "think": 0.35,  # Planning needs flexibility to merge steps
     "reply": 0.6,  # User-facing can be warmer

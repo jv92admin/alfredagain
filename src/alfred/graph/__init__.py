@@ -18,12 +18,12 @@ from alfred.graph.state import (
     ConversationContext,
     EntityRef,
     FailAction,
-    PlannedStep,
     RequestSchemaAction,
     RetrieveStepAction,
     RouterOutput,
     StepCompleteAction,
     ThinkOutput,
+    ThinkStep,
     ToolCallAction,
 )
 from alfred.graph.workflow import (
@@ -39,7 +39,7 @@ __all__ = [
     "ConversationContext",
     "EntityRef",
     "RouterOutput",
-    "PlannedStep",
+    "ThinkStep",
     "ThinkOutput",
     "ActAction",
     "ToolCallAction",

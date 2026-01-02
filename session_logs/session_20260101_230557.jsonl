@@ -1,0 +1,4 @@
+{"ts": "2026-01-01T23:05:57.949241", "event": "session_start", "session_id": "20260101_230557", "version": "v3"}
+{"ts": "2026-01-01T23:06:04.286872", "event": "turn_start", "turn": 1, "user_message": "whats is in my recipe what is in my meal plan", "mode": "plan"}
+{"ts": "2026-01-01T23:06:40.349203", "event": "turn_end", "turn": 1, "response_len": 636, "response_preview": "You have 17 saved recipes, including favorites like Mediterranean Lemon-Herb Chicken Rice Bowl and Spicy Mexican Chicken Rice Bowl with Beans and Yogu...", "entities_created": null, "entities_updated": null}
+{"ts": "2026-01-01T23:15:10.559069", "event": "session_end", "total_turns": 1}

@@ -1,21 +1,31 @@
 """
-Alfred V2 - Graph Workflow Definition.
+Alfred V3 - Graph Workflow Definition.
 
 This module constructs the LangGraph workflow:
-Router → Think (with decision layer) → [Act Loop | Reply] → Summarize
+Router → Understand → Think → [Act Loop | Reply] → Summarize
 
-The Think node now includes a decision layer:
-- plan_direct: Proceed to Act with steps
-- propose: Skip to Reply to present assumptions for confirmation
-- clarify: Skip to Reply to ask clarifying questions
+V3 Changes:
+- Understand node handles entity state updates before Think
+- Think outputs steps with group field for parallelization
+- Group-based execution (same group = parallel, groups execute in order)
+- Mode context passed through the graph
 
-Summarize maintains conversation memory after each exchange.
+Flow:
+    START → router → understand ──┬─(needs_clarification)─→ reply → summarize → END
+                                   │
+                                   └─(continue)─→ think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
+                                                          │
+                                                          └─(propose)─→ reply → summarize → END
+
+Summarize maintains conversation memory and entity lifecycle after each exchange.
 """
 
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from alfred.core.entities import EntityRegistry
+from alfred.core.modes import Mode, ModeContext
 from alfred.graph.nodes import (
     act_node,
     reply_node,
@@ -24,7 +34,9 @@ from alfred.graph.nodes import (
     summarize_node,
     think_node,
 )
+from alfred.graph.nodes.understand import understand_node
 from alfred.graph.state import AlfredState, ThinkOutput
+from alfred.observability.session_logger import get_session_logger
 
 
 def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
@@ -98,6 +110,27 @@ def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
     return entities if entities else None
 
 
+def route_after_understand(state: AlfredState) -> str:
+    """
+    Route based on Understand's output.
+    
+    - needs_clarification: Skip to Reply to ask clarifying questions
+    - otherwise: Continue to Think
+    
+    Returns:
+        "think" or "reply"
+    """
+    understand_output = state.get("understand_output")
+    
+    if not understand_output:
+        return "think"  # No output, continue normally
+    
+    if hasattr(understand_output, "needs_clarification") and understand_output.needs_clarification:
+        return "reply"
+    
+    return "think"
+
+
 def route_after_think(state: AlfredState) -> str:
     """
     Route based on Think's decision.
@@ -105,6 +138,7 @@ def route_after_think(state: AlfredState) -> str:
     - plan_direct: Proceed to Act with steps
     - propose: Skip to Reply to present assumptions for confirmation
     - clarify: Skip to Reply to ask clarifying questions
+    - needs_proposal (V3): Skip to Reply for proposal
     
     Returns:
         "act" or "reply"
@@ -113,6 +147,10 @@ def route_after_think(state: AlfredState) -> str:
     
     if not think_output:
         return "reply"  # Error case, let reply handle it
+    
+    # V3: Check needs_proposal flag
+    if hasattr(think_output, "needs_proposal") and think_output.needs_proposal:
+        return "reply"
     
     # Check if ThinkOutput is the new format with decision
     if hasattr(think_output, "decision"):
@@ -130,14 +168,18 @@ def route_after_think(state: AlfredState) -> str:
 
 def create_alfred_graph() -> StateGraph:
     """
-    Create the Alfred LangGraph workflow.
+    Create the Alfred LangGraph workflow (V3).
     
     Flow:
-        START → router → think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
-                                 │                          ↓
-                                 │                     (ask_user/fail)
-                                 │
-                                 └─(propose/clarify)─→ reply → summarize → END
+        START → router → understand ──┬─(needs_clarification)─→ reply → summarize → END
+                                       │
+                                       └─(continue)─→ think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
+                                                              │
+                                                              └─(propose)─→ reply → summarize → END
+    
+    V3 Changes:
+    - Understand node handles entity state updates
+    - Mode-aware routing (Quick mode may skip Think)
     
     Returns:
         Compiled StateGraph ready for execution
@@ -150,6 +192,7 @@ def create_alfred_graph() -> StateGraph:
     # ==========================================================================
     
     graph.add_node("router", router_node)
+    graph.add_node("understand", understand_node)  # V3: New node
     graph.add_node("think", think_node)
     graph.add_node("act", act_node)
     graph.add_node("reply", reply_node)
@@ -162,8 +205,18 @@ def create_alfred_graph() -> StateGraph:
     # Entry point
     graph.set_entry_point("router")
     
-    # Router → Think (always)
-    graph.add_edge("router", "think")
+    # Router → Understand (V3: always go through Understand first)
+    graph.add_edge("router", "understand")
+    
+    # Understand → conditional routing
+    graph.add_conditional_edges(
+        "understand",
+        route_after_understand,
+        {
+            "think": "think",   # Continue to planning
+            "reply": "reply",   # Needs clarification, ask user
+        },
+    )
     
     # Think → conditional routing based on decision
     graph.add_conditional_edges(
@@ -259,20 +312,35 @@ async def run_alfred(
     # Copy content_archive from conversation for cross-turn persistence
     initial_archive = conv_context.get("content_archive", {})
     
+    # V3: Initialize or load entity registry
+    entity_registry = conv_context.get("entity_registry", {})
+    
+    # V3: Get current turn number
+    current_turn = conv_context.get("current_turn", 0) + 1
+    
+    # V3: Initialize mode context (default to PLAN)
+    mode_context = ModeContext.default().to_dict()
+    
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
         "user_message": user_message,
         "router_output": None,
+        "understand_output": None,  # V3
         "think_output": None,
         "context": {},
+        "mode_context": mode_context,  # V3
+        "entity_registry": entity_registry,  # V3
+        "current_turn": current_turn,  # V3
         "current_step_index": 0,
         "step_results": {},
-        "current_step_tool_results": [],  # Multi-tool-call pattern
+        "group_results": {},  # V3
+        "current_step_tool_results": [],
         "current_subdomain": None,
         "schema_requests": 0,
         "pending_action": None,
-        "content_archive": initial_archive,  # Persisted across turns
+        "content_archive": initial_archive,
+        "turn_entities": [],  # V3
         "conversation": conv_context,
         "final_response": None,
         "error": None,
@@ -336,20 +404,35 @@ async def run_alfred_streaming(
     conv_context = conversation if conversation else initialize_conversation()
     initial_archive = conv_context.get("content_archive", {})
     
+    # V3: Initialize or load entity registry
+    entity_registry = conv_context.get("entity_registry", {})
+    
+    # V3: Get current turn number
+    current_turn = conv_context.get("current_turn", 0) + 1
+    
+    # V3: Initialize mode context (default to PLAN)
+    mode_context = ModeContext.default().to_dict()
+    
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
         "user_message": user_message,
         "router_output": None,
+        "understand_output": None,  # V3
         "think_output": None,
         "context": {},
+        "mode_context": mode_context,  # V3
+        "entity_registry": entity_registry,  # V3
+        "current_turn": current_turn,  # V3
         "current_step_index": 0,
         "step_results": {},
+        "group_results": {},  # V3
         "current_step_tool_results": [],
         "current_subdomain": None,
         "schema_requests": 0,
         "pending_action": None,
         "content_archive": initial_archive,
+        "turn_entities": [],  # V3
         "conversation": conv_context,
         "final_response": None,
         "error": None,
@@ -366,10 +449,16 @@ async def run_alfred_streaming(
     # Track step results for entity cards
     all_step_results: dict = {}
     
+    # Session logger (if enabled)
+    slog = get_session_logger()
+    
     # Use LangGraph's streaming to get node-by-node updates
     async for event in app.astream(initial_state, stream_mode="updates"):
         # event is {node_name: node_output}
         for node_name, node_output in event.items():
+            # Log node completion
+            slog.node_exit(node_name, {"keys": list(node_output.keys()) if node_output else []})
+            
             if node_name == "think" and node_output:
                 think_output = node_output.get("think_output")
                 if think_output:
@@ -410,6 +499,17 @@ async def run_alfred_streaming(
                 # Track step results for entity cards
                 step_results = node_output.get("step_results", {})
                 all_step_results.update(step_results)
+                
+                # Log step info
+                if think_output and hasattr(think_output, "steps") and current_index < len(think_output.steps):
+                    step = think_output.steps[current_index]
+                    slog.step_start(
+                        step_index=current_index,
+                        step_type=step.step_type,
+                        subdomain=step.subdomain,
+                        group=step.group,
+                        description=step.description,
+                    )
                 
                 # Get step description
                 step_desc = ""

@@ -10,7 +10,7 @@ from alfred.graph.state import (
     AlfredState,
     EntityRef,
     RouterOutput,
-    PlannedStep,
+    ThinkStep,
     ThinkOutput,
     StepCompleteAction,
 )
@@ -83,16 +83,17 @@ class TestStateModels:
         assert output.steps[0].description == "Add item to inventory"
         assert output.steps[0].subdomain == "inventory"
 
-    def test_planned_step_with_step_type(self):
-        """PlannedStep should have step_type for different operations."""
-        step = PlannedStep(
+    def test_think_step_v3_types(self):
+        """ThinkStep should use V3 step types: read, analyze, generate, write."""
+        step = ThinkStep(
             description="Find matching recipes",
-            step_type="crud",
+            step_type="read",
             subdomain="recipes",
-            complexity="medium",
+            group=0,
         )
-        assert step.step_type == "crud"
+        assert step.step_type == "read"
         assert step.subdomain == "recipes"
+        assert step.group == 0
 
     def test_step_complete_action_creation(self):
         """StepCompleteAction should be creatable with result_summary."""

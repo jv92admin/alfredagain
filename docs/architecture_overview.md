@@ -1,8 +1,8 @@
-# Alfred V2 - Architecture Overview
+# Alfred V3 - Architecture Overview
 
 **Document Type:** Architecture Documentation  
-**Last Updated:** December 26, 2024  
-**Status:** Functional MVP with Dynamic Prompt Architecture
+**Last Updated:** January 2, 2026  
+**Status:** V3 with Entity Lifecycle, Step Type Taxonomy, and Group-Based Parallelization
 
 ---
 
@@ -12,7 +12,7 @@ Alfred is a **multi-agent conversational assistant** built on a LangGraph archit
 
 ### Agent Architecture
 
-The system is designed to support multiple specialized agents, with **Router** classifying user intent and dispatching to the appropriate agent:
+The system supports multiple specialized agents, with **Router** classifying user intent and dispatching to the appropriate agent:
 
 | Agent | Domain | Status |
 |-------|--------|--------|
@@ -20,60 +20,96 @@ The system is designed to support multiple specialized agents, with **Router** c
 | **Coach** | Fitness: workouts, nutrition tracking, goals | 🔲 Stub only |
 | **Cellar** | Wine: collection, pairings, tasting notes | 🔲 Stub only |
 
-The current implementation focuses on the **Pantry agent** as the proof-of-concept, but the architecture is agent-agnostic.
+The current implementation focuses on the **Pantry agent** as the proof-of-concept.
 
 ### Design Philosophy
 
 | Principle | Implementation |
 |-----------|----------------|
-| Trust the LLM | Few examples, clear instructions (vs. v1's 261 examples) |
-| Generic tools | 4 CRUD primitives instead of 40+ domain-specific tools |
+| Trust the LLM | Few examples, clear instructions |
+| Generic tools | 4 CRUD primitives instead of domain-specific tools |
 | Subdomain filtering | LLM sees only relevant tables per step |
 | Schema auto-generation | From database, never stale |
-| Natural conversation | LangGraph handles multi-turn natively |
 | Persona over rules | Identity-based guidance vs. exhaustive warnings |
+| Clear decision ownership | Each node has explicit responsibilities |
 
 ---
 
-## 2. Multi-Agent Structure
-
-### Graph Flow
+## 2. Graph Flow (V3)
 
 ```
-┌────────┐   ┌───────┐   ┌──────────────────┐   ┌───────┐   ┌───────────┐
-│ ROUTER │──▶│ THINK │──▶│     ACT LOOP     │──▶│ REPLY │──▶│ SUMMARIZE │
-└────────┘   └───────┘   │                  │   └───────┘   └───────────┘
-                         │ • Get schema     │
-                         │ • Inject persona │
-                         │ • Execute CRUD   │
-                         │ • Pass step notes│
-                         │ • Loop or exit   │
-                         └──────────────────┘
+┌────────┐   ┌────────────┐   ┌───────┐   ┌─────────────────┐   ┌───────┐   ┌───────────┐
+│ ROUTER │──▶│ UNDERSTAND │──▶│ THINK │──▶│    ACT LOOP     │──▶│ REPLY │──▶│ SUMMARIZE │
+└────────┘   └────────────┘   └───────┘   │                 │   └───────┘   └───────────┘
+                                          │ • Branch on     │
+                                          │   step_type     │
+                                          │ • Execute steps │
+                                          │ • Pass notes    │
+                                          │ • Archive       │
+                                          └─────────────────┘
 ```
 
 ### Node Responsibilities
 
-| Node | Purpose | Model Selection |
-|------|---------|-----------------|
-| **Router** | Classify intent, pick agent, set complexity | gpt-4.1-mini |
-| **Think** | Plan steps with subdomain hints | Varies by complexity |
-| **Act** | Execute steps via CRUD tools (loops within step) | Varies by complexity |
-| **Reply** | Synthesize user-facing response | gpt-4.1-mini |
-| **Summarize** | Compress conversation, track entities | gpt-4.1-mini |
+| Node | Purpose | Key Decisions |
+|------|---------|---------------|
+| **Router** | Classify intent, pick agent | `agent`, `goal`, `complexity` |
+| **Understand** | Detect signals, update entity states | `entity_updates`, `needs_clarification` |
+| **Think** | Plan steps with types and groups | `steps[]`, `decision` (plan_direct/propose/clarify) |
+| **Act** | Execute steps via CRUD or generate | `tool_call`, `step_complete` |
+| **Reply** | Synthesize user-facing response | Presentation format |
+| **Summarize** | Compress context, manage entities | `conversation`, `entity_registry` |
 
-### Step Types
-
-| Type | When Used | What Act Does |
-|------|-----------|---------------|
-| `crud` | Read, create, update, delete data | Executes db_read/create/update/delete |
-| `analyze` | Compare or reason over data | No DB calls — thinks and returns analysis |
-| `generate` | Create content (recipe, plan) | No DB calls — generates and returns |
+For detailed decision architecture, see [`decision_architecture.md`](decision_architecture.md).
 
 ---
 
-## 3. Dynamic Prompt Architecture
+## 3. Step Type Taxonomy (V3)
 
-Act prompts are dynamically constructed based on subdomain and step type.
+| Type | Purpose | DB Calls? | What Act Does |
+|------|---------|-----------|---------------|
+| `read` | Fetch data from database | Yes | Calls `db_read`, returns records |
+| `write` | Save EXISTING content | Yes | Calls `db_create/update/delete` |
+| `analyze` | Reason over prior step data | No | Returns analysis in `step_complete.data` |
+| `generate` | Create NEW content | No | Returns generated content in `step_complete.data` |
+
+**Key distinction:**
+- `generate` = LLM creates content that doesn't exist yet (recipes, plans, ideas)
+- `write` = Persist content that already exists (from prior generate, archive, or user input)
+
+### Group-Based Parallelization
+
+Steps with the same `group` value can run in parallel:
+
+```
+Group 0: [read recipes, read inventory]  ← parallel
+Group 1: [analyze: compare lists]        ← needs Group 0
+Group 2: [write shopping list]           ← needs Group 1
+```
+
+---
+
+## 4. Dynamic Prompt Architecture
+
+Act prompts are dynamically constructed based on step type and subdomain.
+
+### Prompt Layers
+
+1. **Base mechanics** (`prompts/act/base.md`) - Tools, actions, principles
+2. **Step-type rules** (`prompts/act/{step_type}.md`) - Type-specific guidance
+3. **Subdomain content** - Intro + persona from `schema.py`
+4. **Contextual examples** - Pattern injection from `examples.py`
+5. **Dynamic context** - Schema, prev results, archive, entities
+
+### Branch-Specific Injections
+
+| Input | read | write | analyze | generate |
+|-------|------|-------|---------|----------|
+| Schema | ✅ | ✅ | ❌ | ❌ |
+| Profile | ❌ | ❌ | ✅ | ✅ |
+| Archive | ✅ | ✅ | ✅ | ✅ |
+| Prev step results | ✅ | ✅ | ✅ | ✅ |
+| Contextual examples | ✅ | ✅ | ✅ | ✅ |
 
 ### Persona Groups
 
@@ -81,94 +117,55 @@ Act prompts are dynamically constructed based on subdomain and step type.
 |---------|------------|-------|
 | **Chef** | recipes | Creative generation, organizational CRUD, linked tables |
 | **Ops Manager** | inventory, shopping, preferences | Cataloging, normalization, deduplication |
-| **Planner** | meal_plan, tasks | Scheduling, dependencies, coordination |
-
-### Recipe CRUD vs Generate Split
-
-Recipes are uniquely complex — the Chef persona adapts:
-
-| Step Type | Mode | Focus |
-|-----------|------|-------|
-| **CRUD** | Organizational | Clean naming, useful tags, linked tables |
-| **Generate** | Creative | Flavor balance, dietary restrictions, personalization |
-
-### Step Notes
-
-CRUD steps can pass context to subsequent steps via `note_for_next_step`:
-
-```
-Step 1 (recipes): Creates recipe → note: "Recipe ID abc123"
-Step 2 (meal_plan): Sees note → Creates meal plan entry → note: "Meal plan xyz789"
-Step 3 (tasks): Sees note → Creates linked task
-```
-
-This enables multi-step workflows without re-reading data.
-
-### Contextual Examples
-
-Instead of static examples, relevant patterns are injected based on:
-- Step verb ("add", "delete", "create")
-- Subdomain context
-- Previous step's subdomain (cross-domain patterns)
-
-See [`docs/act_prompt_architecture.md`](act_prompt_architecture.md) for full details.
+| **Planner** | meal_plans, tasks | Scheduling, dependencies, coordination |
 
 ---
 
-## 4. Think → Act Data Flow
+## 5. Entity Lifecycle Management (V3)
 
-### What Think Outputs
+### Entity States
+
+| State | Meaning |
+|-------|---------|
+| `PENDING` | Generated but not saved to DB |
+| `ACTIVE` | Saved to DB, currently relevant |
+| `INACTIVE` | Superseded or garbage collected |
+
+### Entity Flow
+
+```
+generate step → PENDING entity (temp_id)
+    ↓
+write step → ACTIVE entity (real UUID)
+    ↓
+3 turns without reference → INACTIVE (garbage collected)
+```
+
+### Ghost Entity Prevention
+
+- Only entities from `db_read` or `db_write` sources are promoted to `active_entities`
+- `PENDING` entities from `generate`/`analyze` steps are NOT promoted
+- Prevents FK constraint violations from hallucinated IDs
+
+---
+
+## 6. Content Archive
+
+Generated content persists across turns for retrieval:
 
 ```python
-class PlannedStep(BaseModel):
-    description: str      # "Read all saved recipes"
-    step_type: str        # "crud" | "analyze" | "generate"
-    subdomain: str        # "recipes" | "inventory" | etc.
-    complexity: str       # "low" | "medium" | "high"
+# Turn 1: "create 3 pasta recipes"
+# → Recipes generated, archived under "generated_recipes"
+
+# Turn 2: "save those recipes"
+# → Act retrieves from archive, calls db_create
 ```
 
-### Dynamic Schema Injection
-
-Act receives **only the schema for the current step's subdomain**:
-
-```
-Step 1 (subdomain: recipes)     → Act sees: recipes, recipe_ingredients, ingredients
-Step 2 (subdomain: inventory)   → Act sees: inventory, ingredients
-Step 3 (subdomain: shopping)    → Act sees: shopping_list, ingredients
-```
-
-### Step Result Caching
-
-Each step's result is cached in `state.step_results[step_index]`:
-
-- **Last 2-3 steps:** Full data
-- **Older steps:** Summarized (table, count, sample IDs)
+Archive is available in **all step types** (read, write, analyze, generate).
 
 ---
 
-## 5. Model Routing
-
-### Complexity-Based Selection
-
-| Complexity | Model | Use Case |
-|------------|-------|----------|
-| **low** | gpt-4.1-mini | Simple CRUD, reads |
-| **medium** | gpt-4.1 | Cross-domain operations |
-| **high** | gpt-5.1 | Complex recipe generation, reasoning |
-
-### Automatic Escalation
-
-Think post-processes steps to auto-escalate complexity based on subdomain rules:
-
-```python
-# recipes mutations → high (linked tables)
-# meal_plan mutations → medium
-# simple reads → low (LLM decides)
-```
-
----
-
-## 6. Generic CRUD Tools
+## 7. Generic CRUD Tools
 
 | Tool | Purpose | Key Params |
 |------|---------|------------|
@@ -190,16 +187,60 @@ SUBDOMAIN_REGISTRY = {
     "inventory": ["inventory", "ingredients"],
     "recipes": ["recipes", "recipe_ingredients", "ingredients"],
     "shopping": ["shopping_list", "ingredients"],
-    "meal_plan": ["meal_plans", "tasks", "recipes"],
+    "meal_plans": ["meal_plans", "tasks", "recipes"],
     "tasks": ["tasks", "meal_plans", "recipes"],
     "preferences": ["preferences", "flavor_preferences"],
-    "history": ["cooking_log"],
 }
 ```
 
 ---
 
-## 7. Database Schema
+## 8. Model Routing
+
+### Complexity-Based Selection
+
+| Complexity | Model | Use Case |
+|------------|-------|----------|
+| **low** | gpt-4.1-mini | Simple reads, quick responses |
+| **medium** | gpt-4.1 | Cross-domain operations, context inference |
+| **high** | gpt-4.1 | Complex generation, multi-step reasoning |
+
+### Node Defaults
+
+| Node | Default Complexity |
+|------|-------------------|
+| Router | low |
+| Understand | medium |
+| Think | medium |
+| Act (read/write) | low |
+| Act (analyze/generate) | medium/high |
+| Reply | low |
+| Summarize | low |
+
+---
+
+## 9. Conversation Context Management
+
+### State Structure
+
+```python
+class ConversationContext:
+    engagement_summary: str      # "Helping with meal planning..."
+    recent_turns: list[dict]     # Last 3 full exchanges
+    history_summary: str         # Compressed older turns
+    active_entities: dict        # EntityRef tracking for "that recipe"
+```
+
+### Context Thresholds
+
+| Context Type | Token Budget | Used By |
+|--------------|--------------|---------|
+| Condensed | 8,000 | Router, Think |
+| Full | 25,000 | Act |
+
+---
+
+## 10. Database Schema
 
 ### Current Tables
 
@@ -208,91 +249,26 @@ SUBDOMAIN_REGISTRY = {
 | `users` | Authentication/identity | N/A |
 | `ingredients` | Master ingredient catalog (~2000 seeded) | No |
 | `inventory` | User's pantry items | Yes |
-| `recipes` | User's saved recipes (supports variations via `parent_recipe_id`) | Yes |
+| `recipes` | User's saved recipes | Yes |
 | `recipe_ingredients` | Recipe→ingredient linking | Yes |
-| `meal_plans` | Planned meals by date (breakfast/lunch/dinner/snack/other) | Yes |
-| `tasks` | Freeform to-dos, can link to meal_plan or recipe | Yes |
+| `meal_plans` | Planned meals by date | Yes |
+| `tasks` | To-dos, can link to meal_plan or recipe | Yes |
 | `shopping_list` | Shopping list items | Yes |
-| `preferences` | Dietary, allergies, equipment, time budget, skill | Yes |
-| `flavor_preferences` | Per-ingredient preference scores (auto-updated) | Yes |
+| `preferences` | Dietary, allergies, equipment | Yes |
+| `flavor_preferences` | Per-ingredient preference scores | Yes |
 | `cooking_log` | What was cooked, ratings, notes | Yes |
 
-### Preferences Fields
+### Linked Tables
 
-```sql
-dietary_restrictions TEXT[]     -- ["vegetarian", "low-sodium"]
-allergies TEXT[]               -- ["peanuts", "shellfish"]
-favorite_cuisines TEXT[]       -- ["italian", "indian"]
-disliked_ingredients TEXT[]    -- ["cilantro", "olives"]
-cooking_skill_level TEXT       -- 'beginner' | 'intermediate' | 'advanced'
-household_size INT             -- 2
-available_equipment TEXT[]     -- ["instant-pot", "air-fryer"]
-time_budget_minutes INT        -- 30
-nutrition_goals TEXT[]         -- ["high-protein", "low-carb"]
-```
-
-### Automated Triggers
-
-| Trigger | Action |
-|---------|--------|
-| `cooking_log` insert | Updates `flavor_preferences` for used ingredients |
+| Parent | Child | Relationship |
+|--------|-------|--------------|
+| `recipes` | `recipe_ingredients` | Always handled together |
+| `meal_plans` | `tasks` | Optional linking via meal_plan_id |
+| `recipes` | `meal_plans` | FK reference via recipe_id |
 
 ---
 
-## 8. Conversation Context Management
-
-### State Structure
-
-```python
-class ConversationContext:
-    engagement_summary: str      # "Helping with meal planning..."
-    recent_turns: list[dict]     # Last 2-3 full exchanges
-    history_summary: str         # Compressed older turns
-    active_entities: dict        # EntityRef tracking for "that recipe"
-```
-
-### Entity Tracking
-
-```python
-class EntityRef:
-    type: str      # "recipe", "ingredient", "meal_plan", "task"
-    id: str        # UUID
-    label: str     # "Butter Chicken" (human-readable)
-    source: str    # "db_lookup", "user_input", "generated"
-```
-
-Enables resolution of "that recipe", "those ingredients", etc.
-
-### Content Archive
-
-Generated content (recipes, meal plans) is archived for cross-turn retrieval:
-
-```python
-# User: "create a pasta recipe"
-# → Recipe generated, archived under "generated_recipes"
-
-# User: "save that recipe" (next turn)
-# → Act retrieves from archive without regenerating
-```
-
----
-
-## 9. User Profile Injection
-
-Generate and Analyze steps receive a compact user profile:
-
-```markdown
-## USER PROFILE
-- Household: 2 | Diet: vegetarian | Allergies: peanuts
-- Equipment: instant-pot, air-fryer | Time: 30 min
-- Skill: beginner
-```
-
-This enables personalized recipe generation without verbose preference reads.
-
----
-
-## 10. What Works Well
+## 11. What Works Well
 
 | Capability | Status |
 |------------|--------|
@@ -304,66 +280,70 @@ This enables personalized recipe generation without verbose preference reads.
 | Shopping list management | ✅ Works |
 | Meal planning with recipe linking | ✅ Works |
 | Task creation linked to meal plans | ✅ Works |
-| Recipe variations (parent_recipe_id) | ✅ Works |
 | Multi-turn conversation with context | ✅ Works |
 | Entity tracking ("that recipe") | ✅ Works |
-| Cross-turn content retrieval | ✅ Works |
+| Cross-turn content retrieval (archive) | ✅ Works |
 | Dynamic persona injection | ✅ Works |
 | Step notes for multi-step workflows | ✅ Works |
-
----
-
-## 11. Deployment
-
-| Component | Platform |
-|-----------|----------|
-| Backend | Railway |
-| Database | Supabase (Postgres) |
-| Vectors | Supabase pgvector (seeded, not yet used for search) |
-| Auth | Supabase Auth (basic) |
-| UI | FastAPI web server (dev/testing) |
-| Observability | LangSmith integration |
+| Parallel step execution (same group) | ✅ Works |
+| Generate → Write separation | ✅ Works |
 
 ---
 
 ## 12. File Structure
 
 ```
-alfred-v2/
+alfred/
 ├── src/alfred/
+│   ├── core/
+│   │   ├── entities.py       # EntityRegistry, lifecycle
+│   │   └── modes.py          # Mode definitions
 │   ├── graph/
-│   │   ├── state.py          # AlfredState, step notes, content archive
+│   │   ├── state.py          # AlfredState, ThinkStep, ThinkOutput
 │   │   ├── workflow.py       # LangGraph definition
 │   │   └── nodes/
 │   │       ├── router.py
-│   │       ├── think.py      # Complexity adjustment
-│   │       ├── act.py        # Dynamic prompt construction
+│   │       ├── understand.py # V3: Entity resolution
+│   │       ├── think.py      # V3: Step types + groups
+│   │       ├── act.py        # V3: Branch on step_type
 │   │       ├── reply.py
 │   │       └── summarize.py
 │   ├── tools/
 │   │   ├── crud.py           # db_read, db_create, db_update, db_delete
-│   │   └── schema.py         # Personas, scope config, contextual examples
+│   │   └── schema.py         # Subdomain registry, schema generation
+│   ├── prompts/
+│   │   ├── injection.py      # Dynamic prompt assembly
+│   │   ├── personas.py       # Subdomain personas
+│   │   └── examples.py       # Contextual pattern injection
 │   ├── llm/
 │   │   ├── client.py         # Instructor-wrapped OpenAI
-│   │   ├── model_router.py   # Complexity → model mapping
-│   │   └── prompt_logger.py  # Debug logging
+│   │   └── model_router.py   # Complexity → model mapping
 │   ├── memory/
 │   │   └── conversation.py   # Context formatting, entity extraction
-│   ├── db/
-│   │   └── client.py         # Supabase client
-│   └── web/
-│       └── app.py            # FastAPI dev UI
+│   ├── observability/
+│   │   └── session_logger.py # JSONL session logging
+│   └── background/
+│       └── profile_builder.py # Cached profile/dashboard
 ├── prompts/
 │   ├── router.md
-│   ├── think.md
-│   ├── act.md                # Core mechanics only (slim)
-│   └── reply.md
-├── scripts/
-│   └── seed_ingredients.py   # Open Food Facts seeding
-├── migrations/
-│   └── *.sql                 # 13 migrations
+│   ├── understand.md         # V3
+│   ├── think.md              # V3: Step types table
+│   ├── act/
+│   │   ├── base.md           # Core mechanics
+│   │   ├── read.md
+│   │   ├── write.md
+│   │   ├── analyze.md
+│   │   └── generate.md
+│   ├── reply.md
+│   └── summarize.md
 └── docs/
-    ├── architecture_overview.md      # This document
-    ├── act_prompt_architecture.md    # Dynamic prompt details
-    └── ux_learnings.md               # UX observations
+    ├── architecture_overview.md   # This document
+    └── decision_architecture.md   # Decision point reference
 ```
+
+---
+
+## 13. Related Documentation
+
+- [`decision_architecture.md`](decision_architecture.md) - Decision points, inputs/outputs, step type taxonomy
+- [`act_prompt_architecture.md`](act_prompt_architecture.md) - Dynamic prompt construction details

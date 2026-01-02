@@ -1,23 +1,33 @@
 """
-Alfred V2 - Act Node.
+Alfred V3 - Act Node.
 
 The Act node executes the plan step by step using generic CRUD tools.
 For each step, it:
-1. Gets the schema for the step's subdomain
-2. Decides which CRUD operation to perform
+1. Gets step_type-specific prompt sections via injection.py
+2. Decides which CRUD operation to perform (for read/write steps)
 3. Executes and caches the result
+4. Tags entities at creation for lifecycle tracking
 
-Now includes full conversation context (last 2 turns, last 2 steps full data).
+V3 Changes:
+- Step-type-specific prompts (read/analyze/generate/write)
+- Entity tagging at creation (pending/active states)
+- Group-based results for parallelization
+- Mode-aware prompt verbosity
 
 Each iteration emits a structured action.
 """
 
+import logging
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
+from alfred.core.entities import Entity, EntityState
+from alfred.core.modes import Mode, ModeContext
 from alfred.graph.state import (
     ACT_CONTEXT_THRESHOLD,
     FULL_DETAIL_STEPS,
@@ -26,7 +36,7 @@ from alfred.graph.state import (
     AskUserAction,
     BlockedAction,
     FailAction,
-    PlannedStep,
+    ThinkStep,
     RequestSchemaAction,
     RetrieveStepAction,
     StepCompleteAction,
@@ -35,52 +45,105 @@ from alfred.graph.state import (
 from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
+from alfred.prompts.injection import build_act_prompt
 from alfred.tools.crud import execute_crud
-from alfred.tools.schema import (
-    get_schema_with_fallback,
-    get_persona_for_subdomain,
+from alfred.tools.schema import get_schema_with_fallback
+from alfred.prompts.personas import (
+    get_persona_for_subdomain, 
     get_scope_for_subdomain,
-    get_contextual_examples,
+    get_subdomain_intro,
+    get_full_subdomain_content,
 )
+from alfred.prompts.examples import get_contextual_examples
 
-# Entity types to track across steps (user-suggested focus)
-# These are the ones that commonly get linked to each other
-TRACKED_ENTITY_TYPES = {"recipes", "meal_plans", "tasks"}
+# Entity types to track across steps
+TRACKED_ENTITY_TYPES = {"recipes", "meal_plans", "tasks", "recipe", "meal_plan", "task"}
 
 
-def _extract_turn_entities(step_data: Any, step_index: int) -> list[dict]:
+def _extract_turn_entities(
+    step_data: Any, 
+    step_index: int, 
+    step_type: str,
+    current_turn: int,
+) -> list[Entity]:
     """
-    Extract key entity IDs from step results for cross-step reference.
+    Extract and tag entities from step results for lifecycle tracking.
     
-    Only tracks recipes, meal_plans, and tasks (the ones that link to each other).
-    Returns list of {type, id, label, step} dicts.
+    V3: Returns Entity objects with proper state tagging:
+    - db_read results → state=active (from DB, already exists)
+    - generate results → state=pending (awaiting confirmation)
+    - write results → state=pending (until confirmed)
     """
-    entities = []
+    entities: list[Entity] = []
+    
+    # Determine source and state based on step_type
+    if step_type == "read":
+        source = "db_read"
+        default_state = EntityState.ACTIVE
+    elif step_type == "generate":
+        source = "generate"
+        default_state = EntityState.PENDING
+    elif step_type == "write":
+        source = "db_write"
+        default_state = EntityState.PENDING  # Until user confirms
+    else:  # analyze
+        source = "analyze"
+        default_state = EntityState.PENDING
     
     def extract_from_record(record: dict, table: str | None = None) -> None:
-        if not isinstance(record, dict) or "id" not in record:
+        if not isinstance(record, dict):
             return
-        # Infer table from record if not provided
-        if table is None:
-            # Try to infer from keys
-            if "recipe_id" in record or "instructions" in record:
-                table = "recipes"
-            elif "meal_type" in record and "date" in record:
-                table = "meal_plans"
-            elif "title" in record and ("due_date" in record or "category" in record):
-                table = "tasks"
         
-        if table in TRACKED_ENTITY_TYPES:
-            entities.append({
-                "type": table,
-                "id": str(record["id"]),
-                "label": record.get("name") or record.get("title") or str(record["id"])[:8],
-                "step": step_index,
-            })
+        # Get ID (could be real UUID or temp_id)
+        record_id = record.get("id") or record.get("temp_id")
+        if not record_id:
+            return
+            
+        # Infer table/type from record if not provided
+        entity_type = table
+        if entity_type is None:
+            if "recipe_id" in record or "instructions" in record:
+                entity_type = "recipe"
+            elif "meal_type" in record and "date" in record:
+                entity_type = "meal_plan"
+            elif "title" in record and ("due_date" in record or "category" in record):
+                entity_type = "task"
+            elif record.get("type"):
+                entity_type = record["type"]
+        
+        # Normalize table names to entity types
+        if entity_type == "recipes":
+            entity_type = "recipe"
+        elif entity_type == "meal_plans":
+            entity_type = "meal_plan"
+        elif entity_type == "tasks":
+            entity_type = "task"
+        
+        if entity_type:
+            # Determine state from record if specified
+            state = default_state
+            if "state" in record:
+                try:
+                    state = EntityState(record["state"])
+                except ValueError:
+                    pass
+            
+            entity = Entity(
+                id=str(record_id),
+                type=entity_type,
+                label=record.get("name") or record.get("title") or record.get("label") or str(record_id)[:8],
+                state=state,
+                source=source,
+                turn_created=current_turn,
+                turn_last_ref=current_turn,
+                subdomain=table,
+                data=record if step_type == "generate" else None,  # Keep full data for generated content
+            )
+            entities.append(entity)
     
     def process_item(item: Any, table: str | None = None) -> None:
         if isinstance(item, dict):
-            if "id" in item:
+            if "id" in item or "temp_id" in item:
                 extract_from_record(item, table)
             else:
                 # Check for nested collections like {"recipes": [...]}
@@ -88,6 +151,8 @@ def _extract_turn_entities(step_data: Any, step_index: int) -> list[dict]:
                     if isinstance(val, list):
                         for v in val:
                             process_item(v, key)
+                    elif isinstance(val, dict):
+                        process_item(val, key)
         elif isinstance(item, list):
             for v in item:
                 process_item(v, table)
@@ -110,7 +175,7 @@ def _extract_turn_entities(step_data: Any, step_index: int) -> list[dict]:
     return entities
 
 
-def _format_turn_entities(turn_entities: list[dict]) -> str:
+def _format_turn_entities(turn_entities: list[Entity | dict]) -> str:
     """Format accumulated turn entities for Act's prompt."""
     if not turn_entities:
         return ""
@@ -120,15 +185,23 @@ def _format_turn_entities(turn_entities: list[dict]) -> str:
     # Group by type for readability
     by_type: dict[str, list[dict]] = {}
     for e in turn_entities:
-        etype = e["type"]
+        # Handle both Entity objects and dicts
+        if isinstance(e, Entity):
+            etype = e.type
+            ref = {"id": e.id, "label": e.label, "state": e.state.value}
+        else:
+            etype = e.get("type", "unknown")
+            ref = e
+        
         if etype not in by_type:
             by_type[etype] = []
-        by_type[etype].append(e)
+        by_type[etype].append(ref)
     
     for etype, ents in by_type.items():
         lines.append(f"**{etype}:**")
         for e in ents:
-            lines.append(f"  - `{e['id']}` — {e['label']} (step {e['step'] + 1})")
+            state_badge = f" [{e.get('state', 'active')}]" if e.get('state') else ""
+            lines.append(f"  - `{e['id']}` — {e.get('label', 'unnamed')}{state_badge}")
     
     return "\n".join(lines)
 
@@ -158,7 +231,11 @@ def _fix_and_validate_tool_params(tool: str, params: dict) -> tuple[dict, str | 
     # Fix filters array - remove misplaced strings like "limit", "columns"
     if "filters" in fixed:
         filters = fixed["filters"]
-        if not isinstance(filters, list):
+        # Auto-fix: empty dict {} → empty list [] (common LLM confusion)
+        if isinstance(filters, dict) and len(filters) == 0:
+            fixed["filters"] = []
+            filters = []
+        elif not isinstance(filters, list):
             return params, f"filters must be a list, got {type(filters).__name__}"
         
         # Extract valid filter dicts, log what we removed
@@ -182,7 +259,11 @@ def _fix_and_validate_tool_params(tool: str, params: dict) -> tuple[dict, str | 
     # Fix or_filters similarly
     if "or_filters" in fixed:
         or_filters = fixed["or_filters"]
-        if not isinstance(or_filters, list):
+        # Auto-fix: empty dict {} → empty list []
+        if isinstance(or_filters, dict) and len(or_filters) == 0:
+            fixed["or_filters"] = []
+            or_filters = []
+        elif not isinstance(or_filters, list):
             return params, f"or_filters must be a list, got {type(or_filters).__name__}"
         
         valid_or_filters = []
@@ -319,19 +400,40 @@ def _decision_to_action(decision: ActDecision) -> ActAction:
 # Act Node
 # =============================================================================
 
-# Load prompt once at module level
-_PROMPT_PATH = (
-    Path(__file__).parent.parent.parent.parent.parent / "prompts" / "act.md"
-)
-_SYSTEM_PROMPT: str | None = None
+# Prompt paths
+_PROMPTS_DIR = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "act"
+
+# Cache for loaded prompts
+_PROMPT_CACHE: dict[str, str] = {}
 
 
-def _get_system_prompt() -> str:
-    """Load the act system prompt."""
-    global _SYSTEM_PROMPT
-    if _SYSTEM_PROMPT is None:
-        _SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
-    return _SYSTEM_PROMPT
+def _load_prompt(filename: str) -> str:
+    """Load a prompt file from prompts/act/ directory."""
+    if filename not in _PROMPT_CACHE:
+        path = _PROMPTS_DIR / filename
+        if path.exists():
+            _PROMPT_CACHE[filename] = path.read_text(encoding="utf-8")
+        else:
+            _PROMPT_CACHE[filename] = ""
+    return _PROMPT_CACHE[filename]
+
+
+def _get_system_prompt(step_type: str = "read") -> str:
+    """
+    Build the Act system prompt from layers.
+    
+    Layers:
+    1. base.md - Universal role, tools, principles
+    2. {step_type}.md - Mechanics for this step type
+    
+    Subdomain content is added to user_prompt, not system_prompt.
+    """
+    base = _load_prompt("base.md")
+    step_type_content = _load_prompt(f"{step_type}.md")
+    
+    if step_type_content:
+        return f"{base}\n\n---\n\n{step_type_content}"
+    return base
 
 
 def _format_step_results(step_results: dict[int, Any], current_index: int) -> str:
@@ -507,7 +609,8 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
 
 
 # Maximum tool calls allowed within a single step (circuit breaker)
-MAX_TOOL_CALLS_PER_STEP = 5
+# 3 is enough for: read main → read related → complete (or retry once)
+MAX_TOOL_CALLS_PER_STEP = 3
 
 
 async def act_node(state: AlfredState) -> dict:
@@ -559,6 +662,31 @@ async def act_node(state: AlfredState) -> dict:
             "current_step_tool_results": [],
             "schema_requests": 0,
         }
+    
+    # Duplicate empty query detection - if same table returned empty twice, force completion
+    if len(current_step_tool_results) >= 2:
+        empty_tables = set()
+        for item in current_step_tool_results:
+            if len(item) >= 3:
+                tool_name, table, result = item[0], item[1], item[2]
+                if tool_name == "db_read" and (result == [] or result is None):
+                    if table in empty_tables:
+                        # Same table queried twice with empty results - stop retrying
+                        logger.info(f"Act: Duplicate empty query on {table}, forcing step completion")
+                        step_data = current_step_tool_results
+                        new_step_results = step_results.copy()
+                        new_step_results[current_step_index] = step_data
+                        return {
+                            "pending_action": StepCompleteAction(
+                                result_summary=f"Step completed (no data found in {table})",
+                                data=step_data,
+                            ),
+                            "current_step_index": current_step_index + 1,
+                            "step_results": new_step_results,
+                            "current_step_tool_results": [],
+                            "schema_requests": 0,
+                        }
+                    empty_tables.add(table)
 
     # Set node name for prompt logging
     set_current_node("act")
@@ -579,10 +707,10 @@ async def act_node(state: AlfredState) -> dict:
             "pending_action": None,  # Signal completion
         }
 
-    current_step: PlannedStep = steps[current_step_index]
+    current_step: ThinkStep = steps[current_step_index]  # type: ignore
 
-    # Get step type (default to crud for backwards compatibility)
-    step_type = getattr(current_step, "step_type", "crud")
+    # Get step type (V3: read/analyze/generate/write)
+    step_type = getattr(current_step, "step_type", "read")
     tool_calls_made = len(current_step_tool_results)
 
     # Build context sections
@@ -652,7 +780,9 @@ async def act_node(state: AlfredState) -> dict:
     today = date.today().isoformat()
     
     if step_type == "analyze":
-        # Get analysis guidance based on subdomain
+        # Get subdomain content and analysis guidance
+        subdomain_content = get_full_subdomain_content(current_step.subdomain, "analyze")
+        
         prev_subdomain = None
         if current_step_index > 0 and think_output and len(think_output.steps) > current_step_index - 1:
             prev_subdomain = think_output.steps[current_step_index - 1].subdomain
@@ -664,7 +794,15 @@ async def act_node(state: AlfredState) -> dict:
             step_type="analyze",
         )
         
-        user_prompt = f"""## STATUS
+        subdomain_header = ""
+        if subdomain_content:
+            subdomain_header = f"""{subdomain_content}
+
+---
+
+"""
+        
+        user_prompt = f"""{subdomain_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | analyze (no db calls) |
@@ -690,7 +828,7 @@ Your job this step: **{current_step.description}**
 
 {turn_entities_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
 
----
+{archive_section}---
 
 ## 3. Context
 
@@ -704,13 +842,11 @@ Analyze the data above and complete the step:
 `{{"action": "step_complete", "result_summary": "Analysis: ...", "data": {{"key": "value"}}}}`"""
 
     elif step_type == "generate":
-        # Get persona for generate step (only recipes has a different generate persona)
-        generate_persona = get_persona_for_subdomain(current_step.subdomain, step_type="generate")
-        persona_header = ""
-        if generate_persona:
-            persona_header = f"""## Persona
-
-{generate_persona}
+        # Get subdomain content (intro + generate persona)
+        subdomain_content = get_full_subdomain_content(current_step.subdomain, "generate")
+        subdomain_header = ""
+        if subdomain_content:
+            subdomain_header = f"""{subdomain_content}
 
 ---
 
@@ -724,7 +860,7 @@ Analyze the data above and complete the step:
             step_type="generate",
         )
         
-        user_prompt = f"""{persona_header}## STATUS
+        user_prompt = f"""{subdomain_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | generate (create content, no db calls) |
@@ -750,7 +886,7 @@ Your job this step: **{current_step.description}**
 
 {turn_entities_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
 
----
+{archive_section}---
 
 ## 3. Context
 
@@ -764,12 +900,11 @@ Generate the requested content and complete the step:
 `{{"action": "step_complete", "result_summary": "Generated: ...", "data": {{"your_content": "here"}}}}`"""
 
     else:
-        # CRUD step - needs schema as primary resource
+        # Read/write step - needs schema as primary resource
         subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
         
-        # Get dynamic persona and scope for this subdomain
-        persona_section = get_persona_for_subdomain(current_step.subdomain, step_type="crud")
-        scope_section = get_scope_for_subdomain(current_step.subdomain)
+        # Get combined subdomain content (intro + step-type persona)
+        subdomain_content = get_full_subdomain_content(current_step.subdomain, step_type)
         
         # Get previous step's subdomain for cross-domain pattern detection
         prev_subdomain = None
@@ -811,20 +946,10 @@ Generate the requested content and complete the step:
 
 """
         
-        # Build persona/scope header (dynamic, at top for orientation)
+        # Build subdomain header (intro + step-type persona)
         dynamic_header = ""
-        if persona_section:
-            dynamic_header += f"""## Persona
-
-{persona_section}
-
----
-
-"""
-        if scope_section:
-            dynamic_header += f"""## Scope
-
-{scope_section}
+        if subdomain_content:
+            dynamic_header = f"""{subdomain_content}
 
 ---
 
@@ -833,7 +958,7 @@ Generate the requested content and complete the step:
         user_prompt = f"""{dynamic_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
-| Type | crud |
+| Type | {step_type} |
 | Progress | {tool_calls_made} tool calls{last_tool_summary} |
 | Today | {today} |
 
@@ -865,7 +990,7 @@ Your job this step: **{current_step.description}**
 
 {turn_entities_section}{prev_step_section if prev_step_section else "*No previous steps.*"}
 
----
+{archive_section}---
 
 ## 5. Context
 
@@ -885,7 +1010,7 @@ What's next?
     # Call LLM for decision (step_results are already in the prompt)
     decision = await call_llm(
         response_model=ActDecision,
-        system_prompt=_get_system_prompt(),
+        system_prompt=_get_system_prompt(step_type),
         user_prompt=user_prompt,
         complexity=current_step.complexity,
     )
@@ -1021,9 +1146,9 @@ What's next?
 
     # Handle step_complete - NOW we advance the step
     if decision.action == "step_complete":
-        # For CRUD steps: keep the actual tool results (not LLM's summary)
+        # For read/write steps: keep the actual tool results (not LLM's summary)
         # For analyze/generate: use decision.data (LLM's output IS the result)
-        if step_type == "crud" and current_step_tool_results:
+        if step_type in ("read", "write") and current_step_tool_results:
             # Preserve actual DB results - critical for later analyze steps
             step_data = current_step_tool_results
         elif decision.data is not None:
@@ -1035,9 +1160,9 @@ What's next?
         new_step_results = step_results.copy()
         new_step_results[current_step_index] = step_data
 
-        # Extract note for next step (CRUD steps only)
+        # Extract note for next step (read/write steps only)
         note_for_next = None
-        if step_type == "crud" and hasattr(decision, 'note_for_next_step'):
+        if step_type in ("read", "write") and hasattr(decision, 'note_for_next_step'):
             note_for_next = decision.note_for_next_step
 
         action = StepCompleteAction(
@@ -1068,10 +1193,19 @@ What's next?
                 "data": step_data,
             }
 
-        # Extract entities from this step for cross-step reference
-        new_entities = _extract_turn_entities(step_data, current_step_index)
+        # V3: Extract and tag entities for lifecycle tracking
+        current_turn = state.get("current_turn", 0)
+        new_entities = _extract_turn_entities(
+            step_data, 
+            current_step_index, 
+            step_type,
+            current_turn,
+        )
+        
+        # Convert to dicts for state storage
         existing_entities = state.get("turn_entities", [])
-        accumulated_entities = existing_entities + new_entities
+        new_entity_dicts = [e.to_dict() for e in new_entities]
+        accumulated_entities = existing_entities + new_entity_dicts
 
         return {
             "pending_action": action,
