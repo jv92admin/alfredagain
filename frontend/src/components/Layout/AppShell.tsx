@@ -99,7 +99,6 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
           <h1 className="text-lg font-light tracking-[2px] text-[var(--color-accent)]">
             ALFRED
           </h1>
-          <div className="w-8" /> {/* Spacer */}
         </header>
 
         {/* Page Content - Scrollable */}
@@ -196,4 +195,3 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
     </div>
   )
 }
-

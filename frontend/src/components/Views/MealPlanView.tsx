@@ -9,28 +9,58 @@ interface MealPlan {
   servings: number | null
 }
 
+interface Recipe {
+  id: string
+  name: string
+}
+
 interface MealPlanViewProps {
   onOpenFocus: (item: { type: string; id: string }) => void
 }
 
 export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
   const [mealPlans, setMealPlans] = useState<MealPlan[]>([])
+  const [recipes, setRecipes] = useState<Record<string, Recipe>>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchMealPlans()
+    fetchData()
   }, [])
 
-  const fetchMealPlans = async () => {
+  const fetchData = async () => {
     try {
-      const res = await fetch('/api/tables/meal_plans', { credentials: 'include' })
-      const data = await res.json()
-      setMealPlans(data.data || [])
+      // Fetch meal plans and recipes in parallel
+      const [mealRes, recipeRes] = await Promise.all([
+        fetch('/api/tables/meal_plans', { credentials: 'include' }),
+        fetch('/api/tables/recipes', { credentials: 'include' }),
+      ])
+      
+      const mealData = await mealRes.json()
+      const recipeData = await recipeRes.json()
+      
+      setMealPlans(mealData.data || [])
+      
+      // Build recipe lookup map by ID
+      const recipeMap: Record<string, Recipe> = {}
+      for (const recipe of recipeData.data || []) {
+        recipeMap[recipe.id] = recipe
+      }
+      setRecipes(recipeMap)
     } catch (err) {
-      console.error('Failed to fetch meal plans:', err)
+      console.error('Failed to fetch data:', err)
     } finally {
       setLoading(false)
     }
+  }
+
+  const getDisplayName = (plan: MealPlan): { text: string; isRecipe: boolean; recipeId?: string } => {
+    if (plan.recipe_id && recipes[plan.recipe_id]) {
+      return { text: recipes[plan.recipe_id].name, isRecipe: true, recipeId: plan.recipe_id }
+    }
+    if (plan.notes) {
+      return { text: plan.notes, isRecipe: false }
+    }
+    return { text: '(No meal assigned)', isRecipe: false }
   }
 
   if (loading) {
@@ -78,27 +108,41 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
               })}
             </h2>
             <div className="space-y-2">
-              {plans.map((plan) => (
-                <button
-                  key={plan.id}
-                  onClick={() => onOpenFocus({ type: 'meal_plan', id: plan.id })}
-                  className="w-full text-left bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 hover:border-[var(--color-accent)] transition-colors flex items-center justify-between"
-                >
-                  <div>
-                    <span className="px-2 py-0.5 bg-[var(--color-accent-muted)] text-[var(--color-accent)] rounded-[var(--radius-sm)] text-sm capitalize">
-                      {plan.meal_type}
-                    </span>
-                    <span className="ml-3 text-[var(--color-text-primary)]">
-                      {plan.notes || '(No recipe assigned)'}
-                    </span>
-                  </div>
-                  {plan.servings && (
-                    <span className="text-sm text-[var(--color-text-muted)]">
-                      {plan.servings} servings
-                    </span>
-                  )}
-                </button>
-              ))}
+              {plans.map((plan) => {
+                const display = getDisplayName(plan)
+                return (
+                  <button
+                    key={plan.id}
+                    onClick={() => onOpenFocus({ type: 'meal_plan', id: plan.id })}
+                    className="w-full text-left bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 hover:border-[var(--color-accent)] transition-colors flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="px-2 py-0.5 bg-[var(--color-accent-muted)] text-[var(--color-accent)] rounded-[var(--radius-sm)] text-sm capitalize">
+                        {plan.meal_type}
+                      </span>
+                      <span className="text-[var(--color-text-primary)]">
+                        {display.text}
+                      </span>
+                      {display.isRecipe && (
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onOpenFocus({ type: 'recipe', id: display.recipeId! })
+                          }}
+                          className="text-xs text-[var(--color-accent)] hover:underline cursor-pointer"
+                        >
+                          View Recipe →
+                        </span>
+                      )}
+                    </div>
+                    {plan.servings && (
+                      <span className="text-sm text-[var(--color-text-muted)]">
+                        {plan.servings} servings
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </div>
         ))}
@@ -106,4 +150,3 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
     </div>
   )
 }
-

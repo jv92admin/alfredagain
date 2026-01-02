@@ -3,16 +3,19 @@ import { useNavigate } from 'react-router-dom'
 import { MentionCard } from './MentionCard'
 import { EntityCard } from './EntityCard'
 
+export interface Entity {
+  type: string
+  id: string
+  name: string
+  action?: string
+  state?: 'pending' | 'active' // V3 entity state
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
-  entities?: Array<{
-    type: string
-    id: string
-    name: string
-    action?: string
-  }>
+  entities?: Entity[]
 }
 
 interface MessageBubbleProps {
@@ -59,13 +62,42 @@ function parseContent(content: string, onOpenFocus: (item: { type: string; id: s
   return parts.length > 0 ? parts : [content]
 }
 
+// V3: Entity state badge component
+function EntityBadge({ entity, onOpenFocus }: { entity: Entity; onOpenFocus: (item: { type: string; id: string }) => void }) {
+  const isPending = entity.state === 'pending'
+  
+  // Route mapping for clickable entities
+  const isClickable = ['recipes', 'meal_plans'].includes(entity.type)
+  const focusType = entity.type === 'recipes' ? 'recipe' : entity.type === 'meal_plans' ? 'meal_plan' : entity.type
+  
+  return (
+    <span
+      onClick={isClickable ? () => onOpenFocus({ type: focusType, id: entity.id }) : undefined}
+      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-[var(--radius-sm)] text-xs ${
+        isPending
+          ? 'bg-amber-500/10 border border-dashed border-amber-500/50 text-amber-400'
+          : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+      } ${isClickable ? 'cursor-pointer hover:opacity-80' : ''}`}
+    >
+      <span className="font-medium">{entity.name}</span>
+      <span className={`text-[10px] uppercase tracking-wide ${isPending ? 'text-amber-500/70' : 'text-emerald-500/70'}`}>
+        {isPending ? 'proposed' : 'saved'}
+      </span>
+    </span>
+  )
+}
+
 export function MessageBubble({ message, onOpenFocus }: MessageBubbleProps) {
   const navigate = useNavigate()
   const isUser = message.role === 'user'
 
-  // Filter entities for aggregate cards
+  // V3: Separate entities with state (for badges) vs without (for aggregate cards)
+  const entitiesWithState = message.entities?.filter(e => e.state) || []
+  const entitiesWithoutState = message.entities?.filter(e => !e.state) || []
+
+  // Filter entities for aggregate cards (legacy behavior)
   // Exclude: recipes, meal_plans (inline mentions), recipe_ingredients (internal to recipes)
-  const aggregateEntities = message.entities?.filter(
+  const aggregateEntities = entitiesWithoutState?.filter(
     (e) => !['recipes', 'meal_plans', 'recipe_ingredients'].includes(e.type)
   )
 
@@ -98,7 +130,16 @@ export function MessageBubble({ message, onOpenFocus }: MessageBubbleProps) {
           {parseContent(message.content, onOpenFocus)}
         </div>
 
-        {/* Aggregate entity cards */}
+        {/* V3: Entity state badges */}
+        {entitiesWithState.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {entitiesWithState.map((entity, i) => (
+              <EntityBadge key={`${entity.id}-${i}`} entity={entity} onOpenFocus={onOpenFocus} />
+            ))}
+          </div>
+        )}
+
+        {/* Aggregate entity cards (legacy) */}
         {entityCounts && Object.keys(entityCounts).length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3">
             {Object.entries(entityCounts).map(([type, count]) => (
@@ -125,4 +166,3 @@ export function MessageBubble({ message, onOpenFocus }: MessageBubbleProps) {
     </div>
   )
 }
-

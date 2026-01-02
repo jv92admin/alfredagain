@@ -12,6 +12,9 @@ import { TasksView } from './components/Views/TasksView'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { useAuth } from './hooks/useAuth'
 
+// V3 Mode types
+export type Mode = 'quick' | 'plan'
+
 const INITIAL_MESSAGE: Message = {
   id: '1',
   role: 'assistant',
@@ -22,6 +25,7 @@ function App() {
   const { user, loading, checkAuth } = useAuth()
   const [focusItem, setFocusItem] = useState<{ type: string; id: string } | null>(null)
   const [chatMessages, setChatMessages] = useState<Message[]>([INITIAL_MESSAGE])
+  const [mode, setMode] = useState<Mode>('plan') // V3: Default to plan mode
 
   useEffect(() => {
     checkAuth()
@@ -47,7 +51,7 @@ function App() {
     <>
       <AppShell user={user} onNewChat={handleNewChat}>
         <Routes>
-          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} />} />
+          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} onModeChange={setMode} />} />
           <Route path="/recipes" element={<RecipesView onOpenFocus={setFocusItem} />} />
           <Route path="/meals" element={<MealPlanView onOpenFocus={setFocusItem} />} />
           <Route path="/inventory" element={<InventoryView />} />
@@ -69,4 +73,3 @@ function App() {
 }
 
 export default App
-

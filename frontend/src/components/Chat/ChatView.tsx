@@ -2,11 +2,14 @@ import { useState, useRef, useEffect, FormEvent, Dispatch, SetStateAction } from
 import { MessageBubble, Message } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { ProgressTrail, ProgressStep } from './ProgressTrail'
+import { Mode } from '../../App'
 
 interface ChatViewProps {
   messages: Message[]
   setMessages: Dispatch<SetStateAction<Message[]>>
   onOpenFocus: (item: { type: string; id: string }) => void
+  mode: Mode
+  onModeChange: (mode: Mode) => void
 }
 
 interface AffectedEntity {
@@ -14,9 +17,10 @@ interface AffectedEntity {
   id: string
   name: string
   action?: string
+  state?: 'pending' | 'active' // V3 entity state
 }
 
-export function ChatView({ messages, setMessages, onOpenFocus }: ChatViewProps) {
+export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChange }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<ProgressStep[]>([])
@@ -37,7 +41,7 @@ export function ChatView({ messages, setMessages, onOpenFocus }: ChatViewProps) 
     const userMessage = input.trim()
     setInput('')
     setLoading(true)
-    setProgress([{ label: 'Planning...', status: 'active' }])
+    setProgress([{ label: mode === 'quick' ? 'Working...' : 'Planning...', status: 'active' }])
 
     // Add user message
     const userMsg: Message = {
@@ -51,7 +55,11 @@ export function ChatView({ messages, setMessages, onOpenFocus }: ChatViewProps) 
       const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, log_prompts: true }),
+        body: JSON.stringify({ 
+          message: userMessage, 
+          log_prompts: true,
+          mode: mode, // V3: Pass mode to backend
+        }),
         credentials: 'include',
       })
 
@@ -109,16 +117,46 @@ export function ChatView({ messages, setMessages, onOpenFocus }: ChatViewProps) 
                   }))
                 )
               } else if (data.type === 'step_complete') {
-                // Collect affected entities
+                // Collect affected entities with state
+                // Skip child/junction tables - users don't need to see these as separate entities
+                const SKIP_TABLES = ['recipe_ingredients']
+                
+                // Helper to extract a display name from a record
+                const getEntityName = (table: string, record: Record<string, unknown>): string => {
+                  // Use name/title if available
+                  if (record.name) return record.name as string
+                  if (record.title) return record.title as string
+                  
+                  // Special handling for meal_plans: "Jan 15 - Dinner"
+                  if (table === 'meal_plans' && record.date && record.meal_type) {
+                    const date = new Date(record.date as string)
+                    const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                    const mealType = (record.meal_type as string).charAt(0).toUpperCase() + (record.meal_type as string).slice(1)
+                    return `${formatted} - ${mealType}`
+                  }
+                  
+                  // Special handling for tasks
+                  if (table === 'tasks' && record.description) {
+                    const desc = record.description as string
+                    return desc.length > 30 ? desc.slice(0, 30) + '...' : desc
+                  }
+                  
+                  // Fallback
+                  return table.replace('_', ' ')
+                }
+                
                 if (data.data) {
                   for (const [table, records] of Object.entries(data.data)) {
+                    if (SKIP_TABLES.includes(table)) continue
+                    
                     if (Array.isArray(records)) {
                       for (const record of records as Record<string, unknown>[]) {
                         if (record.id) {
                           affectedEntities.push({
                             type: table,
                             id: record.id as string,
-                            name: (record.name as string) || table,
+                            name: getEntityName(table, record),
+                            state: (record.state as 'pending' | 'active') || 'active',
                           })
                         }
                       }
@@ -184,11 +222,12 @@ export function ChatView({ messages, setMessages, onOpenFocus }: ChatViewProps) 
             onChange={setInput}
             onSubmit={handleSend}
             disabled={loading}
-            placeholder="Ask Alfred anything..."
+            placeholder={mode === 'quick' ? "Quick question..." : "Ask Alfred anything..."}
+            mode={mode}
+            onModeChange={onModeChange}
           />
         </div>
       </div>
     </div>
   )
 }
-
