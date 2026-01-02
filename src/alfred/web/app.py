@@ -64,6 +64,7 @@ class LoginRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     log_prompts: bool = False
+    mode: str = "plan"  # V3: "quick" | "plan"
 
 
 # =============================================================================
@@ -186,6 +187,7 @@ async def chat(req: ChatRequest, request: Request, session: dict = Depends(requi
             user_message=req.message,
             user_id=session["user_id"],
             conversation=conversation,
+            mode=req.mode,  # V3: Pass mode
         )
         
         # Update session with new conversation state
@@ -229,6 +231,7 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
                 user_message=req.message,
                 user_id=session["user_id"],
                 conversation=conversation,
+                mode=req.mode,  # V3: Pass mode
             ):
                 if update["type"] == "done":
                     # Update session with new conversation state

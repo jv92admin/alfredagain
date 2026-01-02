@@ -61,10 +61,21 @@ def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
             return
         if table not in entities:
             entities[table] = []
-        entities[table].append({
+        
+        # Build entity with common fields + table-specific fields
+        entity = {
             "id": record.get("id"),
-            "name": record.get("name", record.get("title", table)),
-        })
+            "name": record.get("name", record.get("title")),
+        }
+        
+        # Include fields needed for display by table type
+        if table == "meal_plans":
+            entity["date"] = record.get("date")
+            entity["meal_type"] = record.get("meal_type")
+        elif table == "tasks":
+            entity["description"] = record.get("description")
+        
+        entities[table].append(entity)
     
     def extract_from_result(result: Any, table_hint: str | None = None) -> None:
         """Extract entities from a result."""
@@ -270,6 +281,7 @@ async def run_alfred(
     user_id: str,
     conversation_id: str | None = None,
     conversation: dict | None = None,
+    mode: str = "plan",  # V3: Accept mode from UI/CLI
 ) -> tuple[str, dict]:
     """
     Run Alfred on a user message.
@@ -281,6 +293,7 @@ async def run_alfred(
         user_id: The user's ID for context retrieval
         conversation_id: Optional conversation ID for continuity
         conversation: Optional existing conversation context (for multi-turn)
+        mode: The interaction mode ("quick" | "plan")
         
     Returns:
         Tuple of (response string, updated conversation context)
@@ -301,6 +314,7 @@ async def run_alfred(
         )
     """
     from alfred.memory.conversation import initialize_conversation
+    from alfred.core.modes import Mode
     
     # Compile the graph
     app = compile_alfred_graph()
@@ -318,8 +332,9 @@ async def run_alfred(
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
     
-    # V3: Initialize mode context (default to PLAN)
-    mode_context = ModeContext.default().to_dict()
+    # V3: Initialize mode context from parameter
+    selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
+    mode_context = ModeContext(selected_mode=selected_mode).to_dict()
     
     initial_state: AlfredState = {
         "user_id": user_id,
@@ -376,6 +391,7 @@ async def run_alfred_streaming(
     user_id: str,
     conversation_id: str | None = None,
     conversation: dict | None = None,
+    mode: str = "plan",  # V3: Accept mode from UI/CLI
 ):
     """
     Run Alfred with streaming updates.
@@ -391,11 +407,13 @@ async def run_alfred_streaming(
         user_id: The user's ID for context retrieval
         conversation_id: Optional conversation ID
         conversation: Optional existing conversation context
+        mode: The interaction mode ("quick" | "plan")
         
     Yields:
         Dict with status updates
     """
     from alfred.memory.conversation import initialize_conversation
+    from alfred.core.modes import Mode
     
     # Compile the graph
     app = compile_alfred_graph()
@@ -410,8 +428,9 @@ async def run_alfred_streaming(
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
     
-    # V3: Initialize mode context (default to PLAN)
-    mode_context = ModeContext.default().to_dict()
+    # V3: Initialize mode context from parameter
+    selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
+    mode_context = ModeContext(selected_mode=selected_mode).to_dict()
     
     initial_state: AlfredState = {
         "user_id": user_id,
@@ -511,12 +530,17 @@ async def run_alfred_streaming(
                         description=step.description,
                     )
                 
-                # Get step description
+                # Get step description and group
                 step_desc = ""
+                step_group = 0
+                step_type = ""
                 if think_output and hasattr(think_output, "steps"):
                     total_steps = len(think_output.steps)
                     if current_index < total_steps:
-                        step_desc = think_output.steps[current_index].description
+                        current_step = think_output.steps[current_index]
+                        step_desc = current_step.description
+                        step_group = current_step.group
+                        step_type = current_step.step_type
                 
                 # Check if step advanced
                 if current_index > last_step_index:
@@ -530,12 +554,14 @@ async def run_alfred_streaming(
                             "data": step_data,
                         }
                     
-                    # New step started
+                    # New step started - V3: include group and step_type
                     yield {
                         "type": "step",
                         "step": current_index + 1,
                         "total": total_steps,
                         "description": step_desc,
+                        "group": step_group,  # V3: For parallel step visualization
+                        "step_type": step_type,  # V3: read/write/analyze/generate
                     }
                     last_step_index = current_index
                 else:

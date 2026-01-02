@@ -154,6 +154,11 @@ class SessionLogger:
             enabled: If False, all logging is no-op.
         """
         self.enabled = enabled
+        
+        # Always initialize tracking attributes (needed even when disabled)
+        self._node_start_times: dict[str, float] = {}
+        self._turn_count = 0
+        
         if not enabled:
             self.log_file = None
             return
@@ -168,10 +173,6 @@ class SessionLogger:
         self.session_id = session_id
         self.log_path = LOG_DIR / f"session_{session_id}.jsonl"
         self.log_file = open(self.log_path, "a", encoding="utf-8")
-        
-        # Track timing
-        self._node_start_times: dict[str, float] = {}
-        self._turn_count = 0
         
         # Log session start
         self._write({
