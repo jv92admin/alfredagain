@@ -289,6 +289,44 @@ async def get_recipes(session: dict = Depends(require_session)):
     return {"data": result.data}
 
 
+@app.get("/api/ingredients/categories")
+async def get_ingredient_categories(session: dict = Depends(require_session)):
+    """Get distinct ingredient categories."""
+    client = get_client()
+    
+    # Get total count
+    count_result = client.table("ingredients").select("id", count="exact").execute()
+    total = count_result.count or 0
+    
+    # Get distinct categories using a simple query
+    # Supabase doesn't have DISTINCT, so we fetch category column and dedupe in Python
+    result = client.table("ingredients").select("category").execute()
+    unique_cats = sorted(set(row.get("category") or "uncategorized" for row in result.data))
+    
+    # Return categories without counts - frontend will get count from loaded items
+    categories = [{"category": cat} for cat in unique_cats]
+    return {"data": categories, "total": total}
+
+
+@app.get("/api/ingredients/by-category/{category}")
+async def get_ingredients_by_category(category: str, session: dict = Depends(require_session)):
+    """Get ingredients for a specific category."""
+    client = get_client()
+    if category.lower() == "uncategorized":
+        result = client.table("ingredients").select("id, name, aliases, default_unit").is_("category", "null").order("name").execute()
+    else:
+        result = client.table("ingredients").select("id, name, aliases, default_unit").eq("category", category).order("name").execute()
+    return {"data": result.data}
+
+
+@app.get("/api/ingredients/search")
+async def search_ingredients(q: str, session: dict = Depends(require_session)):
+    """Search ingredients by name (limited results)."""
+    client = get_client()
+    result = client.table("ingredients").select("id, name, category, aliases, default_unit").ilike("name", f"%{q}%").limit(50).execute()
+    return {"data": result.data}
+
+
 @app.get("/api/tables/recipes/{recipe_id}/ingredients")
 async def get_recipe_ingredients(recipe_id: str, session: dict = Depends(require_session)):
     """Get ingredients for a specific recipe."""

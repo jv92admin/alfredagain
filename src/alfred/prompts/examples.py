@@ -47,13 +47,17 @@ def get_contextual_examples(
             examples.append("""**Smart Add Pattern** (check existing first):
 1. `db_read` shopping_list to check what's already there
 2. In analyze step or your reasoning: merge duplicates, consolidate quantities
-3. `db_create` only NEW items, `db_update` existing quantities if needed""")
+3. `db_create` only NEW items, `db_update` existing quantities if needed
+
+**Ingredient Naming:** Keep meaningful descriptors, skip unnecessary ones:
+- ✅ "diced tomatoes", "fresh basil", "dried oregano" (these are different products)
+- ❌ "organic hand-picked roma tomatoes", "artisanal basil" (marketing fluff)""")
         
         # Cross-domain: from recipes
         if prev_subdomain == "recipes":
             examples.append("""**Recipe → Shopping Pattern**:
 Previous step read recipe ingredients. Use those IDs/names to add to shopping list.
-Normalize names: "diced tomatoes" → "tomatoes".""")
+Keep meaningful descriptors (fresh vs dried, diced vs whole), skip prep instructions (e.g., "finely chopped onion" → "onion").""")
         
         # Cross-domain: from meal_plan
         if prev_subdomain == "meal_plans":
@@ -112,10 +116,14 @@ If recipe doesn't exist, suggest creating it first.""")
             examples.append("""**Add to Inventory**:
 ```json
 {"tool": "db_create", "params": {"table": "inventory", "data": {
-  "name": "eggs", "quantity": 12, "unit": "pieces", "location": "fridge"
+  "name": "eggs", "quantity": 12, "unit": "count", "location": "fridge"
 }}}
 ```
-Normalize names and add location/category tags.""")
+
+**Ingredient Naming:** Use grocery names, keep meaningful descriptors:
+- ✅ "chicken thighs", "extra virgin olive oil", "fresh mozzarella", "dried oregano"
+- ❌ "organic free-range local farm chicken", "artisanal hand-pressed olive oil"
+Put brand names in `notes` if needed.""")
     
     # === TASKS PATTERNS ===
     elif subdomain == "tasks":
@@ -230,11 +238,17 @@ def _get_generate_guidance(subdomain: str, desc_lower: str) -> str:
         guidance_parts.append("""**Recipe Generation:**
 - Create a complete, executable recipe
 - Include: name, description, prep_time, cook_time, servings
-- Include: ingredients with quantities and units
 - Include: numbered instructions
 - Match user's skill level and available equipment
 - Honor ALL dietary restrictions (hard constraints)
-- Align with favorite cuisines and current vibes""")
+- Align with favorite cuisines and current vibes
+
+**Ingredient Naming (IMPORTANT):**
+- Use grocery-store names, not recipe component names
+- Keep meaningful descriptors: "fresh basil", "dried oregano", "diced tomatoes" (different products)
+- Put in-recipe prep in `notes`: name="chickpeas", notes="drained and roasted"
+- ❌ BAD: "Herby greens mix", "Honey-mustard walnut crunch", "Crispy roasted chickpeas with herbs"
+- ✅ GOOD: "mixed greens", "walnuts", "honey", "mustard", "chickpeas" (separate buyable items)""")
         
         if "variation" in desc_lower or "spicy" in desc_lower or "version" in desc_lower:
             guidance_parts.append("""**Creating Variations:**

@@ -522,13 +522,17 @@ Add item: `{"tool": "db_create", "params": {"table": "inventory", "data": {"name
 
 Update quantity: `{"tool": "db_update", "params": {"table": "inventory", "filters": [{"field": "name", "op": "ilike", "value": "%milk%"}], "data": {"quantity": 5}}}`
 
-**Note**: "pantry" typically means ALL inventory, not just `location='pantry'`.""",
+**Note**: "pantry" typically means ALL inventory, not just `location='pantry'`.
+
+**Naming**: Use grocery names with meaningful descriptors ("fresh basil", "dried oregano", "diced tomatoes").""",
 
         "shopping": """Read list: `{"tool": "db_read", "params": {"table": "shopping_list", "filters": [], "limit": 100}}`
 
 Add item: `{"tool": "db_create", "params": {"table": "shopping_list", "data": {"name": "eggs", "quantity": 12, "unit": "count"}}}`
 
-Clear list: `{"tool": "db_delete", "params": {"table": "shopping_list", "filters": []}}`""",
+Clear list: `{"tool": "db_delete", "params": {"table": "shopping_list", "filters": []}}`
+
+**Naming**: Use grocery names ("diced tomatoes", "fresh basil"), not recipe components ("herby greens mix").""",
 
         "recipes": """Search recipes: `{"tool": "db_read", "params": {"table": "recipes", "filters": [{"field": "name", "op": "ilike", "value": "%chicken%"}], "limit": 20}}`
 

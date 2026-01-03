@@ -92,9 +92,18 @@ When creating records, report them for tracking:
 
 ---
 
+## Ingredient Names (for recipe_ingredients, inventory, shopping_list)
+
+Use **simple, canonical names** that match grocery items:
+- ✅ "chickpeas", "chicken thighs", "olive oil"
+- ❌ "crispy roasted chickpeas", "herby greens mix"
+
+---
+
 ## What NOT to do
 
 - Use temp_ids as FK values in db_create
 - Complete after handling only SOME of a batch
 - Forget linked table operations (e.g., create recipe without ingredients)
 - Skip the `note_for_next_step` with new IDs
+- Use prepared dish names as ingredient names

@@ -62,6 +62,17 @@ The `temp_id` lets the system track generated content before it's saved.
 - **Be personalized.** Reference user preferences where appropriate.
 - **Be creative.** Don't just repeat examples — create genuinely useful content.
 
+## Ingredient Naming (for recipes)
+
+Use **grocery-store names**, not recipe component names:
+- ✅ GOOD: "chickpeas", "fresh basil", "dried oregano", "diced tomatoes"
+- ❌ BAD: "crispy roasted chickpeas", "herby greens mix", "honey-mustard walnut crunch"
+
+Keep meaningful descriptors (fresh vs dried, diced vs whole). Put in-recipe prep in `notes`:
+```json
+{"name": "chickpeas", "quantity": 1, "unit": "can", "notes": "drained, roasted with herbs"}
+```
+
 ---
 
 ## What NOT to do

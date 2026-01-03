@@ -9,6 +9,7 @@ import { MealPlanView } from './components/Views/MealPlanView'
 import { InventoryView } from './components/Views/InventoryView'
 import { ShoppingView } from './components/Views/ShoppingView'
 import { TasksView } from './components/Views/TasksView'
+import { IngredientsView } from './components/Views/IngredientsView'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { useAuth } from './hooks/useAuth'
 
@@ -57,6 +58,7 @@ function App() {
           <Route path="/inventory" element={<InventoryView />} />
           <Route path="/shopping" element={<ShoppingView />} />
           <Route path="/tasks" element={<TasksView />} />
+          <Route path="/ingredients" element={<IngredientsView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>
