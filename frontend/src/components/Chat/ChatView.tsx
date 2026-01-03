@@ -129,7 +129,9 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
                   
                   // Special handling for meal_plans: "Jan 15 - Dinner"
                   if (table === 'meal_plans' && record.date && record.meal_type) {
-                    const date = new Date(record.date as string)
+                    // Parse as local date to avoid timezone shift (e.g., "2026-01-05" showing as Jan 4 in EST)
+                    const [year, month, day] = (record.date as string).split('-').map(Number)
+                    const date = new Date(year, month - 1, day)
                     const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
                     const mealType = (record.meal_type as string).charAt(0).toUpperCase() + (record.meal_type as string).slice(1)
                     return `${formatted} - ${mealType}`

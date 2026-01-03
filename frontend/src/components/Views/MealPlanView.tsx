@@ -101,11 +101,15 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
         {Object.entries(groupedByDate).map(([date, plans]) => (
           <div key={date}>
             <h2 className="text-lg font-medium text-[var(--color-text-secondary)] mb-3">
-              {new Date(date).toLocaleDateString('en-US', {
-                weekday: 'long',
-                month: 'short',
-                day: 'numeric',
-              })}
+              {/* Parse as local date to avoid timezone shift */}
+              {(() => {
+                const [year, month, day] = date.split('-').map(Number)
+                return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  month: 'short',
+                  day: 'numeric',
+                })
+              })()}
             </h2>
             <div className="space-y-2">
               {plans.map((plan) => {
