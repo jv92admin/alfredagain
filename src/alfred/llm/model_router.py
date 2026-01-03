@@ -5,7 +5,7 @@ Selects the appropriate OpenAI model based on task complexity.
 Uses different models for different complexity levels:
 - low: gpt-4.1-mini (fast, cheap)
 - medium: gpt-4.1 (capable, good latency)
-- high: gpt-5.1 (full reasoning model)
+- high: gpt-4.1 (same as medium - gpt-5 removed for latency)
 
 Set ALFRED_USE_ADVANCED_MODELS=false to use gpt-4.1-mini for all levels (dev mode).
 """
@@ -42,7 +42,7 @@ if USE_ADVANCED_MODELS:
             "verbosity": "medium",  # Default detail level
         },
         "high": {
-            "model": "gpt-5.1",  # Full reasoning model
+            "model": "gpt-4.1",  # Same as medium - gpt-5 removed for latency
             "temperature": 0.7,  # Higher creativity for complex tasks
             "verbosity": "high",  # Detailed output
         },
