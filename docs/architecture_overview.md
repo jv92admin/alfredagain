@@ -2,7 +2,7 @@
 
 **Document Type:** Architecture Documentation  
 **Last Updated:** January 2, 2026  
-**Status:** V3 with Entity Lifecycle, Step Type Taxonomy, and Group-Based Parallelization
+**Status:** V3.1 with Quick Mode, Async Summarize, Entity Lifecycle, Step Type Taxonomy
 
 ---
 
@@ -35,30 +35,42 @@ The current implementation focuses on the **Pantry agent** as the proof-of-conce
 
 ---
 
-## 2. Graph Flow (V3)
+## 2. Graph Flow (V3 + Quick Mode)
 
 ```
-┌────────┐   ┌────────────┐   ┌───────┐   ┌─────────────────┐   ┌───────┐   ┌───────────┐
-│ ROUTER │──▶│ UNDERSTAND │──▶│ THINK │──▶│    ACT LOOP     │──▶│ REPLY │──▶│ SUMMARIZE │
-└────────┘   └────────────┘   └───────┘   │                 │   └───────┘   └───────────┘
-                                          │ • Branch on     │
-                                          │   step_type     │
-                                          │ • Execute steps │
-                                          │ • Pass notes    │
-                                          │ • Archive       │
-                                          └─────────────────┘
+                              ┌─────────────┐
+                              │  ACT QUICK  │ ← Single tool call
+                              └──────┬──────┘
+                                     │
+┌────────────┐   quick_mode?   ┌─────▼─────┐   ┌───────────┐
+│ UNDERSTAND │───────────────▶│   REPLY   │──▶│ SUMMARIZE │ (async)
+└─────┬──────┘                 └───────────┘   └───────────┘
+      │
+      │ !quick_mode
+      ▼
+┌───────┐   ┌─────────────────┐   ┌───────┐   ┌───────────┐
+│ THINK │──▶│    ACT LOOP     │──▶│ REPLY │──▶│ SUMMARIZE │ (async)
+└───────┘   │ • Branch on     │   └───────┘   └───────────┘
+            │   step_type     │
+            │ • Execute steps │
+            │ • Pass notes    │
+            └─────────────────┘
 ```
+
+**Note:** Router is skipped (single-agent setup). Summarize runs asynchronously after Reply.
 
 ### Node Responsibilities
 
 | Node | Purpose | Key Decisions |
 |------|---------|---------------|
-| **Router** | Classify intent, pick agent | `agent`, `goal`, `complexity` |
-| **Understand** | Detect signals, update entity states | `entity_updates`, `needs_clarification` |
+| **Understand** | Detect signals, update entity states, detect quick mode | `entity_updates`, `quick_mode`, `quick_intent` |
 | **Think** | Plan steps with types and groups | `steps[]`, `decision` (plan_direct/propose/clarify) |
 | **Act** | Execute steps via CRUD or generate | `tool_call`, `step_complete` |
+| **Act Quick** | Single-step execution for quick mode | One tool call, direct to Reply |
 | **Reply** | Synthesize user-facing response | Presentation format |
 | **Summarize** | Compress context, manage entities | `conversation`, `entity_registry` |
+
+**Note:** Router is currently skipped (single-agent). Will be re-enabled for multi-agent routing.
 
 For detailed decision architecture, see [`decision_architecture.md`](decision_architecture.md).
 
@@ -89,7 +101,50 @@ Group 2: [write shopping list]           ← needs Group 1
 
 ---
 
-## 4. Dynamic Prompt Architecture
+## 4. Quick Mode Architecture
+
+Quick Mode bypasses Think for simple, single-step queries, reducing latency from 4+ LLM calls to 2.
+
+### Quick Mode Flow
+
+```
+Understand → Act Quick → Reply → Summarize (async)
+```
+
+vs Full Mode:
+
+```
+Understand → Think → Act (loop) → Reply → Summarize (async)
+```
+
+### Quick Mode Detection
+
+Understand outputs `quick_mode: true` for:
+
+| Subdomain | Read | Write | Reason |
+|-----------|------|-------|--------|
+| inventory | ✅ Quick | ✅ Quick | Simple table |
+| shopping | ✅ Quick | ✅ Quick | Simple table |
+| tasks | ✅ Quick | ✅ Quick | Optional FKs |
+| recipes | ✅ Quick | ❌ Full | Linked tables (recipe_ingredients) |
+| meal_plans | ✅ Quick | ❌ Full | FK refs, date logic |
+| preferences | ✅ Quick | ✅ Quick | Profile updates |
+
+### Quick Mode Output
+
+Understand provides:
+- `quick_intent`: Plaintext intent (e.g., "Show user's shopping list")
+- `quick_subdomain`: Target subdomain (e.g., "shopping")
+
+Act Quick executes a single tool call based on this intent.
+
+### Async Summarization
+
+Summarize runs in the background after Reply yields, so users see responses immediately without waiting for context compression.
+
+---
+
+## 5. Dynamic Prompt Architecture
 
 Act prompts are dynamically constructed based on step type and subdomain.
 

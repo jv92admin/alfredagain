@@ -1274,3 +1274,209 @@ def should_continue_act(state: AlfredState) -> str:
         return "fail"
 
     return "reply"
+
+
+# =============================================================================
+# Act Quick Node (Phase 3)
+# =============================================================================
+
+
+class ActQuickDecision(BaseModel):
+    """
+    Simplified decision model for Quick Mode.
+    
+    Only tool_call is supported - no step_complete loop.
+    """
+    
+    tool: Literal["db_read", "db_create", "db_update", "db_delete"] = Field(
+        description="CRUD tool to call"
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Tool parameters (table, filters, data, etc.)"
+    )
+
+
+async def act_quick_node(state: AlfredState) -> dict[str, Any]:
+    """
+    Quick mode Act node - single-call execution without step_complete loop.
+    
+    Phase 3: Skips Think, receives intent directly from Understand.
+    Executes ONE tool call and goes directly to Reply.
+    
+    Args:
+        state: Current graph state with understand_output containing quick_intent/quick_subdomain
+        
+    Returns:
+        State update with step_results for Reply to format
+    """
+    set_current_node("act_quick")
+    
+    # Get quick mode data from understand output
+    understand_output = state.get("understand_output")
+    if not understand_output:
+        logger.error("Act Quick: No understand output")
+        return {"error": "No understand output for quick mode"}
+    
+    quick_intent = getattr(understand_output, "quick_intent", None)
+    quick_subdomain = getattr(understand_output, "quick_subdomain", None)
+    
+    if not quick_intent or not quick_subdomain:
+        logger.error("Act Quick: Missing quick_intent or quick_subdomain")
+        return {"error": "Missing quick mode fields"}
+    
+    logger.info(f"Act Quick: intent='{quick_intent}', subdomain='{quick_subdomain}'")
+    
+    # Get schema for the subdomain
+    subdomain_schema = await get_schema_with_fallback(quick_subdomain)
+    
+    # Get subdomain intro
+    subdomain_intro = get_subdomain_intro(quick_subdomain)
+    
+    # Build simplified prompt for quick mode
+    user_id = state.get("user_id", "")
+    today = date.today().isoformat()
+    
+    # Build quick prompt - minimal context, just execute
+    system_prompt = """# Act Quick Mode
+
+Execute ONE tool call and return the result. No step_complete loop needed.
+
+## Tools
+
+| Tool | Purpose |
+|------|---------|
+| `db_read` | Fetch rows with filters |
+| `db_create` | Insert row(s) |
+| `db_update` | Modify rows |
+| `db_delete` | Remove rows |
+
+## Filter Syntax
+
+```json
+{"field": "name", "op": "ilike", "value": "%chicken%"}
+```
+
+**Operators:** `=`, `>`, `<`, `>=`, `<=`, `in`, `ilike`, `is_null`, `contains`
+
+## Output
+
+Return exactly:
+```json
+{
+  "tool": "db_read",
+  "params": {"table": "inventory", "filters": [], "limit": 100}
+}
+```
+
+**REQUIRED fields:**
+- `tool`: One of db_read, db_create, db_update, db_delete
+- `params`: Must include `table` and appropriate filters/data
+
+One tool call only. Result goes directly to Reply.
+"""
+
+    user_prompt = f"""## Intent
+
+{quick_intent}
+
+## Today
+
+{today}
+
+## Subdomain
+
+{subdomain_intro}
+
+## Schema
+
+{subdomain_schema}
+
+## Execute
+
+Call the appropriate db_ tool for this intent. Return tool and params.
+"""
+
+    try:
+        # Single LLM call
+        decision = await call_llm(
+            response_model=ActQuickDecision,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            complexity="low",  # Quick mode uses fast model
+        )
+        
+        logger.info(f"Act Quick: tool={decision.tool}")
+        
+        # Handle missing or empty params - construct defaults
+        params = decision.params or {}
+        if not params.get("table"):
+            # Infer table from subdomain
+            table_map = {
+                "inventory": "inventory",
+                "shopping": "shopping_list",
+                "recipes": "recipes",
+                "meal_plans": "meal_plans",
+                "tasks": "tasks",
+                "preferences": "preferences",
+            }
+            params["table"] = table_map.get(quick_subdomain, quick_subdomain)
+        if "filters" not in params:
+            params["filters"] = []
+        if decision.tool == "db_read" and "limit" not in params:
+            params["limit"] = 100
+        
+        # Validate and fix params
+        fixed_params, error = _fix_and_validate_tool_params(decision.tool, params)
+        if error:
+            logger.warning(f"Act Quick: Param fix error: {error}")
+        
+        # Execute the tool
+        result = await execute_crud(
+            tool=decision.tool,
+            params=fixed_params,
+            user_id=user_id,
+        )
+        
+        logger.info(f"Act Quick: Got {len(result) if isinstance(result, list) else 1} results")
+        
+        # Store result for Reply
+        step_results = {
+            0: [(decision.tool, quick_subdomain, result)]  # Format like normal act results
+        }
+        
+        # Extract entities for tracking
+        current_turn = state.get("current_turn", 0)
+        step_type = "read" if decision.tool == "db_read" else "write"
+        new_entities = _extract_turn_entities(
+            step_results[0],
+            0,
+            step_type,
+            current_turn,
+        )
+        
+        # Convert to dicts for state storage
+        new_entity_dicts = [e.to_dict() for e in new_entities]
+        
+        return {
+            "step_results": step_results,
+            "current_step_index": 1,  # Mark as complete
+            "turn_entities": new_entity_dicts,
+            "quick_result": result,  # Direct result for Reply Quick
+        }
+        
+    except Exception as e:
+        logger.exception(f"Act Quick failed: {e}")
+        return {
+            "error": f"Act Quick failed: {str(e)}",
+            "step_results": {},
+        }
+
+
+def should_continue_act_quick(state: AlfredState) -> str:
+    """
+    Quick mode always goes directly to Reply after execution.
+    
+    No looping - single call, done.
+    """
+    return "reply"

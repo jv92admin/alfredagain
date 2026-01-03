@@ -6,11 +6,12 @@ Nodes:
 - understand: Entity state updates and reference resolution (V3)
 - think: Domain-specific planning, generate steps with groups
 - act: Execute steps via tools
+- act_quick: Quick mode single-call execution (Phase 3)
 - reply: Synthesize final response
 - summarize: Maintain conversation memory and entity lifecycle
 """
 
-from alfred.graph.nodes.act import act_node, should_continue_act
+from alfred.graph.nodes.act import act_node, act_quick_node, should_continue_act
 from alfred.graph.nodes.reply import reply_node
 from alfred.graph.nodes.router import router_node
 from alfred.graph.nodes.summarize import summarize_node
@@ -22,6 +23,7 @@ __all__ = [
     "understand_node",  # V3
     "think_node",
     "act_node",
+    "act_quick_node",  # Phase 3
     "reply_node",
     "summarize_node",
     "should_continue_act",

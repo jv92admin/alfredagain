@@ -131,6 +131,213 @@ def _format_understand_clarification(understand_output) -> str:
     return response
 
 
+# =============================================================================
+# Phase 4: Quick Mode Formatters
+# =============================================================================
+
+
+# Empty result responses by subdomain
+EMPTY_RESPONSES = {
+    "inventory": "Your pantry is empty. Want me to help you add some items?",
+    "shopping": "Your shopping list is empty.",
+    "recipes": "No recipes saved yet. Want me to suggest some?",
+    "tasks": "No tasks on your list.",
+    "meal_plans": "No meal plans scheduled.",
+    "preferences": "No preferences set yet.",
+}
+
+
+def _format_quick_response(intent: str, subdomain: str, result: Any) -> str | None:
+    """
+    Format response without LLM for simple patterns.
+    
+    Returns None if no formatter matches (triggers LLM fallback).
+    """
+    # Handle empty results
+    if not result or (isinstance(result, list) and len(result) == 0):
+        return EMPTY_RESPONSES.get(subdomain, "No results found.")
+    
+    # Format based on subdomain and result type
+    if isinstance(result, list):
+        count = len(result)
+        
+        # List display for read operations
+        if subdomain == "inventory":
+            return _format_inventory_list(result)
+        elif subdomain == "recipes":
+            return _format_recipe_list(result)
+        elif subdomain == "shopping":
+            return _format_shopping_list(result)
+        elif subdomain == "tasks":
+            return _format_task_list(result)
+        elif subdomain == "meal_plans":
+            return _format_meal_plan_list(result)
+        
+        # Write confirmations
+        intent_lower = intent.lower()
+        if "add" in intent_lower or "create" in intent_lower:
+            item_word = "item" if count == 1 else "items"
+            if subdomain == "shopping":
+                return f"Added {count} {item_word} to your shopping list."
+            elif subdomain == "inventory":
+                return f"Added {count} {item_word} to your pantry."
+            elif subdomain == "tasks":
+                return f"Added {count} task{'s' if count > 1 else ''}."
+        
+        if "delete" in intent_lower or "remove" in intent_lower or "clear" in intent_lower:
+            item_word = "item" if count == 1 else "items"
+            return f"Removed {count} {item_word}."
+    
+    # No formatter matched
+    return None
+
+
+def _format_inventory_list(items: list) -> str:
+    """Format inventory items for display."""
+    if not items:
+        return EMPTY_RESPONSES["inventory"]
+    
+    lines = ["Here's what's in your pantry:\n"]
+    
+    # Group by location if available
+    by_location: dict[str, list] = {}
+    for item in items:
+        loc = item.get("location", "other") or "other"
+        if loc not in by_location:
+            by_location[loc] = []
+        by_location[loc].append(item)
+    
+    for location, loc_items in by_location.items():
+        if len(by_location) > 1:
+            lines.append(f"\n**{location.title()}:**")
+        for item in loc_items:
+            name = item.get("name", "Unknown")
+            qty = item.get("quantity", "")
+            unit = item.get("unit", "")
+            qty_str = f" ({qty} {unit})" if qty else ""
+            lines.append(f"- {name}{qty_str}")
+    
+    return "\n".join(lines)
+
+
+def _format_recipe_list(recipes: list) -> str:
+    """Format recipe list for display."""
+    if not recipes:
+        return EMPTY_RESPONSES["recipes"]
+    
+    lines = [f"You have {len(recipes)} recipe{'s' if len(recipes) > 1 else ''} saved:\n"]
+    
+    for recipe in recipes[:20]:  # Limit display
+        name = recipe.get("name", "Untitled")
+        cuisine = recipe.get("cuisine", "")
+        cuisine_str = f" ({cuisine})" if cuisine else ""
+        lines.append(f"- **{name}**{cuisine_str}")
+    
+    if len(recipes) > 20:
+        lines.append(f"\n...and {len(recipes) - 20} more.")
+    
+    return "\n".join(lines)
+
+
+def _format_shopping_list(items: list) -> str:
+    """Format shopping list for display."""
+    if not items:
+        return EMPTY_RESPONSES["shopping"]
+    
+    lines = [f"Your shopping list ({len(items)} item{'s' if len(items) > 1 else ''}):\n"]
+    
+    for item in items:
+        name = item.get("name", "Unknown")
+        qty = item.get("quantity", "")
+        unit = item.get("unit", "")
+        qty_str = f" ({qty} {unit})" if qty else ""
+        checked = "☑" if item.get("checked") else "☐"
+        lines.append(f"{checked} {name}{qty_str}")
+    
+    return "\n".join(lines)
+
+
+def _format_task_list(tasks: list) -> str:
+    """Format task list for display."""
+    if not tasks:
+        return EMPTY_RESPONSES["tasks"]
+    
+    lines = [f"Your tasks ({len(tasks)}):\n"]
+    
+    for task in tasks:
+        desc = task.get("description", "No description")
+        done = "✓" if task.get("completed") else "○"
+        lines.append(f"{done} {desc}")
+    
+    return "\n".join(lines)
+
+
+def _format_meal_plan_list(plans: list) -> str:
+    """Format meal plan list for display."""
+    if not plans:
+        return EMPTY_RESPONSES["meal_plans"]
+    
+    lines = [f"Your meal plans ({len(plans)} scheduled):\n"]
+    
+    # Group by date
+    by_date: dict[str, list] = {}
+    for plan in plans:
+        date = plan.get("date", "Unknown")
+        if date not in by_date:
+            by_date[date] = []
+        by_date[date].append(plan)
+    
+    for date, date_plans in sorted(by_date.items()):
+        lines.append(f"\n**{date}:**")
+        for plan in date_plans:
+            meal_type = plan.get("meal_type", "meal")
+            notes = plan.get("notes", "")
+            lines.append(f"- {meal_type.title()}: {notes or '(no details)'}")
+    
+    return "\n".join(lines)
+
+
+async def _quick_llm_response(
+    user_message: str,
+    intent: str,
+    subdomain: str,
+    result: Any,
+) -> str:
+    """
+    Light LLM call for quick mode when deterministic formatter doesn't match.
+    
+    Uses minimal prompt for fast response.
+    """
+    # Count results
+    if isinstance(result, list):
+        count = len(result)
+        result_summary = f"{count} record{'s' if count != 1 else ''}"
+    else:
+        result_summary = "1 record"
+    
+    system_prompt = """You are Alfred, a helpful kitchen assistant. 
+Give a brief, friendly response based on the results. Be concise."""
+    
+    user_prompt = f"""User asked: "{user_message}"
+Intent: {intent}
+Subdomain: {subdomain}
+Result: {result_summary}
+
+Respond naturally in 1-2 sentences."""
+    
+    try:
+        output = await call_llm(
+            response_model=ReplyOutput,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            complexity="low",
+        )
+        return output.response
+    except Exception:
+        # Ultimate fallback
+        return f"Done! {result_summary} processed."
+
+
 async def reply_node(state: AlfredState) -> dict:
     """
     Reply node - generates final user response.
@@ -174,6 +381,29 @@ async def reply_node(state: AlfredState) -> dict:
     if understand_output and getattr(understand_output, "needs_clarification", False):
         # Understand needs clarification - format and return the questions
         response = _format_understand_clarification(understand_output)
+        return {"final_response": response}
+    
+    # =========================================================================
+    # Phase 4: Quick mode - deterministic or light LLM response
+    # =========================================================================
+    
+    quick_result = state.get("quick_result")
+    if quick_result is not None and understand_output:
+        quick_intent = getattr(understand_output, "quick_intent", "")
+        quick_subdomain = getattr(understand_output, "quick_subdomain", "")
+        
+        # Try deterministic formatter first
+        response = _format_quick_response(quick_intent, quick_subdomain, quick_result)
+        if response:
+            return {"final_response": response}
+        
+        # Fallback: light LLM call
+        response = await _quick_llm_response(
+            state.get("user_message", ""),
+            quick_intent,
+            quick_subdomain,
+            quick_result,
+        )
         return {"final_response": response}
     
     # =========================================================================

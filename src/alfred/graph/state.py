@@ -115,6 +115,7 @@ class UnderstandOutput(BaseModel):
     - Entity state updates (confirmation/rejection signals)
     - Entity reference resolution ("that recipe" → specific ID)
     - Clarification detection
+    - Quick mode detection (Phase 2)
     
     Understand does NOT plan steps.
     """
@@ -130,6 +131,11 @@ class UnderstandOutput(BaseModel):
     
     # Pass-through
     processed_message: str = ""  # User message with resolved references
+    
+    # Quick mode detection (Phase 2)
+    quick_mode: bool = False  # True if this is a simple 1-step query
+    quick_intent: str | None = None  # Plaintext intent: "Show user their inventory"
+    quick_subdomain: str | None = None  # Target subdomain: "inventory", "shopping", etc.
 
 
 class ThinkOutput(BaseModel):

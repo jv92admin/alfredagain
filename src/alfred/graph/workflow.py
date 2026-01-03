@@ -2,20 +2,21 @@
 Alfred V3 - Graph Workflow Definition.
 
 This module constructs the LangGraph workflow:
-Router → Understand → Think → [Act Loop | Reply] → Summarize
+Understand → Think → [Act Loop | Reply] → Summarize
 
 V3 Changes:
+- Router skipped for single-agent mode (Quick Mode Phase 0)
 - Understand node handles entity state updates before Think
 - Think outputs steps with group field for parallelization
 - Group-based execution (same group = parallel, groups execute in order)
 - Mode context passed through the graph
 
 Flow:
-    START → router → understand ──┬─(needs_clarification)─→ reply → summarize → END
-                                   │
-                                   └─(continue)─→ think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
-                                                          │
-                                                          └─(propose)─→ reply → summarize → END
+    START → understand ──┬─(needs_clarification)─→ reply → summarize → END
+                         │
+                         └─(continue)─→ think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
+                                                │
+                                                └─(propose)─→ reply → summarize → END
 
 Summarize maintains conversation memory and entity lifecycle after each exchange.
 """
@@ -28,6 +29,7 @@ from alfred.core.entities import EntityRegistry
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.nodes import (
     act_node,
+    act_quick_node,
     reply_node,
     router_node,
     should_continue_act,
@@ -35,8 +37,22 @@ from alfred.graph.nodes import (
     think_node,
 )
 from alfred.graph.nodes.understand import understand_node
-from alfred.graph.state import AlfredState, ThinkOutput
+from alfred.graph.state import AlfredState, RouterOutput, ThinkOutput
 from alfred.observability.session_logger import get_session_logger
+
+
+def _create_default_router_output(user_message: str) -> RouterOutput:
+    """
+    Create default router output for single-agent mode.
+    
+    Phase 0 of Quick Mode: Skip Router LLM call, hardcode pantry agent.
+    Goal is set to user message - Think will refine it.
+    """
+    return RouterOutput(
+        agent="pantry",
+        goal=user_message,  # Think will use this as starting point
+        complexity="medium",  # Safe default
+    )
 
 
 def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
@@ -126,10 +142,11 @@ def route_after_understand(state: AlfredState) -> str:
     Route based on Understand's output.
     
     - needs_clarification: Skip to Reply to ask clarifying questions
+    - quick_mode: Skip Think, go directly to Act Quick (Phase 2)
     - otherwise: Continue to Think
     
     Returns:
-        "think" or "reply"
+        "think", "act_quick", or "reply"
     """
     understand_output = state.get("understand_output")
     
@@ -138,6 +155,10 @@ def route_after_understand(state: AlfredState) -> str:
     
     if hasattr(understand_output, "needs_clarification") and understand_output.needs_clarification:
         return "reply"
+    
+    # Phase 2: Quick mode detection - skip Think, go directly to Act Quick
+    if hasattr(understand_output, "quick_mode") and understand_output.quick_mode:
+        return "act_quick"
     
     return "think"
 
@@ -181,14 +202,15 @@ def create_alfred_graph() -> StateGraph:
     """
     Create the Alfred LangGraph workflow (V3).
     
-    Flow:
-        START → router → understand ──┬─(needs_clarification)─→ reply → summarize → END
-                                       │
-                                       └─(continue)─→ think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
-                                                              │
-                                                              └─(propose)─→ reply → summarize → END
+    Flow (Phase 0 - Router skipped):
+        START → understand ──┬─(needs_clarification)─→ reply → summarize → END
+                             │
+                             └─(continue)─→ think ──┬─(plan_direct)─→ act ⟲ → reply → summarize → END
+                                                    │
+                                                    └─(propose)─→ reply → summarize → END
     
     V3 Changes:
+    - Router skipped (single-agent mode, hardcode pantry)
     - Understand node handles entity state updates
     - Mode-aware routing (Quick mode may skip Think)
     
@@ -202,10 +224,12 @@ def create_alfred_graph() -> StateGraph:
     # Add Nodes
     # ==========================================================================
     
-    graph.add_node("router", router_node)
-    graph.add_node("understand", understand_node)  # V3: New node
+    # NOTE: Router node kept for future multi-agent support, but not in current flow
+    # graph.add_node("router", router_node)
+    graph.add_node("understand", understand_node)
     graph.add_node("think", think_node)
     graph.add_node("act", act_node)
+    graph.add_node("act_quick", act_quick_node)  # Phase 3: Quick mode execution
     graph.add_node("reply", reply_node)
     graph.add_node("summarize", summarize_node)
     
@@ -213,19 +237,17 @@ def create_alfred_graph() -> StateGraph:
     # Add Edges
     # ==========================================================================
     
-    # Entry point
-    graph.set_entry_point("router")
-    
-    # Router → Understand (V3: always go through Understand first)
-    graph.add_edge("router", "understand")
+    # Entry point - Skip router, go directly to understand (Phase 0)
+    graph.set_entry_point("understand")
     
     # Understand → conditional routing
     graph.add_conditional_edges(
         "understand",
         route_after_understand,
         {
-            "think": "think",   # Continue to planning
-            "reply": "reply",   # Needs clarification, ask user
+            "think": "think",       # Continue to planning
+            "act_quick": "act_quick",  # Phase 2: Quick mode, skip Think
+            "reply": "reply",       # Needs clarification, ask user
         },
     )
     
@@ -250,6 +272,9 @@ def create_alfred_graph() -> StateGraph:
             "fail": "reply",        # Failed, reply with error message
         },
     )
+    
+    # Act Quick → Reply (Phase 3: no looping, single call)
+    graph.add_edge("act_quick", "reply")
     
     # Reply → Summarize (always, maintains conversation memory)
     graph.add_edge("reply", "summarize")
@@ -336,11 +361,14 @@ async def run_alfred(
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
     mode_context = ModeContext(selected_mode=selected_mode).to_dict()
     
+    # Phase 0: Skip Router - create default router output
+    default_router = _create_default_router_output(user_message)
+    
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
         "user_message": user_message,
-        "router_output": None,
+        "router_output": default_router,  # Phase 0: Pre-populated, skip Router node
         "understand_output": None,  # V3
         "think_output": None,
         "context": {},
@@ -432,11 +460,14 @@ async def run_alfred_streaming(
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
     mode_context = ModeContext(selected_mode=selected_mode).to_dict()
     
+    # Phase 0: Skip Router - create default router output
+    default_router = _create_default_router_output(user_message)
+    
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
         "user_message": user_message,
-        "router_output": None,
+        "router_output": default_router,  # Phase 0: Pre-populated, skip Router node
         "understand_output": None,  # V3
         "think_output": None,
         "context": {},
@@ -583,17 +614,27 @@ async def run_alfred_streaming(
                     }
                 # Capture final response
                 final_response = node_output.get("final_response")
+                
+                # Phase 1: Yield response immediately after Reply, don't wait for Summarize
+                # This makes the response appear faster to the user
+                response = final_response or "I'm sorry, I couldn't process that request."
+                yield {
+                    "type": "done",
+                    "response": response,
+                    "conversation": conv_context,  # Use initial context, will be updated async
+                }
             
             elif node_name == "summarize" and node_output:
                 # Capture updated conversation
                 final_conversation = node_output.get("conversation")
+                
+                # Phase 1: Notify frontend that context is ready
+                # This allows race condition handling: if user types before this,
+                # frontend can show "Updating context..." message
+                yield {
+                    "type": "context_updated",
+                    "conversation": final_conversation,
+                }
     
-    # Use captured state (don't run graph again!)
-    response = final_response or "I'm sorry, I couldn't process that request."
-    updated_conversation = final_conversation or conv_context
-    
-    yield {
-        "type": "done",
-        "response": response,
-        "conversation": updated_conversation,
-    }
+    # Note: We already yielded "done" after reply, so we don't yield it again here
+    # This comment block replaces the old synchronous yield at the end

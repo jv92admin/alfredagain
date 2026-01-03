@@ -234,7 +234,8 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
                 mode=req.mode,  # V3: Pass mode
             ):
                 if update["type"] == "done":
-                    # Update session with new conversation state
+                    # Phase 1: Response is sent immediately after Reply
+                    # Session conversation is updated with initial context for now
                     session["conversation"] = update["conversation"]
                     # Get log directory
                     log_dir = get_session_log_dir()
@@ -244,6 +245,14 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
                             "response": update["response"],
                             "log_dir": str(log_dir) if log_dir else None,
                         }),
+                    }
+                elif update["type"] == "context_updated":
+                    # Phase 1: Summarize completed async, update session with final conversation
+                    session["conversation"] = update["conversation"]
+                    # Notify frontend that context is ready (for race condition handling)
+                    yield {
+                        "event": "context_updated",
+                        "data": json.dumps({"status": "ready"}),
                     }
                 else:
                     yield {

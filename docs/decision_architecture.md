@@ -10,15 +10,22 @@ This document maps every decision point in the Alfred pipeline, what information
 User Message
      │
      ▼
-┌─────────┐     ┌────────────┐     ┌───────┐     ┌─────┐     ┌───────┐     ┌───────────┐
-│ Router  │ ──▶ │ Understand │ ──▶ │ Think │ ──▶ │ Act │ ──▶ │ Reply │ ──▶ │ Summarize │
-└─────────┘     └────────────┘     └───────┘     └─────┘     └───────┘     └───────────┘
-     │                │                │            │            │               │
-     ▼                ▼                ▼            ▼            ▼               ▼
-  agent           entity           steps[]      tool calls   final_response  conversation
-  goal            updates          decision     step_data                    entity_registry
-  complexity                       groups
+┌────────────┐
+│ Understand │──────────────────────────────────────────────────────┐
+└─────┬──────┘                                                      │
+      │                                                             │
+      ├── quick_mode=true ──▶ ┌───────────┐ ──▶ ┌───────┐ ──▶ ┌─────▼─────┐
+      │                       │ Act Quick │     │ Reply │     │ Summarize │
+      │                       └───────────┘     └───────┘     │  (async)  │
+      │                                                       └───────────┘
+      │
+      └── quick_mode=false ──▶ ┌───────┐ ──▶ ┌─────┐ ──▶ ┌───────┐ ──▶ ┌───────────┐
+                               │ Think │     │ Act │     │ Reply │     │ Summarize │
+                               └───────┘     └─────┘     └───────┘     │  (async)  │
+                                                                       └───────────┘
 ```
+
+**Note:** Router is currently skipped (single-agent). Summarize runs async after Reply.
 
 ---
 
@@ -45,15 +52,28 @@ User Message
 | Aspect | Details |
 |--------|---------|
 | **File** | `src/alfred/graph/nodes/understand.py`, `prompts/understand.md` |
-| **Decisions** | Entity state changes, clarification needs, reference resolution |
+| **Decisions** | Entity state changes, clarification needs, reference resolution, **quick mode detection** |
 | **Inputs** | user_message, active_entities, pending_entities, recent_turns |
-| **Outputs** | `UnderstandOutput(entity_updates, referenced_entities, needs_clarification, processed_message)` |
-| **Downstream Impact** | EntityRegistry updates; Think skipped if clarification needed |
+| **Outputs** | `UnderstandOutput(entity_updates, referenced_entities, needs_clarification, processed_message, quick_mode, quick_intent, quick_subdomain)` |
+| **Downstream Impact** | EntityRegistry updates; Think skipped if clarification needed OR quick_mode=true |
 
 **What Understand Must Know:**
 - What entities exist (active vs pending)
 - Recent conversation context (to resolve "that recipe" → specific ID)
 - Whether this is an answer to a prior clarification (don't re-clarify)
+- **Whether this is a simple single-step query (quick mode detection)**
+
+**Quick Mode Detection:**
+Understand sets `quick_mode: true` for simple queries targeting one subdomain:
+
+| Subdomain | Read | Write | Reason |
+|-----------|------|-------|--------|
+| inventory | ✅ | ✅ | Simple table |
+| shopping | ✅ | ✅ | Simple table |
+| tasks | ✅ | ✅ | Optional FKs |
+| recipes | ✅ | ❌ | Linked tables |
+| meal_plans | ✅ | ❌ | FK refs, date logic |
+| preferences | ✅ | ✅ | Profile updates |
 
 ---
 
@@ -117,6 +137,29 @@ Think assigns `step_type` which determines how Act executes:
 **Prompt Files Loaded:**
 - All branches: `prompts/act/base.md`
 - Branch-specific: `prompts/act/{step_type}.md`
+
+---
+
+### 4b. Act Quick (Quick Mode Only)
+
+| Aspect | Details |
+|--------|---------|
+| **File** | `src/alfred/graph/nodes/act.py` (`act_quick_node`) |
+| **When** | `quick_mode=true` from Understand |
+| **Decisions** | Which tool to call, what params |
+| **Inputs** | `quick_intent`, `quick_subdomain`, subdomain schema |
+| **Outputs** | `step_results` with single tool result |
+| **Downstream Impact** | Reply formats the response |
+
+**What Act Quick Must Know:**
+- Plaintext intent (e.g., "Show user's shopping list")
+- Target subdomain (for schema injection)
+- No prior step results (single-step execution)
+
+**Key Difference from Full Act:**
+- No step_complete loop
+- No think_output.steps iteration
+- Single LLM call → single tool call → done
 
 ---
 
@@ -266,6 +309,7 @@ When debugging, verify each node receives what it needs:
 
 ## Version History
 
-- **V3 (current)**: Step types (read/write/analyze/generate), group-based parallelization, entity lifecycle
+- **V3.1 (current)**: Quick Mode (bypass Think for simple queries), async Summarize, Router skip
+- **V3 (Jan 2026)**: Step types (read/write/analyze/generate), group-based parallelization, entity lifecycle
 - **V2 (legacy)**: CRUD-only steps, no generate/analyze distinction
 
