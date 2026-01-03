@@ -14,9 +14,14 @@ V3 Changes:
 - Group-based results for parallelization
 - Mode-aware prompt verbosity
 
+V3.1 Changes:
+- Group parallelization: steps in same group run concurrently
+- Parallel execution uses asyncio.gather for wall-clock speedup
+
 Each iteration emits a structured action.
 """
 
+import asyncio
 import logging
 from datetime import date
 from pathlib import Path
@@ -45,15 +50,10 @@ from alfred.graph.state import (
 from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
-from alfred.prompts.injection import build_act_prompt
+from alfred.prompts.injection import build_act_prompt, build_act_quick_prompt
 from alfred.tools.crud import execute_crud
 from alfred.tools.schema import get_schema_with_fallback
-from alfred.prompts.personas import (
-    get_persona_for_subdomain, 
-    get_scope_for_subdomain,
-    get_subdomain_intro,
-    get_full_subdomain_content,
-)
+from alfred.prompts.personas import get_full_subdomain_content
 from alfred.prompts.examples import get_contextual_examples
 
 # Entity types to track across steps
@@ -287,6 +287,53 @@ def _fix_and_validate_tool_params(tool: str, params: dict) -> tuple[dict, str | 
                         return params, f"db_create data[{i}] must be a dict, got {type(item).__name__}"
     
     return fixed, None
+
+
+# =============================================================================
+# Group Parallelization Helpers
+# =============================================================================
+
+
+def _group_steps_by_group(steps: list) -> dict[int, list[tuple[int, Any]]]:
+    """
+    Group steps by their group field.
+    
+    Returns dict: {group_num: [(step_index, step), ...]}
+    """
+    groups: dict[int, list[tuple[int, Any]]] = {}
+    for idx, step in enumerate(steps):
+        group_num = getattr(step, "group", 0)
+        if group_num not in groups:
+            groups[group_num] = []
+        groups[group_num].append((idx, step))
+    return groups
+
+
+def _get_current_group(steps: list, current_step_index: int) -> int:
+    """Get the group number for the current step."""
+    if current_step_index >= len(steps):
+        return -1
+    return getattr(steps[current_step_index], "group", 0)
+
+
+def _get_steps_in_group(steps: list, group_num: int) -> list[tuple[int, Any]]:
+    """Get all (step_index, step) tuples for a given group."""
+    return [
+        (idx, step) for idx, step in enumerate(steps)
+        if getattr(step, "group", 0) == group_num
+    ]
+
+
+def _is_first_step_in_group(steps: list, step_index: int) -> bool:
+    """Check if this step is the first in its group."""
+    if step_index >= len(steps):
+        return False
+    current_group = getattr(steps[step_index], "group", 0)
+    # Check if any previous step has the same group
+    for i in range(step_index):
+        if getattr(steps[i], "group", 0) == current_group:
+            return False
+    return True
 
 
 # =============================================================================
@@ -1281,6 +1328,14 @@ def should_continue_act(state: AlfredState) -> str:
 # =============================================================================
 
 
+class ActQuickParams(BaseModel):
+    """Params for quick mode CRUD operations."""
+    table: str = Field(description="Table name (inventory, shopping_list, etc.)")
+    filters: list[dict[str, Any]] = Field(default_factory=list, description="Filter clauses for read/update/delete")
+    data: dict[str, Any] | list[dict[str, Any]] | None = Field(default=None, description="Record data for create/update")
+    limit: int | None = Field(default=None, description="Max rows to return for read")
+
+
 class ActQuickDecision(BaseModel):
     """
     Simplified decision model for Quick Mode.
@@ -1291,9 +1346,8 @@ class ActQuickDecision(BaseModel):
     tool: Literal["db_read", "db_create", "db_update", "db_delete"] = Field(
         description="CRUD tool to call"
     )
-    params: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Tool parameters (table, filters, data, etc.)"
+    params: ActQuickParams = Field(
+        description="Tool parameters with table, filters, data, limit"
     )
 
 
@@ -1330,72 +1384,29 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
     # Get schema for the subdomain
     subdomain_schema = await get_schema_with_fallback(quick_subdomain)
     
-    # Get subdomain intro
-    subdomain_intro = get_subdomain_intro(quick_subdomain)
-    
-    # Build simplified prompt for quick mode
+    # Build prompt using shared components
     user_id = state.get("user_id", "")
     today = date.today().isoformat()
     
-    # Build quick prompt - minimal context, just execute
-    system_prompt = """# Act Quick Mode
-
-Execute ONE tool call and return the result. No step_complete loop needed.
-
-## Tools
-
-| Tool | Purpose |
-|------|---------|
-| `db_read` | Fetch rows with filters |
-| `db_create` | Insert row(s) |
-| `db_update` | Modify rows |
-| `db_delete` | Remove rows |
-
-## Filter Syntax
-
-```json
-{"field": "name", "op": "ilike", "value": "%chicken%"}
-```
-
-**Operators:** `=`, `>`, `<`, `>=`, `<=`, `in`, `ilike`, `is_null`, `contains`
-
-## Output
-
-Return exactly:
-```json
-{
-  "tool": "db_read",
-  "params": {"table": "inventory", "filters": [], "limit": 100}
-}
-```
-
-**REQUIRED fields:**
-- `tool`: One of db_read, db_create, db_update, db_delete
-- `params`: Must include `table` and appropriate filters/data
-
-One tool call only. Result goes directly to Reply.
-"""
-
-    user_prompt = f"""## Intent
-
-{quick_intent}
-
-## Today
-
-{today}
-
-## Subdomain
-
-{subdomain_intro}
-
-## Schema
-
-{subdomain_schema}
-
-## Execute
-
-Call the appropriate db_ tool for this intent. Return tool and params.
-"""
+    # Infer action type from intent for better example selection
+    intent_lower = quick_intent.lower()
+    if any(verb in intent_lower for verb in ["add", "create", "insert", "save"]):
+        action_type = "create"
+    elif any(verb in intent_lower for verb in ["update", "change", "modify", "set"]):
+        action_type = "update"
+    elif any(verb in intent_lower for verb in ["delete", "remove", "clear"]):
+        action_type = "delete"
+    else:
+        action_type = "read"
+    
+    # Build prompt using shared injection module
+    system_prompt, user_prompt = build_act_quick_prompt(
+        intent=quick_intent,
+        subdomain=quick_subdomain,
+        action_type=action_type,
+        schema=subdomain_schema,
+        today=today,
+    )
 
     try:
         # Single LLM call
@@ -1408,10 +1419,11 @@ Call the appropriate db_ tool for this intent. Return tool and params.
         
         logger.info(f"Act Quick: tool={decision.tool}")
         
-        # Handle missing or empty params - construct defaults
-        params = decision.params or {}
+        # Convert structured params to dict for CRUD
+        params = decision.params.model_dump(exclude_none=True)
+        
+        # Ensure table is set
         if not params.get("table"):
-            # Infer table from subdomain
             table_map = {
                 "inventory": "inventory",
                 "shopping": "shopping_list",
@@ -1421,6 +1433,8 @@ Call the appropriate db_ tool for this intent. Return tool and params.
                 "preferences": "preferences",
             }
             params["table"] = table_map.get(quick_subdomain, quick_subdomain)
+        
+        # Ensure filters exists for read operations
         if "filters" not in params:
             params["filters"] = []
         if decision.tool == "db_read" and "limit" not in params:
@@ -1429,7 +1443,11 @@ Call the appropriate db_ tool for this intent. Return tool and params.
         # Validate and fix params
         fixed_params, error = _fix_and_validate_tool_params(decision.tool, params)
         if error:
-            logger.warning(f"Act Quick: Param fix error: {error}")
+            logger.error(f"Act Quick: Param validation failed (unfixable): {error}")
+            return {
+                "error": f"Invalid tool parameters: {error}",
+                "step_results": {},
+            }
         
         # Execute the tool
         result = await execute_crud(

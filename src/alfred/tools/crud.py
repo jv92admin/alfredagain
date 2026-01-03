@@ -1,5 +1,5 @@
 """
-Alfred V2 - Generic CRUD Tools.
+Alfred V3 - Generic CRUD Tools.
 
 Four tools that handle all database operations:
 - db_read: Fetch rows with filters
@@ -9,13 +9,21 @@ Four tools that handle all database operations:
 
 These replace the domain-specific tools (manage_inventory, query_recipe, etc.)
 with a generic, table-agnostic approach.
+
+Includes ingredient lookup layer for auto-linking items to the ingredients catalog.
 """
 
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from alfred.db.client import get_client
+
+logger = logging.getLogger(__name__)
+
+# Tables that benefit from ingredient lookup (have name + ingredient_id fields)
+INGREDIENT_LINKED_TABLES = {"inventory", "shopping_list", "recipe_ingredients"}
 
 
 # =============================================================================
@@ -238,6 +246,9 @@ async def db_create(params: DbCreateParams, user_id: str) -> dict | list[dict]:
     - Single record: data = {"name": "milk", "quantity": 2}
     - Batch: data = [{"name": "milk"}, {"name": "eggs"}]
 
+    For ingredient-linked tables (inventory, shopping_list, recipe_ingredients),
+    automatically looks up and links ingredient_id based on name field.
+
     Args:
         params: Insert parameters (table, data or list of data)
         user_id: Current user's ID (auto-added for user-owned tables)
@@ -253,6 +264,10 @@ async def db_create(params: DbCreateParams, user_id: str) -> dict | list[dict]:
     
     # Sanitize UUID fields (empty string → None)
     records = [_sanitize_uuid_fields(rec) for rec in records]
+
+    # Auto-link ingredient_id for ingredient-related tables
+    if params.table in INGREDIENT_LINKED_TABLES:
+        records = await _enrich_records_with_ingredient_ids(records)
 
     # Auto-add user_id for user-owned tables
     if params.table in USER_OWNED_TABLES:
@@ -331,6 +346,37 @@ async def db_delete(params: DbDeleteParams, user_id: str) -> list[dict]:
     result = query.execute()
     
     return result.data if result.data else []
+
+
+# =============================================================================
+# Ingredient Lookup Integration
+# =============================================================================
+
+
+async def _enrich_records_with_ingredient_ids(records: list[dict]) -> list[dict]:
+    """
+    Enrich records with ingredient_id by looking up names in the ingredients catalog.
+    
+    Uses high-confidence threshold (0.85) for writes - only auto-links on strong matches.
+    Keeps original 'name' field as-is per user preference.
+    """
+    # Lazy import to avoid circular dependency
+    try:
+        from alfred.tools.ingredient_lookup import enrich_with_ingredient_id
+    except ImportError:
+        logger.warning("ingredient_lookup module not available, skipping enrichment")
+        return records
+    
+    enriched = []
+    for record in records:
+        try:
+            enriched_record = await enrich_with_ingredient_id(record, operation="write")
+            enriched.append(enriched_record)
+        except Exception as e:
+            logger.warning(f"Failed to enrich record with ingredient_id: {e}")
+            enriched.append(record)
+    
+    return enriched
 
 
 # =============================================================================
