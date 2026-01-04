@@ -19,29 +19,39 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Configuration - check both env vars and pydantic settings
-def _get_config():
-    """Get logging config from settings or env vars."""
-    try:
-        from alfred.config import settings
-        return {
-            "log_prompts": settings.alfred_log_prompts or os.getenv("ALFRED_LOG_PROMPTS", "0") == "1",
-            "log_to_db": settings.alfred_log_to_db or os.getenv("ALFRED_LOG_TO_DB", "0") == "1",
-            "keep_sessions": settings.alfred_log_keep_sessions,
-        }
-    except Exception:
-        # Fallback to env vars if settings not available
-        return {
-            "log_prompts": os.getenv("ALFRED_LOG_PROMPTS", "0") == "1",
-            "log_to_db": os.getenv("ALFRED_LOG_TO_DB", "0") == "1",
-            "keep_sessions": int(os.getenv("ALFRED_LOG_KEEP_SESSIONS", "4")),
-        }
-
-_config = _get_config()
-LOG_PROMPTS = _config["log_prompts"]
-LOG_TO_DB = _config["log_to_db"]
+# Configuration
 LOG_DIR = Path("prompt_logs")
-KEEP_SESSIONS = _config["keep_sessions"]
+
+# These are checked dynamically to pick up env vars set after import
+def _is_log_prompts_enabled() -> bool:
+    """Check if file logging is enabled (dynamic check)."""
+    return os.getenv("ALFRED_LOG_PROMPTS", "0") == "1"
+
+def _is_log_to_db_enabled() -> bool:
+    """Check if DB logging is enabled (dynamic check)."""
+    return os.getenv("ALFRED_LOG_TO_DB", "0") == "1"
+
+def _get_keep_sessions() -> int:
+    """Get number of sessions to keep."""
+    return int(os.getenv("ALFRED_LOG_KEEP_SESSIONS", "4"))
+
+# Mutable state for runtime overrides
+_log_prompts_override: bool | None = None
+_log_to_db_override: bool | None = None
+
+def is_logging_enabled() -> bool:
+    """Check if any logging is enabled."""
+    prompts = _log_prompts_override if _log_prompts_override is not None else _is_log_prompts_enabled()
+    db = _log_to_db_override if _log_to_db_override is not None else _is_log_to_db_enabled()
+    return prompts or db
+
+def is_file_logging_enabled() -> bool:
+    """Check if file logging is enabled."""
+    return _log_prompts_override if _log_prompts_override is not None else _is_log_prompts_enabled()
+
+def is_db_logging_enabled() -> bool:
+    """Check if DB logging is enabled."""
+    return _log_to_db_override if _log_to_db_override is not None else _is_log_to_db_enabled()
 
 # Session tracking
 _session_id: str | None = None
@@ -51,16 +61,18 @@ _current_user_id: str | None = None
 
 def enable_prompt_logging(enabled: bool = True) -> None:
     """Enable or disable prompt logging to files."""
-    global LOG_PROMPTS
-    LOG_PROMPTS = enabled
+    global _log_prompts_override
+    _log_prompts_override = enabled
     if enabled:
         _ensure_log_dir()
+    logger.info(f"Prompt file logging: {'enabled' if enabled else 'disabled'}")
 
 
 def enable_db_logging(enabled: bool = True) -> None:
     """Enable or disable prompt logging to database."""
-    global LOG_TO_DB
-    LOG_TO_DB = enabled
+    global _log_to_db_override
+    _log_to_db_override = enabled
+    logger.info(f"Prompt DB logging: {'enabled' if enabled else 'disabled'}")
 
 
 def set_user_id(user_id: str | None) -> None:
@@ -221,14 +233,15 @@ def _log_to_db(
 
 
 def _cleanup_old_sessions() -> int:
-    """Delete old sessions, keeping only KEEP_SESSIONS most recent."""
+    """Delete old sessions, keeping only the configured number of most recent."""
     try:
         from alfred.db.client import get_client
         
         client = get_client()
+        keep = _get_keep_sessions()
         
         # Call the cleanup function
-        result = client.rpc("cleanup_old_prompt_logs", {"keep_sessions": KEEP_SESSIONS}).execute()
+        result = client.rpc("cleanup_old_prompt_logs", {"keep_sessions": keep}).execute()
         deleted = result.data if result.data else 0
         
         if deleted > 0:
@@ -268,7 +281,7 @@ def log_prompt(
     Returns:
         Path to the log file (if file logging enabled), or None
     """
-    if not LOG_PROMPTS and not LOG_TO_DB:
+    if not is_logging_enabled():
         return None
 
     global _call_counter
@@ -277,7 +290,7 @@ def log_prompt(
     file_path = None
     
     # Log to file if enabled
-    if LOG_PROMPTS:
+    if is_file_logging_enabled():
         file_path = _log_to_file(
             node=node,
             model=model,
@@ -290,7 +303,7 @@ def log_prompt(
         )
     
     # Log to DB if enabled
-    if LOG_TO_DB:
+    if is_db_logging_enabled():
         _log_to_db(
             node=node,
             model=model,
@@ -311,7 +324,7 @@ def log_prompt(
 
 def get_session_log_dir() -> Path | None:
     """Get the current session's log directory, if file logging is enabled."""
-    if not LOG_PROMPTS:
+    if not is_file_logging_enabled():
         return None
     return _get_session_dir()
 
@@ -323,7 +336,23 @@ def get_session_id() -> str:
 
 def reset_session() -> None:
     """Reset the session (for testing or new conversation)."""
-    global _session_id, _call_counter, _current_user_id
+    global _session_id, _call_counter, _current_user_id, _log_prompts_override, _log_to_db_override
+    old_session = _session_id
     _session_id = None
     _call_counter = 0
     _current_user_id = None
+    # Don't reset overrides - they're intentional runtime settings
+    logger.info(f"Prompt logger session reset (was: {old_session})")
+
+
+def get_logging_status() -> dict:
+    """Get current logging status for debugging."""
+    return {
+        "session_id": _session_id,
+        "call_counter": _call_counter,
+        "user_id": _current_user_id,
+        "file_logging": is_file_logging_enabled(),
+        "db_logging": is_db_logging_enabled(),
+        "env_ALFRED_LOG_PROMPTS": os.getenv("ALFRED_LOG_PROMPTS"),
+        "env_ALFRED_LOG_TO_DB": os.getenv("ALFRED_LOG_TO_DB"),
+    }

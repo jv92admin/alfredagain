@@ -33,6 +33,17 @@ sessions: dict[str, dict[str, Any]] = {}
 
 app = FastAPI(title="Alfred", version="2.0.0")
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Log configuration on startup."""
+    from alfred.llm.prompt_logger import get_logging_status
+    status = get_logging_status()
+    logger.info(f"Alfred starting up...")
+    logger.info(f"  Prompt file logging: {status['file_logging']} (ALFRED_LOG_PROMPTS={status['env_ALFRED_LOG_PROMPTS']})")
+    logger.info(f"  Prompt DB logging: {status['db_logging']} (ALFRED_LOG_TO_DB={status['env_ALFRED_LOG_TO_DB']})")
+
+
 # CORS middleware for React frontend dev server
 app.add_middleware(
     CORSMiddleware,
@@ -211,9 +222,19 @@ async def chat(req: ChatRequest, request: Request, session: dict = Depends(requi
 
 @app.post("/api/chat/reset")
 async def reset_chat(session: dict = Depends(require_session)):
-    """Reset conversation history."""
+    """Reset conversation history and prompt logging session."""
+    from alfred.llm.prompt_logger import reset_session
+    
     session["conversation"] = initialize_conversation()
+    reset_session()  # Start fresh prompt log session
     return {"success": True}
+
+
+@app.get("/api/debug/logging")
+async def debug_logging():
+    """Check current logging status (for debugging)."""
+    from alfred.llm.prompt_logger import get_logging_status
+    return get_logging_status()
 
 
 @app.post("/api/chat/stream")
