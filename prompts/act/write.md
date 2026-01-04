@@ -53,7 +53,12 @@ When tables are linked (parent ↔ children):
 2. Create child records with parent's ID as FK
 ```
 
-### DELETE Order: Children → Parent
+### DELETE Order: Check for CASCADE
+
+Some tables have CASCADE deletes (children auto-delete when parent deleted):
+- `recipes` → `recipe_ingredients`: **CASCADE** (just delete recipes, ingredients auto-delete)
+
+For tables WITHOUT cascade:
 ```
 1. Delete child records first (by parent FK)
 2. Delete parent record

@@ -27,7 +27,7 @@ Query results are facts. 0 records means those items don't exist — that's a va
 {"field": "name", "op": "ilike", "value": "%chicken%"}
 ```
 
-**Operators:** `=`, `>`, `<`, `>=`, `<=`, `in`, `ilike`, `is_null`, `contains`
+**Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `in`, `ilike`, `is_null`, `is_not_null`, `contains`
 
 **OR logic:** Use `or_filters` for keyword search (matches ANY):
 ```json
@@ -65,6 +65,8 @@ Query results are facts. 0 records means those items don't exist — that's a va
 6. **Note Forward.** For CRUD steps, include `note_for_next_step` with IDs or key info.
 
 7. **Dates use full year.** If Today is Dec 31, 2025 and step mentions "January 3", use 2026-01-03.
+
+8. **Use Prior IDs Directly.** If previous step gave you IDs to work with, use them with `in` operator — don't re-derive the filter logic. "Delete items from Step 1" means use `{"op": "in", "value": [those IDs]}`, not reinvent the filter.
 
 ---
 

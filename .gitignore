@@ -65,6 +65,7 @@ Thumbs.db
 *.log
 logs/
 prompt_logs/
+prompt_logs_downloaded/
 session_logs/
 
 # Local development

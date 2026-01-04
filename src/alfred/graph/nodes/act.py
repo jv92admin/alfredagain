@@ -488,8 +488,11 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
     
     Last FULL_DETAIL_STEPS get FULL data (essential for analyze steps).
     Older steps get summarized.
+    
+    Uses table-aware formatting to reduce token bloat while preserving
+    the critical info (IDs, names) that Act needs for subsequent steps.
     """
-    import json
+    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
     
     if not step_results:
         return "### Previous Step Results\n*No previous steps completed yet.*"
@@ -505,27 +508,91 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
         step_num = idx + 1
         is_recent = idx >= full_detail_threshold
         
-        # Recent steps: FULL JSON data (critical for analyze steps)
-        if is_recent:
-            lines.append(f"**Step {step_num}**: {json.dumps(result, default=str)}")
-        # Older steps: summarized
-        else:
-            if isinstance(result, list) and result and isinstance(result[0], tuple):
-                lines.append(f"**Step {step_num}** completed with {len(result)} tool calls")
-            elif isinstance(result, list):
-                lines.append(f"**Step {step_num}**: {len(result)} records")
-            elif isinstance(result, dict):
-                # Show key facts only
-                keys = list(result.keys())[:3]
-                lines.append(f"**Step {step_num}**: Data with keys: {', '.join(keys)}")
-            elif isinstance(result, int):
-                lines.append(f"**Step {step_num}**: Affected {result} records")
+        # Parse result format: [(tool_name, subdomain, result_data), ...]
+        if isinstance(result, list) and result and isinstance(result[0], tuple):
+            for tool_call in result:
+                if len(tool_call) >= 3:
+                    tool_name, subdomain, data = tool_call[:3]
+                    # Map subdomain to table (they usually match)
+                    table = _subdomain_to_table(subdomain)
+                    lines.append(f"**Step {step_num}** [{tool_name}] on `{table}`:")
+                    
+                    if is_recent:
+                        # Full detail with clean formatting
+                        lines.extend(_format_step_data_clean(data, table))
+                    else:
+                        # Summarized for older steps
+                        lines.append(_summarize_step_data(data, table))
+        elif isinstance(result, list):
+            # Direct list (legacy format)
+            table = _infer_table_from_record(result[0]) if result else None
+            lines.append(f"**Step {step_num}** ({len(result)} records):")
+            if is_recent:
+                lines.extend(_format_step_data_clean(result, table))
             else:
-                lines.append(f"**Step {step_num}**: (use retrieve_step for details)")
+                lines.append(f"  {len(result)} records")
+        elif isinstance(result, int):
+            lines.append(f"**Step {step_num}**: Affected {result} records")
+        else:
+            lines.append(f"**Step {step_num}**: (use retrieve_step for details)")
         
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _subdomain_to_table(subdomain: str) -> str:
+    """Map subdomain to primary table name."""
+    mapping = {
+        "inventory": "inventory",
+        "shopping": "shopping_list",
+        "recipes": "recipes",
+        "meal_plans": "meal_plans",
+        "tasks": "tasks",
+        "preferences": "preferences",
+    }
+    return mapping.get(subdomain, subdomain)
+
+
+def _format_step_data_clean(data: Any, table: str | None) -> list[str]:
+    """Format step data in clean, readable format with IDs preserved."""
+    from alfred.prompts.injection import _format_records_for_table
+    
+    if isinstance(data, list):
+        if not data:
+            return ["  (no records)"]
+        formatted = _format_records_for_table(data, table)
+        # Add a summary line with all IDs for easy copy-paste
+        ids = [str(r.get("id"))[-8:] for r in data if isinstance(r, dict) and r.get("id")]
+        if ids:
+            formatted.append(f"  **IDs (short):** {', '.join(ids)}")
+        return formatted
+    elif isinstance(data, int):
+        return [f"  Affected {data} records"]
+    elif isinstance(data, dict):
+        from alfred.prompts.injection import _format_record_clean
+        return [_format_record_clean(data, table)]
+    else:
+        return [f"  {str(data)[:200]}"]
+
+
+def _summarize_step_data(data: Any, table: str | None) -> str:
+    """Summarize older step data compactly."""
+    if isinstance(data, list):
+        if not data:
+            return "  (no records)"
+        count = len(data)
+        # Just show names if available
+        names = [r.get("name") or r.get("title") for r in data[:3] if isinstance(r, dict)]
+        names = [n for n in names if n]
+        if names:
+            preview = ", ".join(names[:3])
+            return f"  {count} records: {preview}{'...' if count > 3 else ''}"
+        return f"  {count} records"
+    elif isinstance(data, int):
+        return f"  Affected {data} records"
+    else:
+        return "  (data available via retrieve_step)"
 
 
 def _extract_key_fields(records: list[dict]) -> str:
@@ -554,8 +621,8 @@ def _extract_key_fields(records: list[dict]) -> str:
 
 
 def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int) -> str:
-    """Format tool results from current step - show ACTUAL data, not summaries."""
-    import json
+    """Format tool results from current step - show ACTUAL data with clean formatting."""
+    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
     
     if not tool_results:
         return ""
@@ -565,10 +632,18 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
     for i, item in enumerate(tool_results, 1):
         # Handle both (tool, table, result) and (tool, result) formats
         if len(item) == 3:
-            tool_name, _table, result = item
+            tool_name, subdomain, result = item
+            table = _subdomain_to_table(subdomain) if subdomain else None
         else:
             tool_name, result = item
-        lines.append(f"### Tool Call {i}: `{tool_name}`")
+            table = None
+        
+        # Infer table from data if not provided
+        if not table and isinstance(result, list) and result:
+            table = _infer_table_from_record(result[0])
+        
+        table_label = f" on `{table}`" if table else ""
+        lines.append(f"### Tool Call {i}: `{tool_name}`{table_label}")
         
         # Show result with semantic meaning
         if tool_name == "db_read":
@@ -576,47 +651,35 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
                 if len(result) == 0:
                     lines.append("**Result: 0 records found.**")
                     lines.append("→ Empty result. If step goal is READ: this is your answer. If step goal is ADD/CREATE: proceed with db_create.")
-                elif len(result) > 50:
-                    # Only truncate very large results
-                    lines.append(f"**Result: {len(result)} records found.** First 50:")
-                    # Add quick reference for IDs/names
-                    quick_ref = _extract_key_fields(result[:50])
-                    if quick_ref:
-                        lines.append(quick_ref)
-                        lines.append("")
-                    lines.append("<details><summary>Full JSON</summary>")
-                    lines.append("")
-                    lines.append("```json")
-                    lines.append(json.dumps(result[:50], indent=2, default=str))
-                    lines.append("```")
-                    lines.append("</details>")
                 else:
-                    # Show all records for reasonable sizes (up to 50)
                     lines.append(f"**Result: {len(result)} records found:**")
-                    # Add quick reference for IDs/names FIRST
-                    quick_ref = _extract_key_fields(result)
-                    if quick_ref:
-                        lines.append(quick_ref)
+                    # Clean formatted records with IDs visible
+                    formatted = _format_records_for_table(result[:50], table)
+                    lines.extend(formatted)
+                    if len(result) > 50:
+                        lines.append(f"  ... and {len(result) - 50} more")
+                    # Summary of all IDs for easy use in next query
+                    ids = [str(r.get("id")) for r in result if isinstance(r, dict) and r.get("id")]
+                    if ids:
                         lines.append("")
-                    lines.append("<details><summary>Full JSON</summary>")
-                    lines.append("")
-                    lines.append("```json")
-                    lines.append(json.dumps(result, indent=2, default=str))
-                    lines.append("```")
-                    lines.append("</details>")
+                        lines.append(f"**All IDs ({len(ids)}):** Use these in `in` filter for next step")
+                        # Show full IDs for copy-paste (these are what Act needs)
+                        lines.append(f"```\n{ids}\n```")
             else:
                 lines.append(f"Result: `{result}`")
         elif tool_name == "db_create":
             if isinstance(result, list):
                 lines.append(f"**✓ Created {len(result)} records:**")
-                lines.append("```json")
-                lines.append(json.dumps(result, indent=2, default=str))
-                lines.append("```")
+                formatted = _format_records_for_table(result, table)
+                lines.extend(formatted)
+                # Show IDs created
+                ids = [str(r.get("id")) for r in result if isinstance(r, dict) and r.get("id")]
+                if ids:
+                    lines.append(f"**Created IDs:** {ids}")
             elif isinstance(result, dict):
                 lines.append(f"**✓ Created 1 record:**")
-                lines.append("```json")
-                lines.append(json.dumps(result, indent=2, default=str))
-                lines.append("```")
+                from alfred.prompts.injection import _format_record_clean
+                lines.append(_format_record_clean(result, table))
             else:
                 lines.append(f"**✓ Created:** `{result}`")
         elif tool_name == "db_update":
@@ -635,6 +698,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
                 lines.append(f"**✓ Deleted:** `{result}`")
         else:
             # Generic fallback
+            import json
             if isinstance(result, (dict, list)):
                 result_json = json.dumps(result, indent=2, default=str)
                 if len(result_json) > 2000:
@@ -1249,6 +1313,17 @@ What's next?
             current_turn,
         )
         
+        # Touch existing entities that appear in step results
+        # This keeps them "alive" for garbage collection purposes
+        from alfred.core.entities import EntityRegistry
+        registry_data = state.get("entity_registry", {})
+        registry = EntityRegistry.from_dict(registry_data) if registry_data else EntityRegistry()
+        
+        for entity in new_entities:
+            # If entity already exists in registry, touch it
+            if registry.get(entity.id):
+                registry.touch(entity.id, current_turn)
+        
         # Convert to dicts for state storage
         existing_entities = state.get("turn_entities", [])
         new_entity_dicts = [e.to_dict() for e in new_entities]
@@ -1263,6 +1338,7 @@ What's next?
             "content_archive": new_archive,
             "prev_step_note": note_for_next,  # Pass note to next step
             "turn_entities": accumulated_entities,  # Accumulated entity IDs
+            "entity_registry": registry.to_dict(),  # Update registry with touched entities
         }
 
     # Handle other actions (ask_user, blocked, fail)
@@ -1399,6 +1475,25 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
     else:
         action_type = "read"
     
+    # Get user's original message - CRITICAL for data extraction
+    user_message = state.get("user_message", "")
+    
+    # Get conversation context for session awareness
+    conversation = state.get("conversation", {})
+    engagement_summary = conversation.get("engagement_summary", "")
+    
+    # Get user preferences for safety (allergies, restrictions)
+    user_preferences = None
+    if user_id:
+        try:
+            profile = await get_cached_profile(user_id)
+            user_preferences = {
+                "allergies": profile.allergies,
+                "dietary_restrictions": profile.dietary_restrictions,
+            }
+        except Exception:
+            pass  # Preferences are optional
+    
     # Build prompt using shared injection module
     system_prompt, user_prompt = build_act_quick_prompt(
         intent=quick_intent,
@@ -1406,6 +1501,9 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
         action_type=action_type,
         schema=subdomain_schema,
         today=today,
+        user_message=user_message,
+        engagement_summary=engagement_summary,
+        user_preferences=user_preferences,
     )
 
     try:
@@ -1417,7 +1515,22 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
             complexity="low",  # Quick mode uses fast model
         )
         
-        logger.info(f"Act Quick: tool={decision.tool}")
+        logger.info(f"Act Quick: tool={decision.tool}, expected_action={action_type}")
+        
+        # Log warning if tool doesn't match expected action (but trust LLM's choice)
+        expected_tool_map = {
+            "read": "db_read",
+            "create": "db_create",
+            "update": "db_update",
+            "delete": "db_delete",
+        }
+        expected_tool = expected_tool_map.get(action_type, "db_read")
+        
+        if decision.tool != expected_tool:
+            logger.warning(
+                f"Act Quick: Tool mismatch! Intent analysis said '{action_type}' but LLM chose '{decision.tool}'. "
+                f"Trusting LLM's choice but this may indicate a prompt issue."
+            )
         
         # Convert structured params to dict for CRUD
         params = decision.params.model_dump(exclude_none=True)

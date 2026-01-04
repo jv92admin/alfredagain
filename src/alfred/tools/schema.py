@@ -908,27 +908,15 @@ Mark task complete: `{"tool": "db_update", "params": {"table": "tasks", "filters
 """,
     "preferences": """## Examples
 
-Get preferences: `{"tool": "db_read", "params": {"table": "preferences", "filters": [], "limit": 1}}`
+**Update current vibes:** `{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"current_vibes": ["chicken dishes", "curries", "grilling"]}}}`
 
-**Update planning rhythm (how they want to cook):**
-```json
-{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"planning_rhythm": ["weekends only", "30min weeknights"]}}}
-```
+**Update planning rhythm:** `{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"planning_rhythm": ["weekends only", "30min weeknights"]}}}`
 
-**Update current vibes (culinary interests):**
-```json
-{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"current_vibes": ["more vegetables", "fusion experiments", "soup skills"]}}}
-```
+**Update restrictions/allergies:** `{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"dietary_restrictions": ["vegetarian"], "allergies": ["peanuts"]}}}`
 
-**Update hard constraints:**
-```json
-{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"dietary_restrictions": ["vegetarian"], "allergies": ["peanuts"]}}}
-```
+**Update equipment:** `{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"available_equipment": ["instant-pot", "air-fryer"]}}}`
 
-**Update equipment:**
-```json
-{"tool": "db_update", "params": {"table": "preferences", "filters": [], "data": {"available_equipment": ["instant-pot", "air-fryer"]}}}
-```
+**Read preferences:** `{"tool": "db_read", "params": {"table": "preferences", "filters": [], "limit": 1}}`
 """,
     "history": """## Examples
 

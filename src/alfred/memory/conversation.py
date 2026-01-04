@@ -421,16 +421,22 @@ def format_condensed_context(
         tokens_used += estimate_tokens(section)
     
     # 2. Active entities (critical for reference resolution)
+    # Filter to relevant types only - skip ingredient-level noise
     active = conversation.get("active_entities", {})
     if active:
-        entity_lines = ["**Recent items**:"]
-        for entity_id, entity_data in active.items():
-            etype = entity_data.get("type", "unknown")
-            label = entity_data.get("label", "unknown")
-            entity_lines.append(f"  - {etype}: {label}")
-        section = "\n".join(entity_lines)
-        parts.append(section)
-        tokens_used += estimate_tokens(section)
+        relevant_types = {"recipe", "meal_plan", "preferences", "task"}
+        filtered = {k: v for k, v in active.items() 
+                   if v.get("type", "unknown") in relevant_types}
+        
+        if filtered:
+            entity_lines = ["**Recent items**:"]
+            for entity_id, entity_data in filtered.items():
+                etype = entity_data.get("type", "unknown")
+                label = entity_data.get("label", "unknown")
+                entity_lines.append(f"  - {etype}: {label}")
+            section = "\n".join(entity_lines)
+            parts.append(section)
+            tokens_used += estimate_tokens(section)
     
     # 3. Recent turns (last 1-2, condensed format)
     recent = conversation.get("recent_turns", [])
@@ -485,19 +491,10 @@ def format_full_context(
         parts.append(section)
         tokens_used += estimate_tokens(section)
     
-    # 2. Active entities
-    active = conversation.get("active_entities", {})
-    if active:
-        entity_lines = ["### Active Entities (for reference resolution)"]
-        for entity_id, entity_data in active.items():
-            etype = entity_data.get("type", "unknown")
-            label = entity_data.get("label", "unknown")
-            entity_lines.append(f"- **{etype}**: {label} (id: `{entity_id}`)")
-        section = "\n".join(entity_lines)
-        parts.append(section)
-        tokens_used += estimate_tokens(section)
+    # NOTE: Active entities moved to END of context (after conversation)
+    # Step results are the primary ID source - entities are backup only
     
-    # 3. Recent conversation turns (use LLM-generated summaries when available)
+    # 2. Recent conversation turns (use LLM-generated summaries when available)
     recent = conversation.get("recent_turns", [])
     if recent:
         turn_lines = ["### Recent Conversation"]
@@ -539,6 +536,30 @@ def format_full_context(
         if tokens_used + estimate_tokens(section) < max_tokens:
             parts.append(section)
             tokens_used += estimate_tokens(section)
+    
+    # 6. Background entities (at END - step results are the primary ID source)
+    # These are entities from earlier turns, shown for cross-reference only
+    active = conversation.get("active_entities", {})
+    if active:
+        # Filter to show most relevant entity types (skip ingredient noise)
+        relevant_types = {"recipe", "meal_plan", "preferences", "task"}
+        filtered = {k: v for k, v in active.items() 
+                   if v.get("type", "unknown") in relevant_types}
+        
+        if filtered:
+            entity_lines = [
+                "### Background Entities",
+                "*From earlier turns — use Step Results above for IDs when available:*"
+            ]
+            for entity_id, entity_data in filtered.items():
+                etype = entity_data.get("type", "unknown")
+                label = entity_data.get("label", "unknown")
+                entity_lines.append(f"- **{etype}**: {label} (id: `{entity_id}`)")
+            section = "\n".join(entity_lines)
+            
+            if tokens_used + estimate_tokens(section) < max_tokens:
+                parts.append(section)
+                tokens_used += estimate_tokens(section)
     
     if not parts:
         return "*No conversation context yet.*"

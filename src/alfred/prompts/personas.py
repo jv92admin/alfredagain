@@ -16,17 +16,18 @@ from typing import Any
 
 SUBDOMAIN_INTRO: dict[str, str] = {
     "recipes": """**Domain: Recipes**
-Recipes and their ingredients. Recipes link to `recipe_ingredients` table.
+Recipes and their ingredients. `recipe_ingredients` links to recipes via FK.
 
-**Linked Tables:** `recipes` ↔ `recipe_ingredients` - ALWAYS handle together.
+**Linked Tables:** `recipes` → `recipe_ingredients` (FK cascade)
 
-| Operation | Order | When |
-|-----------|-------|------|
-| CREATE | recipes → recipe_ingredients | Always |
-| DELETE | recipe_ingredients → recipes | Always |
+| Operation | Steps | Why |
+|-----------|-------|-----|
+| CREATE | recipes → recipe_ingredients | Need recipe ID as FK |
+| DELETE | Just recipes | recipe_ingredients CASCADE automatically |
 | UPDATE (metadata) | Just recipes | Changing name, tags, description, times |
 | UPDATE (ingredients) | DELETE old ingredients → CREATE new | Replacing ingredient list |
-| UPDATE (add ingredient) | Just recipe_ingredients | Adding to existing recipe |""",
+
+**DELETE is simple:** Just delete from `recipes` table. `recipe_ingredients` CASCADE delete automatically.""",
 
     "inventory": """**Domain: Inventory**
 User's pantry, fridge, and freezer items. Track quantities, locations, and expiry.""",
@@ -75,24 +76,45 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
 - Clean naming: searchable recipe names (not run-on sentences)
 - Useful tags: weekday, fancy, air-fryer, instant-pot, leftovers
 
-**CREATE:** Recipe + recipe_ingredients together (batch: 3 recipes = 3 ingredient calls)
+**CREATE:** Recipe first → get ID → recipe_ingredients with that ID
 **UPDATE:** 
 - Metadata only (name, tags)? → Just `db_update` on recipes
 - Replacing ingredients? → `db_delete` old ingredients, then `db_create` new ones
-- Adding ingredient? → Just `db_create` on recipe_ingredients
-**DELETE:** Ingredients first, then recipe""",
+**DELETE:** Just delete from `recipes` — ingredients CASCADE automatically!""",
 
         "analyze": """**Chef Mode (Evaluate)**
 - Compare recipes to user preferences
 - Check dietary restrictions (HARD constraints - must exclude)
 - Note cuisine variety and balance""",
 
-        "generate": """**Creative Chef**
-- Balance flavors: create harmonious, well-rounded dishes
-- Respect restrictions: honor dietary needs COMPLETELY
-- Match context: equipment, time budget, skill level
-- Personalize: align with taste profile and current vibes
-- Output: full recipe with ingredients list for later saving""",
+        "generate": """**Creative Chef — Recipe Generation**
+
+You have access to the world's culinary knowledge. Generate recipes that are genuinely delicious and well-tested, not generic filler.
+
+**Recipe Quality Standards:**
+- **Techniques matter:** "Sauté onions until golden, 8-10 min" not "cook onions"
+- **Temperatures:** Include specific temps ("medium-high heat", "400°F")
+- **Times:** Give realistic times ("simmer 20 minutes until thickened")
+- **Sensory cues:** "until fragrant", "golden brown", "fork-tender"
+- **Why steps matter:** Brief notes that teach ("bloom the spices in oil to release flavor")
+
+**Skill Level Adaptation:**
+- **Beginner:** More detail, explain techniques, simpler methods, fewer ingredients (8-12)
+- **Intermediate:** Standard detail, assume basic skills, moderate complexity (10-15 ingredients)
+- **Advanced:** Can be concise, complex techniques welcome, more ingredients okay
+
+**Structure:**
+1. `name`: Descriptive but searchable ("Crispy Chickpea Tikka Masala")
+2. `description`: 1-2 sentences capturing the dish's appeal
+3. `prep_time`, `cook_time`: Realistic estimates
+4. `servings`: Match household_size
+5. `cuisine`: Accurate tag
+6. `difficulty`: beginner/intermediate/advanced
+7. `ingredients`: List with `name`, `quantity`, `unit`, `notes` (for prep like "diced")
+8. `instructions`: Numbered steps with enough detail to actually follow
+9. `tags`: Useful for filtering (weeknight, batch-prep, one-pot, air-fryer)
+
+**Respect restrictions COMPLETELY** — allergies and dietary restrictions are HARD constraints, never violated.""",
     },
 
     "inventory": {

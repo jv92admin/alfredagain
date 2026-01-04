@@ -33,7 +33,6 @@ from alfred.graph.state import AlfredState, ThinkStep, ThinkOutput
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
 from alfred.tools.schema import get_complexity_rules
-from alfred.prompts.personas import get_subdomain_dependencies_summary
 
 
 # Mutation verbs that trigger complexity escalation
@@ -123,6 +122,7 @@ async def think_node(state: AlfredState) -> dict:
         State update with think_output (steps with groups, or proposal/clarification)
     """
     router_output = state["router_output"]
+    understand_output = state.get("understand_output")
     conversation = state.get("conversation", {})
     user_id = state.get("user_id")
 
@@ -131,6 +131,14 @@ async def think_node(state: AlfredState) -> dict:
 
     if router_output is None:
         return {"error": "Router output missing"}
+    
+    # Use Understand's processed message if available (has resolved references)
+    user_message = state["user_message"]
+    processed_message = None
+    referenced_entities = []
+    if understand_output:
+        processed_message = getattr(understand_output, "processed_message", None)
+        referenced_entities = getattr(understand_output, "referenced_entities", []) or []
 
     # Get mode context
     mode_data = state.get("mode_context", {})
@@ -165,8 +173,8 @@ async def think_node(state: AlfredState) -> dict:
         except Exception:
             pass  # Dashboard is optional
     
-    # Get subdomain dependencies summary
-    dependencies_section = get_subdomain_dependencies_summary()
+    # Note: Subdomain dependencies are now in prompts/think.md itself
+    # Removed get_subdomain_dependencies_summary() to avoid duplication
     
     # Check for pending clarification/proposal from previous turn
     pending_clarification = conversation.get("pending_clarification")
@@ -184,11 +192,18 @@ The user's current message is their response. Use this context to plan.
     # Build the user prompt following: Task → Context → Instructions
     today = date.today().isoformat()
     
+    # Build task section with resolved info from Understand
+    understand_section = ""
+    if processed_message and processed_message != user_message:
+        understand_section = f'\n**Resolved**: "{processed_message}"'
+    if referenced_entities:
+        understand_section += f"\n**Referenced entities**: {referenced_entities}"
+    
     user_prompt = f"""{pending_section}## Task
 
 **Goal**: {router_output.goal}
 
-**User said**: "{state["user_message"]}"
+**User said**: "{user_message}"{understand_section}
 
 **Agent**: {router_output.agent}
 
@@ -204,8 +219,6 @@ The user's current message is their response. Use this context to plan.
 
 {dashboard_section}
 
-{dependencies_section}
-
 ---
 
 ## Conversation Context
@@ -214,34 +227,14 @@ The user's current message is their response. Use this context to plan.
 
 ---
 
-## Instructions
+## Your Output
 
-Plan steps with **group** field for parallelization:
-- Steps in the same group have NO dependencies on each other → can run in parallel
-- Steps in later groups depend on earlier groups → run sequentially
-- Group 0 runs first, then Group 1, then Group 2, etc.
+Return one of:
+- `plan_direct` with steps (for clear, unambiguous requests)
+- `propose` with proposal_message (for complex/exploratory requests)
+- `clarify` with questions (only if truly missing critical context)
 
-**Step types (V3):**
-- `read` — Query database (replaces "crud" for reads)
-- `write` — Create/update/delete in database (replaces "crud" for mutations)
-- `analyze` — Reason over data from previous steps (no DB calls)
-- `generate` — Create new content (no DB calls)
-
-**Group patterns:**
-- Independent reads → same group (parallel)
-- Writes before dependent reads → write in earlier group
-- Analyze depends on reads → analyze in later group
-
-**Example:**
-"What can I make?" →
-  Group 0: [read recipes, read inventory]  (parallel)
-  Group 1: [analyze: match recipes to inventory]  (needs Group 0)
-
-If plan_direct, include steps with:
-- `description`: What this step accomplishes
-- `step_type`: read | analyze | generate | write
-- `subdomain`: inventory | recipes | shopping | meal_plans | tasks | preferences
-- `group`: 0, 1, 2... (execution order)"""
+Each step needs: `description`, `step_type`, `subdomain`, `group`"""
 
     # Call LLM for planning
     result = await call_llm(

@@ -101,7 +101,7 @@ class EntityRegistry:
     
     # Garbage collection thresholds
     INACTIVE_TTL_TURNS: int = 2      # Remove inactive entities after N turns
-    UNREFERENCED_TTL_TURNS: int = 5  # Mark unreferenced entities inactive after N turns
+    UNREFERENCED_TTL_TURNS: int = 3  # Mark unreferenced entities inactive after N turns (was 5, too long)
     PENDING_TTL_TURNS: int = 3       # Mark unconfirmed pending entities inactive after N turns
     
     # Context limits (for prompt injection)

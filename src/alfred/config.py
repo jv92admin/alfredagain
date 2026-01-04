@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     alfred_env: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     
+    # Prompt logging
+    # ALFRED_LOG_PROMPTS=1 - log to local files (dev only)
+    # ALFRED_LOG_TO_DB=1 - log to Supabase prompt_logs table (works in production)
+    alfred_log_prompts: bool = False
+    alfred_log_to_db: bool = False
+    alfred_log_keep_sessions: int = 4  # Keep last N sessions in DB
+    
     # Dev user - matches the user created in migrations/001_core_tables.sql
     # Skip auth for now, use this hardcoded user
     dev_user_id: str = "00000000-0000-0000-0000-000000000002"  # Alice
@@ -43,6 +50,10 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.alfred_env == "development"
+    
+    @property
+    def is_production(self) -> bool:
+        return self.alfred_env == "production"
 
 
 @lru_cache

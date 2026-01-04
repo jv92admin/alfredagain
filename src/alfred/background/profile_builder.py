@@ -70,6 +70,7 @@ class KitchenDashboard:
     # Recipe summary
     recipe_count: int = 0
     recipes_by_cuisine: dict[str, int] = field(default_factory=dict)  # {"Italian": 8, "Indian": 6}
+    recipe_names_by_cuisine: dict[str, list[str]] = field(default_factory=dict)  # {"Italian": ["Pasta", "Pizza"]}
     
     # Meal plan summary (next 7 days)
     meal_plan_next_7_days: int = 0  # How many slots have meals planned
@@ -347,17 +348,25 @@ async def build_kitchen_dashboard(user_id: str) -> KitchenDashboard:
     except Exception:
         pass
     
-    # 2. Recipe count and breakdown by cuisine
+    # 2. Recipe count and breakdown by cuisine (with names for Think context)
     try:
-        recipe_result = client.table("recipes").select("id, cuisine").eq("user_id", user_id).execute()
+        recipe_result = client.table("recipes").select("id, name, cuisine").eq("user_id", user_id).execute()
         if recipe_result.data:
             dashboard.recipe_count = len(recipe_result.data)
-            # Group by cuisine
+            # Group by cuisine with counts and names
             cuisine_counts: dict[str, int] = {}
+            cuisine_names: dict[str, list[str]] = {}
             for recipe in recipe_result.data:
                 cuisine = recipe.get("cuisine") or "Other"
+                name = recipe.get("name") or "Unnamed"
                 cuisine_counts[cuisine] = cuisine_counts.get(cuisine, 0) + 1
+                if cuisine not in cuisine_names:
+                    cuisine_names[cuisine] = []
+                # Keep up to 3 recipe names per cuisine
+                if len(cuisine_names[cuisine]) < 3:
+                    cuisine_names[cuisine].append(name)
             dashboard.recipes_by_cuisine = cuisine_counts
+            dashboard.recipe_names_by_cuisine = cuisine_names
     except Exception:
         pass
     
@@ -427,13 +436,14 @@ def format_dashboard_for_prompt(dashboard: KitchenDashboard) -> str:
     else:
         lines.append("- **Inventory:** Empty")
     
-    # Recipes
+    # Recipes (with names for better context)
     if dashboard.recipe_count > 0:
-        cuisine_parts = []
-        for cuisine, count in sorted(dashboard.recipes_by_cuisine.items(), key=lambda x: -x[1]):
-            cuisine_parts.append(f"{cuisine}: {count}")
-        cuisine_str = f" ({', '.join(cuisine_parts[:3])})" if cuisine_parts else ""
-        lines.append(f"- **Recipes:** {dashboard.recipe_count} saved{cuisine_str}")
+        lines.append(f"- **Recipes:** {dashboard.recipe_count} saved")
+        # Show recipe names grouped by cuisine
+        for cuisine, names in sorted(dashboard.recipe_names_by_cuisine.items(), key=lambda x: -len(x[1])):
+            names_str = ", ".join(names[:3])
+            more = f" +{dashboard.recipes_by_cuisine.get(cuisine, 0) - 3} more" if dashboard.recipes_by_cuisine.get(cuisine, 0) > 3 else ""
+            lines.append(f"  - {cuisine}: {names_str}{more}")
     else:
         lines.append("- **Recipes:** None saved")
     

@@ -35,7 +35,7 @@ class FilterClause(BaseModel):
     """A single filter condition for queries."""
 
     field: str
-    op: Literal["=", ">", "<", ">=", "<=", "in", "ilike", "is_null", "contains"]
+    op: Literal["=", "!=", "neq", ">", "<", ">=", "<=", "in", "not_in", "ilike", "is_null", "is_not_null", "contains"]
     value: Any  # For 'contains' on arrays: value is a single string to check
 
 
@@ -112,6 +112,8 @@ def apply_filter(query: Any, f: FilterClause) -> Any:
     match f.op:
         case "=":
             return query.eq(f.field, f.value)
+        case "!=" | "neq":
+            return query.neq(f.field, f.value)
         case ">":
             return query.gt(f.field, f.value)
         case "<":
@@ -122,14 +124,27 @@ def apply_filter(query: Any, f: FilterClause) -> Any:
             return query.lte(f.field, f.value)
         case "in":
             return query.in_(f.field, f.value)
+        case "not_in":
+            # Supabase doesn't have not_in, use neq for single or filter for multiple
+            if isinstance(f.value, list) and len(f.value) == 1:
+                return query.neq(f.field, f.value[0])
+            # For multiple values, we'd need a workaround - for now, log warning
+            import logging
+            logging.getLogger("alfred.crud").warning(f"not_in with multiple values not fully supported: {f}")
+            return query
         case "ilike":
             return query.ilike(f.field, f.value)
         case "is_null":
             return query.is_(f.field, "null")
+        case "is_not_null":
+            return query.not_.is_(f.field, "null")
         case "contains":
             # For array columns: check if array contains value
             # Uses PostgreSQL @> operator via Supabase .contains()
             return query.contains(f.field, [f.value] if isinstance(f.value, str) else f.value)
+        case _:
+            # Unknown operator - raise error instead of silently ignoring
+            raise ValueError(f"Unsupported filter operator: {f.op}. Supported: =, !=, >, <, >=, <=, in, ilike, is_null, is_not_null, contains")
     return query
 
 

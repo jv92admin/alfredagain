@@ -173,11 +173,14 @@ async def get_me(session: dict = Depends(require_session)):
 @app.post("/api/chat")
 async def chat(req: ChatRequest, request: Request, session: dict = Depends(require_session)):
     """Send a message to Alfred."""
-    from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
+    from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
     
     try:
         # Enable prompt logging based on user preference
         enable_prompt_logging(req.log_prompts)
+        
+        # Set user ID for logging context
+        set_user_id(session["user_id"])
         
         # Get conversation from session
         conversation = session.get("conversation") or initialize_conversation()
@@ -216,12 +219,15 @@ async def reset_chat(session: dict = Depends(require_session)):
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest, request: Request, session: dict = Depends(require_session)):
     """Send a message to Alfred with streaming progress updates."""
-    from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
+    from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
     
     async def event_generator():
         try:
             # Enable prompt logging based on user preference
             enable_prompt_logging(req.log_prompts)
+            
+            # Set user ID for logging context
+            set_user_id(session["user_id"])
             
             # Get conversation from session
             conversation = session.get("conversation") or initialize_conversation()

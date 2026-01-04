@@ -302,6 +302,7 @@ async def _quick_llm_response(
     intent: str,
     subdomain: str,
     result: Any,
+    action_performed: str = "read",  # What action was ACTUALLY done
 ) -> str:
     """
     Light LLM call for quick mode when deterministic formatter doesn't match.
@@ -315,15 +316,34 @@ async def _quick_llm_response(
     else:
         result_summary = "1 record"
     
+    # Detect intent/action mismatch
+    intent_lower = intent.lower()
+    expected_action = "read"
+    if any(verb in intent_lower for verb in ["update", "change", "modify", "set"]):
+        expected_action = "update"
+    elif any(verb in intent_lower for verb in ["add", "create", "insert", "save"]):
+        expected_action = "create"
+    elif any(verb in intent_lower for verb in ["delete", "remove", "clear"]):
+        expected_action = "delete"
+    
+    mismatch_warning = ""
+    if expected_action != action_performed:
+        mismatch_warning = f"""
+⚠️ IMPORTANT: The user wanted to {expected_action.upper()} but we only {action_performed.upper()}ed.
+Do NOT claim you completed the {expected_action}. Be honest that you only read the data."""
+    
     system_prompt = """You are Alfred, a helpful kitchen assistant. 
-Give a brief, friendly response based on the results. Be concise."""
+Give a brief, friendly response based on the results. Be concise.
+NEVER claim to have updated/created/deleted something if you only read data."""
     
     user_prompt = f"""User asked: "{user_message}"
 Intent: {intent}
 Subdomain: {subdomain}
+Action performed: {action_performed.upper()}
 Result: {result_summary}
+{mismatch_warning}
 
-Respond naturally in 1-2 sentences."""
+Respond naturally in 1-2 sentences. Be honest about what action was taken."""
     
     try:
         output = await call_llm(
@@ -392,17 +412,33 @@ async def reply_node(state: AlfredState) -> dict:
         quick_intent = getattr(understand_output, "quick_intent", "")
         quick_subdomain = getattr(understand_output, "quick_subdomain", "")
         
+        # Determine what action was actually performed from step_results
+        action_performed = "read"  # Default
+        if step_results:
+            # Step results format: {0: [(tool, subdomain, data), ...]}
+            first_result = step_results.get(0, [])
+            if first_result and isinstance(first_result, list) and first_result:
+                if isinstance(first_result[0], tuple) and len(first_result[0]) >= 1:
+                    tool = first_result[0][0]
+                    action_performed = {
+                        "db_read": "read",
+                        "db_create": "create",
+                        "db_update": "update",
+                        "db_delete": "delete",
+                    }.get(tool, "read")
+        
         # Try deterministic formatter first
         response = _format_quick_response(quick_intent, quick_subdomain, quick_result)
         if response:
             return {"final_response": response}
         
-        # Fallback: light LLM call
+        # Fallback: light LLM call with action mismatch detection
         response = await _quick_llm_response(
             state.get("user_message", ""),
             quick_intent,
             quick_subdomain,
             quick_result,
+            action_performed,
         )
         return {"final_response": response}
     
@@ -497,12 +533,46 @@ Generate a helpful response explaining what was accomplished and what we could t
         }
     
     # Normal completion - generate response from results
+    user_message = state.get("user_message", "Unknown request")
+    
+    # Detect intent/action mismatch for quick mode (no think_output)
+    mismatch_warning = ""
+    if not think_output and step_results:
+        # Check what user wanted vs what was done
+        user_lower = user_message.lower()
+        wanted_action = "read"
+        if any(v in user_lower for v in ["update", "change", "modify", "set", "remove"]):
+            wanted_action = "update"
+        elif any(v in user_lower for v in ["add", "create", "insert", "save"]):
+            wanted_action = "create"
+        elif any(v in user_lower for v in ["delete", "clear"]):
+            wanted_action = "delete"
+        
+        # Check what action was actually performed
+        actual_action = "read"
+        first_result = step_results.get(0, [])
+        if first_result and isinstance(first_result, list) and first_result:
+            if isinstance(first_result[0], tuple) and len(first_result[0]) >= 1:
+                tool = first_result[0][0]
+                actual_action = {"db_read": "read", "db_create": "create", 
+                                "db_update": "update", "db_delete": "delete"}.get(tool, "read")
+        
+        if wanted_action != actual_action:
+            mismatch_warning = f"""
+## ⚠️ ACTION MISMATCH
+User wanted: {wanted_action.upper()}
+Actually performed: {actual_action.upper()}
+
+Do NOT claim you {wanted_action}d anything. Be honest that you only {actual_action} the data.
+If the user wanted an update but you only read, explain that the update didn't happen.
+"""
+    
     user_prompt = f"""## Original Request
-{state.get("user_message", "Unknown request")}
+{user_message}
 
 ## Goal
 {think_output.goal if think_output else "Complete the user's request"}
-
+{mismatch_warning}
 {_format_execution_summary(step_results, think_output)}
 
 ## Conversation Context
@@ -564,13 +634,22 @@ def _format_execution_summary(
         "",
     ]
     
+    # Show full plan if partial completion (so Reply knows what was skipped)
+    if completed_steps < total_steps and steps:
+        lines.append("**Planned steps:**")
+        for i, step in enumerate(steps):
+            status = "✅" if i in step_results else "⏭️ skipped"
+            lines.append(f"  {i + 1}. {step.description} ({status})")
+        lines.append("")
+    
     # Format each step with its description and outcome
     for idx in sorted(step_results.keys()):
         result = step_results[idx]
         
-        # Get step description from plan
+        # Get step details from plan
         step_desc = steps[idx].description if idx < len(steps) else f"Step {idx + 1}"
         step_type = getattr(steps[idx], "step_type", "read") if idx < len(steps) else "read"
+        step_subdomain = getattr(steps[idx], "subdomain", None) if idx < len(steps) else None
         
         # Use clear labels for generate vs write
         type_label = {
@@ -581,7 +660,8 @@ def _format_execution_summary(
         }.get(step_type, step_type)
         
         lines.append(f"### Step {idx + 1}: {step_desc}")
-        lines.append(f"Type: {type_label}")
+        subdomain_str = f" | Subdomain: {step_subdomain}" if step_subdomain else ""
+        lines.append(f"Type: {type_label}{subdomain_str}")
         
         # Format the outcome - Reply needs accuracy but NOT raw IDs/schema
         # Strip internal fields, keep human-readable content
@@ -804,11 +884,36 @@ def _clean_record(record: dict) -> dict:
             if k not in _STRIP_FIELDS and v is not None}
 
 
+def _detect_table_type(record: dict) -> str | None:
+    """Detect table type from record structure for proper formatting."""
+    if not isinstance(record, dict):
+        return None
+    
+    # Table-specific field patterns
+    if "dietary_restrictions" in record or "allergies" in record or "cooking_skill_level" in record:
+        return "preferences"
+    if "recipe_id" in record and "name" in record and "quantity" in record:
+        return "recipe_ingredients"
+    if "meal_type" in record and "date" in record:
+        return "meal_plans"
+    if "cuisine" in record or "prep_time" in record or "cook_time" in record or "total_time" in record:
+        return "recipes"
+    if "location" in record or "expiry_date" in record:
+        return "inventory"
+    if "is_purchased" in record:
+        return "shopping_list"
+    if "due_date" in record or "status" in record:
+        return "tasks"
+    
+    return None
+
+
 def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -> str:
     """
     Format a list of items for Reply in human-readable format.
     
     Strips IDs, keeps names/quantities/dates/notes.
+    Uses table detection for special formatting (preferences, etc.)
     
     Args:
         items: List of records to format
@@ -821,24 +926,62 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
     
     prefix = " " * indent
     lines = []
+    
+    # Detect table type from first record
+    first_record = items[0] if items and isinstance(items[0], dict) else {}
+    table_type = _detect_table_type(first_record)
+    
     for item in items[:max_items]:
         if isinstance(item, dict):
             clean = _clean_record(item)
             
-            # Build human-readable line
+            # Special formatting for preferences (key-value pairs)
+            if table_type == "preferences":
+                lines.append(f"{prefix}Your Preferences:")
+                for field in ["dietary_restrictions", "allergies", "favorite_cuisines", 
+                              "cooking_skill_level", "available_equipment", "household_size",
+                              "planning_rhythm", "current_vibes", "nutrition_goals", "disliked_ingredients"]:
+                    value = clean.get(field)
+                    if value is not None and value != [] and value != "":
+                        label = field.replace("_", " ").title()
+                        if isinstance(value, list):
+                            value = ", ".join(str(v) for v in value)
+                        lines.append(f"{prefix}  - {label}: {value}")
+                continue
+            
+            # Standard formatting for other tables
             name = clean.get("name") or clean.get("title") or clean.get("date", "item")
             parts = [f"{prefix}- {name}"]
             
-            # Add key details
-            if clean.get("quantity"):
-                unit = clean.get("unit", "")
-                parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
-            if clean.get("meal_type"):
-                parts.append(f"[{clean['meal_type']}]")
-            if clean.get("location"):
-                parts.append(f"[{clean['location']}]")
-            if clean.get("category"):
-                parts.append(f"({clean['category']})")
+            # Add key details based on table type
+            if table_type == "recipes":
+                if clean.get("cuisine"):
+                    parts.append(f"({clean['cuisine']})")
+                if clean.get("total_time"):
+                    parts.append(f"{clean['total_time']}min")
+                if clean.get("servings"):
+                    parts.append(f"serves {clean['servings']}")
+                if clean.get("tags"):
+                    tags = clean["tags"][:3] if isinstance(clean["tags"], list) else []
+                    if tags:
+                        parts.append(f"[{', '.join(tags)}]")
+            elif table_type == "meal_plans":
+                if clean.get("meal_type"):
+                    parts.append(f"[{clean['meal_type']}]")
+                if clean.get("servings"):
+                    parts.append(f"({clean['servings']} servings)")
+            else:
+                # Generic formatting
+                if clean.get("quantity"):
+                    unit = clean.get("unit", "")
+                    parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
+                if clean.get("meal_type"):
+                    parts.append(f"[{clean['meal_type']}]")
+                if clean.get("location"):
+                    parts.append(f"[{clean['location']}]")
+                if clean.get("category"):
+                    parts.append(f"({clean['category']})")
+            
             if clean.get("notes"):
                 notes = clean["notes"][:100] + "..." if len(clean.get("notes", "")) > 100 else clean.get("notes", "")
                 parts.append(f"- {notes}")
