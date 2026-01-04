@@ -82,12 +82,10 @@ Previous step read meal plan. For each recipe_id, you may need to read recipe_in
   2. `db_create` new ingredients with same recipe_id
 - **Add ingredient**: Just `db_create` on recipe_ingredients""")
         
-        # Linked table delete
+        # Linked table delete - CASCADE!
         if any(verb in desc_lower for verb in ["delete", "remove", "clear"]):
-            examples.append("""**Delete Recipe Pattern** (FK-safe order):
-1. `db_delete` on `recipe_ingredients` WHERE recipe_id = X
-2. `db_delete` on `recipes` WHERE id = X
-Delete children first, then parent.""")
+            examples.append("""**Delete Recipe:** Just delete from `recipes` — `recipe_ingredients` CASCADE automatically.
+`{"tool": "db_delete", "params": {"table": "recipes", "filters": [{"field": "id", "op": "=", "value": "<uuid>"}]}}`""")
         
         # Search
         if any(verb in desc_lower for verb in ["find", "search", "look"]):

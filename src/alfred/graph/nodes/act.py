@@ -470,14 +470,26 @@ def _get_system_prompt(step_type: str = "read") -> str:
     Build the Act system prompt from layers.
     
     Layers:
-    1. base.md - Universal role, tools, principles
-    2. {step_type}.md - Mechanics for this step type
+    1. base.md - Universal role, principles, exit contract (NO tools)
+    2. crud.md - Tools, filters, operators (only for read/write)
+    3. {step_type}.md - Mechanics for this step type
     
     Subdomain content is added to user_prompt, not system_prompt.
     """
     base = _load_prompt("base.md")
     step_type_content = _load_prompt(f"{step_type}.md")
     
+    # CRUD steps need the tools reference
+    if step_type in ("read", "write"):
+        crud = _load_prompt("crud.md")
+        parts = [base]
+        if crud:
+            parts.append(crud)
+        if step_type_content:
+            parts.append(step_type_content)
+        return "\n\n---\n\n".join(parts)
+    
+    # Generate/analyze don't need CRUD tools
     if step_type_content:
         return f"{base}\n\n---\n\n{step_type_content}"
     return base

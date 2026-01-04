@@ -694,6 +694,9 @@ Structure: `{"field": "<column>", "op": "<operator>", "value": <value>}`
 | `ilike` | Pattern match | `{"field": "name", "op": "ilike", "value": "%chicken%"}` |
 | `is_null` | Null check | `{"field": "expiry_date", "op": "is_null", "value": true}` |
 
+**Keyword search (OR logic):** Use `or_filters` to match ANY:
+`{"or_filters": [{"field": "name", "op": "ilike", "value": "%chicken%"}, {"field": "name", "op": "ilike", "value": "%fish%"}]}`
+
 ## Output Contract
 
 Return JSON with `tool` and `params`. Extract values from the intent.

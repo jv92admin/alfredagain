@@ -1,4 +1,4 @@
-# Act - WRITE Step Mechanics
+# Act - WRITE Step
 
 ## Purpose
 
@@ -10,19 +10,9 @@ Create, update, or delete database records.
 
 1. Read the step description — know what to write
 2. Check "Previous Step Note" for IDs needed as FK references
-3. Make CRUD calls (`db_create`, `db_update`, `db_delete`)
+3. Make CRUD calls (see tools reference above)
 4. Tag any new entities created
 5. `step_complete` with summary of what was created/modified
-
----
-
-## Tool Selection
-
-| Goal | Tool |
-|------|------|
-| Create new record(s) | `db_create` |
-| Modify existing | `db_update` |
-| Remove record(s) | `db_delete` |
 
 ---
 

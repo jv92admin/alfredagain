@@ -36,77 +36,11 @@ from alfred.db.client import get_client
 
 
 # =============================================================================
-# Subdomain Personas
+# NOTE: Personas have moved to alfred.prompts.personas
 # =============================================================================
-
-# Persona text injected at top of Act prompts based on subdomain.
-# Two layers: Persona (mindset) + Schema (tables for this step only)
-
-SUBDOMAIN_PERSONAS: dict[str, str | dict[str, str]] = {
-    # Chef persona: recipes subdomain - different for CRUD vs Generate
-    "recipes": {
-        "crud": """You are a **high-end personal chef** managing recipes (organizational mode). The user's preferences are paramount.
-
-**Clean naming:** Use searchable recipe names (e.g., "Spicy Garlic Pasta & Pesto Chicken" not run-on sentences).
-**Useful tags:** Add tags like weekday, fancy, air-fryer, instant-pot, leftovers.
-**Linked tables:** Always handle recipes + recipe_ingredients together as one unit.""",
-        
-        "generate": """You are a **high-end personal chef** creating recipes (creative mode). The user's preferences are paramount — your culinary expertise serves them.
-
-**Balance flavors:** Create harmonious, well-rounded dishes.
-**Respect restrictions:** Honor dietary needs and allergies completely.
-**Match context:** Consider available equipment, time budget, skill level.
-**Personalize:** Align with the user's taste profile and preferences.""",
-    },
-    
-    # Ops Manager persona: inventory, shopping, preferences
-    "inventory": """You are an **operations manager**. Your focus: accurate cataloging, consistent naming, efficient organization.
-
-**Normalize names:** "diced chillies" → "chillies", "boiled eggs" → "eggs". Strip preparation states.
-**Deduplicate:** Check before adding. Consolidate quantities when possible.
-**Tag consistently:** Best-guess location (fridge/frozen/pantry/shelf) and category.
-**Track accurately:** Quantities, units, approximate expiry dates.""",
-    
-    "shopping": """You are an **operations manager**. Your focus: accurate cataloging, consistent naming, efficient organization.
-
-**Normalize names:** "diced chillies" → "chillies", "boiled eggs" → "eggs". Strip preparation states.
-**Check existing:** Before adding, read the current list. Merge duplicates, consolidate quantities.
-**Tag consistently:** Category (produce/dairy/meat/etc.) helps with shopping efficiency.
-**Cross-domain awareness:** Items may come from recipes or meal plans — normalize before adding.""",
-    
-    "preferences": """You are a **personal assistant** managing user preferences.
-
-**Preference types:**
-- **Hard constraints** (dietary_restrictions, allergies): NEVER violated. Confirm changes explicitly.
-- **Planning rhythm** (2-3 tags): How they want to cook. Freeform phrases like "weekends only", "30min weeknights".
-- **Current vibes** (up to 5 tags): Current interests. Phrases like "more vegetables", "fusion experiments", "soup skills".
-- **Other preferences**: Equipment, cuisines, skill — update when mentioned.
-
-**Natural updates:** When user says "I want to focus on quick weeknight meals", update `planning_rhythm`. When they say "trying to get better at salads", update `current_vibes`.
-
-**Tag hygiene:** Keep tags concise but descriptive. Don't over-formalize — "pretty flexible, no tuesdays" is fine.""",
-    
-    # Planner persona: meal_plan, tasks
-    "meal_plans": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
-
-**Meal plan is primary:** Tasks often flow from it. Think about what prep work, shopping, or reminders are needed.
-**Recipe handling:** Real meals (breakfast/lunch/dinner/snack) should reference a recipe. If missing, suggest creating one: "That recipe doesn't exist. Create it for better shopping/planning?"
-**Exception:** "prep" and "other" meal types don't require recipes (batch cooking, stock making, etc.).""",
-    
-    "tasks": """You are a **planner and coordinator**. Your focus: effective scheduling, sequencing, and dependencies.
-
-**Tasks are flexible reminders:**
-- Standalone: "Stop by butcher", "Brew tea", "Pickle onions"
-- Prep-linked: "Thaw chicken for Monday" (can use meal_plan_id)
-- Shopping: "Buy wine for date night"
-- Kitchen: "Clean fridge", "Sharpen knives"
-
-**Categories:** prep, shopping, cleanup, other
-**Linking is optional:** Use meal_plan_id when task is for a specific meal. Otherwise leave null.""",
-    
-    # History: stubbed, no special persona
-    "history": "",  # Basic CRUD, no persona needed
-}
+# SUBDOMAIN_PERSONAS was here but is now in personas.py
+# The get_persona_for_subdomain function below is kept for backwards compat
+# but forwards to the canonical source.
 
 
 # =============================================================================
@@ -215,21 +149,16 @@ def get_complexity_rules(subdomain: str) -> dict[str, str] | None:
 def get_persona_for_subdomain(subdomain: str, step_type: str = "crud") -> str:
     """Get the persona text for a subdomain.
     
+    DEPRECATED: Import from alfred.prompts.personas instead.
+    This function forwards to the canonical source for backwards compat.
+    
     Args:
         subdomain: The subdomain (recipes, inventory, shopping, etc.)
-        step_type: The step type (crud, generate, analyze). 
-                   Only recipes has different personas for crud vs generate.
+        step_type: The step type (read, write, generate, analyze).
     """
-    persona = SUBDOMAIN_PERSONAS.get(subdomain, "")
-    
-    # Handle recipes special case: dict with crud/generate variants
-    if isinstance(persona, dict):
-        # For analyze steps, fall back to crud persona
-        effective_type = step_type if step_type in persona else "crud"
-        return persona.get(effective_type, "")
-    
-    # All other subdomains: simple string (same for all step types)
-    return persona
+    # Forward to canonical source
+    from alfred.prompts.personas import get_persona_for_subdomain as _get_persona
+    return _get_persona(subdomain, step_type)
 
 
 def get_scope_for_subdomain(subdomain: str) -> str:
@@ -355,12 +284,10 @@ Previous step read meal plan. For each recipe_id, you may need to read recipe_in
 2. `db_create` on `recipe_ingredients` with that `recipe_id`
 3. `step_complete` only after BOTH are done""")
         
-        # Linked table delete
+        # Linked table delete - CASCADE!
         if any(verb in desc_lower for verb in ["delete", "remove", "clear"]):
-            examples.append("""**Delete Recipe Pattern** (FK-safe order):
-1. `db_delete` on `recipe_ingredients` WHERE recipe_id = X
-2. `db_delete` on `recipes` WHERE id = X
-Delete children first, then parent.""")
+            examples.append("""**Delete Recipe:** Just delete from `recipes` — `recipe_ingredients` CASCADE automatically.
+`{"tool": "db_delete", "params": {"table": "recipes", "filters": [{"field": "id", "op": "=", "value": "<uuid>"}]}}`""")
         
         # Search
         if any(verb in desc_lower for verb in ["find", "search", "look"]):
@@ -833,33 +760,17 @@ Add multiple items (batch): `{"tool": "db_create", "params": {"table": "inventor
 
 Read all recipes: `{"tool": "db_read", "params": {"table": "recipes", "filters": [], "limit": 20}}`
 
-**Search recipes by keywords** (use `or_filters` for fuzzy matching):
-```json
-{"tool": "db_read", "params": {
-  "table": "recipes",
-  "or_filters": [
-    {"field": "name", "op": "ilike", "value": "%broccoli%"},
-    {"field": "name", "op": "ilike", "value": "%cheese%"},
-    {"field": "name", "op": "ilike", "value": "%rice%"}
-  ],
-  "limit": 10
-}}
-```
-This finds recipes matching ANY of the keywords (OR logic).
+Search by keyword: `{"tool": "db_read", "params": {"table": "recipes", "filters": [{"field": "name", "op": "ilike", "value": "%chicken%"}], "limit": 20}}`
+
+Search multiple keywords (OR): `{"tool": "db_read", "params": {"table": "recipes", "or_filters": [{"field": "name", "op": "ilike", "value": "%broccoli%"}, {"field": "name", "op": "ilike", "value": "%rice%"}], "limit": 10}}`
 
 Create recipe: `{"tool": "db_create", "params": {"table": "recipes", "data": {"name": "Garlic Pasta", "cuisine": "italian", "difficulty": "easy", "servings": 2, "instructions": ["Boil pasta", "Sauté garlic", "Toss together"]}}}`
 
-**⚠️ After creating recipe, you MUST create recipe_ingredients!**
-Get the recipe `id` from the response, then:
-```json
-{"tool": "db_create", "params": {"table": "recipe_ingredients", "data": [
-  {"recipe_id": "<recipe-uuid>", "name": "pasta", "quantity": 8, "unit": "oz"},
-  {"recipe_id": "<recipe-uuid>", "name": "garlic", "quantity": 4, "unit": "cloves"},
-  {"recipe_id": "<recipe-uuid>", "name": "olive oil", "quantity": 2, "unit": "tbsp"}
-]}}
-```
+**⚠️ After creating recipe, create recipe_ingredients with the returned ID:**
 
-Read recipe ingredients: `{"tool": "db_read", "params": {"table": "recipe_ingredients", "filters": [{"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}]}}`
+Add ingredients: `{"tool": "db_create", "params": {"table": "recipe_ingredients", "data": [{"recipe_id": "<recipe-uuid>", "name": "pasta", "quantity": 8, "unit": "oz"}, {"recipe_id": "<recipe-uuid>", "name": "garlic", "quantity": 4, "unit": "cloves"}]}}`
+
+Read ingredients: `{"tool": "db_read", "params": {"table": "recipe_ingredients", "filters": [{"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}]}}`
 """,
     "shopping": """## Examples
 
@@ -881,30 +792,21 @@ Get this week's meals: `{"tool": "db_read", "params": {"table": "meal_plans", "f
 
 Add to meal plan: `{"tool": "db_create", "params": {"table": "meal_plans", "data": {"recipe_id": "<recipe-uuid>", "date": "2025-01-02", "meal_type": "dinner", "servings": 2}}}`
 
-**Batch cooking session** (making stock, prep bases):
-```json
-{"tool": "db_create", "params": {"table": "meal_plans", "data": {"date": "2025-01-05", "meal_type": "other", "notes": "Make chicken stock for the week"}}}
-```
+Prep session (no recipe): `{"tool": "db_create", "params": {"table": "meal_plans", "data": {"date": "2025-01-05", "meal_type": "other", "notes": "Make chicken stock"}}}`
 
-**Note**: Each row is a meal/cooking session on a date. For reminders/to-dos, use the `tasks` subdomain instead.
+**Note**: Each row is a meal/cooking session on a date. For reminders/to-dos, use `tasks` subdomain.
 """,
     "tasks": """## Examples
 
 Get pending tasks: `{"tool": "db_read", "params": {"table": "tasks", "filters": [{"field": "completed", "op": "=", "value": false}]}}`
 
-Create freeform reminder: `{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Buy new chef's knife", "category": "shopping"}}}`
+Create reminder: `{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Buy new chef's knife", "category": "shopping"}}}`
 
-Create task linked to meal plan:
-```json
-{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Thaw chicken", "due_date": "2025-01-06", "category": "prep", "meal_plan_id": "<meal-plan-uuid>"}}}
-```
+Create task with due date: `{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Thaw chicken", "due_date": "2025-01-06", "category": "prep"}}}`
 
-Create task linked to recipe:
-```json
-{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Prep mise en place", "due_date": "2025-01-06", "category": "prep", "recipe_id": "<recipe-uuid>"}}}
-```
+Link task to meal plan: `{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Prep mise en place", "due_date": "2025-01-06", "category": "prep", "meal_plan_id": "<meal-plan-uuid>"}}}`
 
-Mark task complete: `{"tool": "db_update", "params": {"table": "tasks", "filters": [{"field": "id", "op": "=", "value": "<task-uuid>"}], "data": {"completed": true}}}`
+Mark complete: `{"tool": "db_update", "params": {"table": "tasks", "filters": [{"field": "id", "op": "=", "value": "<task-uuid>"}], "data": {"completed": true}}}`
 """,
     "preferences": """## Examples
 
@@ -920,24 +822,11 @@ Mark task complete: `{"tool": "db_update", "params": {"table": "tasks", "filters
 """,
     "history": """## Examples
 
-Log a cooked meal:
-```json
-{"tool": "db_create", "params": {"table": "cooking_log", "data": {
-  "recipe_id": "<recipe-uuid>",
-  "servings": 4,
-  "rating": 5,
-  "notes": "Came out great! Added extra garlic."
-}}}
-```
-
 Get recent cooking history: `{"tool": "db_read", "params": {"table": "cooking_log", "filters": [], "limit": 10}}`
 
-Get cooking log for specific recipe:
-```json
-{"tool": "db_read", "params": {"table": "cooking_log", "filters": [
-  {"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}
-]}}
-```
+Log a cooked meal: `{"tool": "db_create", "params": {"table": "cooking_log", "data": {"recipe_id": "<recipe-uuid>", "servings": 4, "rating": 5, "notes": "Came out great!"}}}`
+
+Get history for recipe: `{"tool": "db_read", "params": {"table": "cooking_log", "filters": [{"field": "recipe_id", "op": "=", "value": "<recipe-uuid>"}]}}`
 
 **Note:** Logging a meal auto-updates `flavor_preferences` via trigger.
 """,

@@ -950,7 +950,10 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
                 continue
             
             # Standard formatting for other tables
-            name = clean.get("name") or clean.get("title") or clean.get("date", "item")
+            # Try multiple name fields, fall back to descriptive placeholder
+            name = (clean.get("name") or clean.get("title") or clean.get("date") or
+                    clean.get("description", "")[:50] or  # Try description snippet
+                    f"({table_type or 'record'} updated)")  # Descriptive fallback
             parts = [f"{prefix}- {name}"]
             
             # Add key details based on table type

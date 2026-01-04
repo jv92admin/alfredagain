@@ -1,4 +1,4 @@
-# Act - READ Step Mechanics
+# Act - READ Step
 
 ## Purpose
 
@@ -16,7 +16,7 @@ Fetch data from database to inform current or later steps.
 
 ---
 
-## Complete db_read Example
+## Complete Example
 
 ```json
 {
@@ -32,52 +32,7 @@ Fetch data from database to inform current or later steps.
 }
 ```
 
-**Note:** `limit` is a TOP-LEVEL param, NOT inside `filters[]`.
-
----
-
-## Filter Patterns
-
-Each filter is an object: `{"field": "...", "op": "...", "value": "..."}`
-
-### Exact Match
-```json
-{"field": "id", "op": "=", "value": "uuid-here"}
-```
-
-### Fuzzy Search (names, descriptions)
-```json
-{"field": "name", "op": "ilike", "value": "%chicken%"}
-```
-
-### Multiple Keywords (OR logic)
-Use `or_filters` (top-level param, same level as `filters`):
-```json
-{
-  "table": "recipes",
-  "or_filters": [
-    {"field": "name", "op": "ilike", "value": "%chicken%"},
-    {"field": "name", "op": "ilike", "value": "%rice%"}
-  ],
-  "limit": 10
-}
-```
-
-### Date Range
-```json
-{
-  "table": "meal_plans",
-  "filters": [
-    {"field": "date", "op": ">=", "value": "2026-01-01"},
-    {"field": "date", "op": "<=", "value": "2026-01-07"}
-  ]
-}
-```
-
-### Array Contains (tags, etc.)
-```json
-{"field": "tags", "op": "contains", "value": ["weekday"]}
-```
+**Note:** `limit` and `columns` are TOP-LEVEL params, NOT inside `filters[]`.
 
 ---
 
@@ -90,6 +45,8 @@ Use `or_filters` (top-level param, same level as `filters`):
 3. **Don't retry empty.** Same filter won't give different results. Move on.
 
 4. **Limit wisely.** Use `limit` to avoid fetching too much data.
+
+5. **Include names.** When selecting specific columns, always include `name` or `title`.
 
 ---
 
