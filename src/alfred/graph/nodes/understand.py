@@ -147,7 +147,13 @@ async def understand_node(state: AlfredState) -> dict[str, Any]:
     try:
         output = await call_llm(
             response_model=UnderstandOutput,
-            system_prompt="You are Alfred's signal detector. Analyze the user message and output structured JSON.",
+            system_prompt=(
+                "You are Alfred's lightweight pre-processor. "
+                "Your job: (1) resolve references to IDs from Recent Items, "
+                "(2) detect quick mode for simple queries, "
+                "(3) write a simple processed_message. "
+                "NEVER invent entity IDs. Keep processed_message short — Think does the planning."
+            ),
             user_prompt=full_prompt,
             complexity="medium",  # Upgraded from low - context inference needs smarter model
         )

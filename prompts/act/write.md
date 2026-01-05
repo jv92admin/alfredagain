@@ -8,7 +8,13 @@ Create, update, or delete database records.
 
 ## How to Execute
 
-1. Read the step description — know what to write
+1. **Verify content exists.** If step says "save generated X", X must exist in:
+   - Previous Step Results (from a `generate` step)
+   - Previous Step Note
+   - Tool Results This Step
+   
+   If X doesn't exist → use `blocked`. Don't generate it yourself.
+
 2. Check "Previous Step Note" for IDs needed as FK references
 3. Make CRUD calls (see tools reference above)
 4. Tag any new entities created
