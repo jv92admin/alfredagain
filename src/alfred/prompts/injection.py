@@ -622,7 +622,8 @@ def build_act_quick_prompt(
     """
     Build system and user prompts for Act Quick mode.
     
-    Uses shared components from regular Act for consistency.
+    Act Quick is just Act doing a single step. We reuse the same prompt components
+    with a simplified wrapper.
     
     Args:
         intent: Plaintext intent from Understand (e.g., "Add 1lb popcorn to inventory")
@@ -637,28 +638,68 @@ def build_act_quick_prompt(
     Returns:
         Tuple of (system_prompt, user_prompt)
     """
-    from alfred.prompts.examples import get_contextual_examples
+    from pathlib import Path
     from alfred.prompts.personas import get_subdomain_intro, get_persona_for_subdomain
     
-    # Get subdomain intro
-    subdomain_intro = get_subdomain_intro(subdomain)
+    # === SYSTEM PROMPT: Load Act's prompts, same as Act ===
+    prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "act"
     
-    # Get subdomain persona for this action type
-    subdomain_persona = get_persona_for_subdomain(subdomain, action_type if action_type != "create" else "write")
+    def load_prompt(filename: str) -> str:
+        path = prompts_dir / filename
+        return path.read_text(encoding="utf-8") if path.exists() else ""
     
-    # Map action_type to step_type for examples
+    base = load_prompt("base.md")
+    crud = load_prompt("crud.md")
+    
+    # Quick mode header replaces the looping mechanics
+    quick_header = """# Alfred Quick Execution
+
+You are Alfred's execution engine for a simple, single-step request.
+
+**Your job:** Return ONE tool call. No looping, no step_complete.
+
+**Output:** `{"tool": "db_read|db_create|db_update|db_delete", "params": {...}}`
+
+**⚠️ CRITICAL: Filter values must be LITERAL values only.**
+- ✅ `"value": "%cod%"` — literal string
+- ✅ `"value": ["cod", "salmon"]` — literal array  
+- ❌ `"value": "select ... from ..."` — NO SQL, NO subqueries
+
+---
+
+"""
+    
+    # Combine: quick header + crud (tools + filters)
+    system_prompt = quick_header + crud
+    
+    # === USER PROMPT: Same structure as Act ===
     step_type = "read" if action_type == "read" else "write"
+    subdomain_intro = get_subdomain_intro(subdomain)
+    subdomain_persona = get_persona_for_subdomain(subdomain, step_type)
     
-    # Get contextual examples for this subdomain and action
-    contextual_examples = get_contextual_examples(
-        subdomain=subdomain,
-        step_description=intent,  # Use intent as description for pattern matching
-        prev_subdomain=None,
-        step_type=step_type,
-    )
+    user_parts = []
     
-    # Format user preferences compactly
-    preferences_section = ""
+    # Subdomain intro (same as Act)
+    user_parts.append(subdomain_intro)
+    
+    # Status section (simplified from Act)
+    user_parts.append(f"""---
+
+## STATUS
+| Today | {today} |
+| Task | {intent} |
+| Type | {action_type} |""")
+    
+    # Task section (same as Act)
+    user_parts.append(f"""---
+
+## 1. Task
+
+User said: "{user_message}"
+
+Your job: **{intent}**""")
+    
+    # User profile (if available)
     if user_preferences:
         pref_parts = []
         if user_preferences.get("allergies"):
@@ -666,140 +707,45 @@ def build_act_quick_prompt(
         if user_preferences.get("dietary_restrictions"):
             pref_parts.append(f"Diet: {', '.join(user_preferences['dietary_restrictions'])}")
         if pref_parts:
-            preferences_section = "\n".join(pref_parts)
+            user_parts.append(f"""---
+
+## 2. User Profile
+
+{chr(10).join(pref_parts)}""")
     
-    # System prompt - Quick mode specific header + shared components
-    system_prompt = """# Alfred Quick Execution
+    # Schema (same as Act)
+    user_parts.append(f"""---
 
-You are Alfred's quick-action module. Execute ONE tool call for this simple request.
+## 3. Schema ({subdomain})
 
-## Tools
-
-| Tool | Purpose | Required Params |
-|------|---------|-----------------|
-| `db_read` | Fetch rows | table, filters, limit |
-| `db_create` | Insert row(s) | table, data |
-| `db_update` | Modify rows | table, filters, data |
-| `db_delete` | Remove rows | table, filters |
-
-## Filter Syntax
-
-Structure: `{"field": "<column>", "op": "<operator>", "value": <value>}`
-
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `=` | Exact match | `{"field": "id", "op": "=", "value": "uuid"}` |
-| `>` `<` `>=` `<=` | Comparison | `{"field": "quantity", "op": ">", "value": 5}` |
-| `in` | Value in array | `{"field": "name", "op": "in", "value": ["milk", "eggs"]}` |
-| `ilike` | Pattern match | `{"field": "name", "op": "ilike", "value": "%chicken%"}` |
-| `is_null` | Null check | `{"field": "expiry_date", "op": "is_null", "value": true}` |
-
-**Keyword search (OR logic):** Use `or_filters` to match ANY:
-`{"or_filters": [{"field": "name", "op": "ilike", "value": "%chicken%"}, {"field": "name", "op": "ilike", "value": "%fish%"}]}`
-
-## Output Contract
-
-Return JSON with `tool` and `params`. Extract values from the intent.
-
-Example: "Add 1lb popcorn" → 
-`{"tool": "db_create", "params": {"table": "inventory", "data": {"name": "popcorn", "quantity": 1, "unit": "lb"}}}`"""
-
-    # User prompt with dynamic context
-    user_parts = []
+{schema}""")
     
-    # Session context (if available)
-    if engagement_summary:
-        user_parts.append(f"## Current Session\n\n{engagement_summary}")
-    
-    # User preferences (compact form)
-    if preferences_section:
-        user_parts.append(f"## User Profile\n\n{preferences_section}")
-    
-    user_parts.append(f"## Intent\n\n{intent}")
-    
-    # CRITICAL: Include user's original message - this contains the actual data to process
-    if user_message:
-        user_parts.append(f"## User Message\n\n{user_message}")
-    
-    user_parts.extend([
-        f"## Today\n\n{today}",
-        f"## Subdomain\n\n{subdomain_intro}",
-    ])
-    
-    # Add subdomain persona if available
+    # Guidance/persona (same as Act)
     if subdomain_persona:
-        user_parts.append(f"## Guidance\n\n{subdomain_persona}")
+        user_parts.append(f"""---
+
+## 4. Guidance
+
+{subdomain_persona}""")
     
-    user_parts.append(f"## Schema\n\n{schema}")
-    
-    # Add contextual examples if available
-    if contextual_examples:
-        user_parts.append(contextual_examples)
-    
-    # Add quick-mode specific examples based on subdomain
-    subdomain_examples = _get_quick_mode_examples(subdomain)
-    if subdomain_examples:
-        user_parts.append(f"## Quick Examples\n\n{subdomain_examples}")
-    
-    # Add clear action context (but trust LLM to pick right tool)
+    # Decision prompt (simplified - no step_complete)
     action_tool_map = {
         "read": "db_read",
         "create": "db_create", 
         "update": "db_update",
         "delete": "db_delete",
     }
-    suggested_tool = action_tool_map.get(action_type, "db_read")
+    expected_tool = action_tool_map.get(action_type, "db_read")
     
-    user_parts.append(f"""## Execute
+    user_parts.append(f"""---
 
-**Detected action:** {action_type} → typically `{suggested_tool}`
+## DECISION
 
-Match the tool to what the user actually wants. Return tool and params.""")
+**Detected action:** {action_type} → typically `{expected_tool}`
+
+Return: `{{"tool": "...", "params": {{"table": "...", ...}}}}`""")
     
     user_prompt = "\n\n".join(user_parts)
     
     return system_prompt, user_prompt
-
-
-def _get_quick_mode_examples(subdomain: str) -> str:
-    """
-    Get quick mode specific examples for common CRUD operations.
-    
-    These are simpler than full Act examples - just the JSON format.
-    """
-    examples = {
-        "inventory": """Read all: `{"tool": "db_read", "params": {"table": "inventory", "filters": [], "limit": 100}}`
-
-Add item: `{"tool": "db_create", "params": {"table": "inventory", "data": {"name": "milk", "quantity": 2, "unit": "gallons", "location": "fridge"}}}`
-
-Update quantity: `{"tool": "db_update", "params": {"table": "inventory", "filters": [{"field": "name", "op": "ilike", "value": "%milk%"}], "data": {"quantity": 5}}}`
-
-**Note**: "pantry" typically means ALL inventory, not just `location='pantry'`.
-
-**Naming**: Use grocery names with meaningful descriptors ("fresh basil", "dried oregano", "diced tomatoes").""",
-
-        "shopping": """Read list: `{"tool": "db_read", "params": {"table": "shopping_list", "filters": [], "limit": 100}}`
-
-Add item: `{"tool": "db_create", "params": {"table": "shopping_list", "data": {"name": "eggs", "quantity": 12, "unit": "count"}}}`
-
-Clear list: `{"tool": "db_delete", "params": {"table": "shopping_list", "filters": []}}`
-
-**Naming**: Use grocery names ("diced tomatoes", "fresh basil"), not recipe components ("herby greens mix").""",
-
-        "recipes": """Search recipes: `{"tool": "db_read", "params": {"table": "recipes", "filters": [{"field": "name", "op": "ilike", "value": "%chicken%"}], "limit": 20}}`
-
-Get all recipes: `{"tool": "db_read", "params": {"table": "recipes", "filters": [], "limit": 50}}`""",
-
-        "meal_plans": """Read meal plans: `{"tool": "db_read", "params": {"table": "meal_plans", "filters": [], "limit": 50}}`
-
-Read specific date: `{"tool": "db_read", "params": {"table": "meal_plans", "filters": [{"field": "date", "op": "=", "value": "2026-01-05"}], "limit": 10}}`
-
-Delete by date: `{"tool": "db_delete", "params": {"table": "meal_plans", "filters": [{"field": "date", "op": "=", "value": "2026-01-05"}]}}`""",
-
-        "tasks": """Read tasks: `{"tool": "db_read", "params": {"table": "tasks", "filters": [], "limit": 50}}`
-
-Add task: `{"tool": "db_create", "params": {"table": "tasks", "data": {"title": "Thaw chicken", "due_date": "2026-01-05", "category": "prep"}}}`""",
-    }
-    
-    return examples.get(subdomain, "")
 

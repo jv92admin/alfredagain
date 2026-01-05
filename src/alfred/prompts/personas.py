@@ -69,15 +69,20 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
     "recipes": {
         "read": """**Chef Mode (Search)**
 - Use OR filters for fuzzy keyword search
-- Join `recipe_ingredients` by recipe_id for full details
 - Return useful fields: name, description, tags, prep_time
+
+**Search BOTH tables for keywords:**
+1. **Recipe names:** `db_read` on `recipes` with `or_filters` on `name`
+2. **Ingredient names:** `db_read` on `recipe_ingredients` with `or_filters` on `name`
+
+This ensures you find "Cod Stir Fry" (recipe name) AND recipes with cod as ingredient.
 
 **Ingredient-category searches:** "Fish recipes" won't have "fish" as ingredient. Expand to specific types:
 - Fish/Seafood: cod, salmon, tilapia, tuna, shrimp, halibut, crab, lobster
 - Poultry: chicken, turkey, duck
 - Meat: beef, pork, lamb, steak, ground beef
 
-Use `or_filters` with multiple ingredient names.""",
+Use `or_filters` with multiple keywords.""",
 
         "write": """**Chef Mode (Organize)**
 - Clean naming: searchable recipe names (not run-on sentences)
