@@ -975,15 +975,15 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
                     parts.append(f"({clean['servings']} servings)")
             else:
                 # Generic formatting
-                if clean.get("quantity"):
-                    unit = clean.get("unit", "")
-                    parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
-                if clean.get("meal_type"):
-                    parts.append(f"[{clean['meal_type']}]")
-                if clean.get("location"):
-                    parts.append(f"[{clean['location']}]")
-                if clean.get("category"):
-                    parts.append(f"({clean['category']})")
+            if clean.get("quantity"):
+                unit = clean.get("unit", "")
+                parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
+            if clean.get("meal_type"):
+                parts.append(f"[{clean['meal_type']}]")
+            if clean.get("location"):
+                parts.append(f"[{clean['location']}]")
+            if clean.get("category"):
+                parts.append(f"({clean['category']})")
             
             if clean.get("notes"):
                 notes = clean["notes"][:100] + "..." if len(clean.get("notes", "")) > 100 else clean.get("notes", "")

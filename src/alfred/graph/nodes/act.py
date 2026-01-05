@@ -529,13 +529,13 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
                     table = _subdomain_to_table(subdomain)
                     lines.append(f"**Step {step_num}** [{tool_name}] on `{table}`:")
                     
-                    if is_recent:
+        if is_recent:
                         # Full detail with clean formatting
                         lines.extend(_format_step_data_clean(data, table))
-                    else:
+        else:
                         # Summarized for older steps
                         lines.append(_summarize_step_data(data, table))
-        elif isinstance(result, list):
+            elif isinstance(result, list):
             # Direct list (legacy format)
             table = _infer_table_from_record(result[0]) if result else None
             lines.append(f"**Step {step_num}** ({len(result)} records):")
@@ -543,10 +543,10 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
                 lines.extend(_format_step_data_clean(result, table))
             else:
                 lines.append(f"  {len(result)} records")
-        elif isinstance(result, int):
-            lines.append(f"**Step {step_num}**: Affected {result} records")
-        else:
-            lines.append(f"**Step {step_num}**: (use retrieve_step for details)")
+            elif isinstance(result, int):
+                lines.append(f"**Step {step_num}**: Affected {result} records")
+            else:
+                lines.append(f"**Step {step_num}**: (use retrieve_step for details)")
         
         lines.append("")
 

@@ -429,14 +429,14 @@ def format_condensed_context(
                    if v.get("type", "unknown") in relevant_types}
         
         if filtered:
-            entity_lines = ["**Recent items**:"]
+        entity_lines = ["**Recent items**:"]
             for entity_id, entity_data in filtered.items():
-                etype = entity_data.get("type", "unknown")
-                label = entity_data.get("label", "unknown")
-                entity_lines.append(f"  - {etype}: {label}")
-            section = "\n".join(entity_lines)
-            parts.append(section)
-            tokens_used += estimate_tokens(section)
+            etype = entity_data.get("type", "unknown")
+            label = entity_data.get("label", "unknown")
+            entity_lines.append(f"  - {etype}: {label}")
+        section = "\n".join(entity_lines)
+        parts.append(section)
+        tokens_used += estimate_tokens(section)
     
     # 3. Recent turns (last 1-2, condensed format)
     recent = conversation.get("recent_turns", [])
@@ -556,10 +556,10 @@ def format_full_context(
                 label = entity_data.get("label", "unknown")
                 entity_lines.append(f"- **{etype}**: {label} (id: `{entity_id}`)")
             section = "\n".join(entity_lines)
-            
-            if tokens_used + estimate_tokens(section) < max_tokens:
-                parts.append(section)
-                tokens_used += estimate_tokens(section)
+        
+        if tokens_used + estimate_tokens(section) < max_tokens:
+            parts.append(section)
+            tokens_used += estimate_tokens(section)
     
     if not parts:
         return "*No conversation context yet.*"

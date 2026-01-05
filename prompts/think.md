@@ -235,6 +235,15 @@ Multiple items in SAME subdomain = ONE step. Act handles batching.
 - Just discussed/generated this turn → In context, no read needed
 - Previously saved → Needs `read` step to retrieve
 
+### Ingredient-Category Searches (e.g., "fish recipes")
+
+When user asks for recipes by ingredient category ("fish recipes", "chicken dishes"), a literal name search won't work. Fish recipes won't have "fish" as an ingredient — they'll have "cod", "salmon", "tilapia".
+
+**Current workaround:** Use multiple keywords in step description:
+- "Search recipes/recipe_ingredients for fish-related ingredients (cod, salmon, tilapia, halibut, shrimp, tuna)"
+
+**Future:** The `ingredients` table has categories. Eventually Act can look up ingredient IDs by category, then find recipes using those IDs.
+
 ### Step Descriptions for Act
 
 Act is stateless — it only sees the step description and previous step results. Write descriptions that tell Act **what to do with prior results**, not re-state complex logic:
