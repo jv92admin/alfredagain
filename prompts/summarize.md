@@ -1,15 +1,40 @@
-# Summarize Node Contracts
+# Summarize Node Contracts (V4)
 
 ## Role
 
-Summarize is the **memory manager**. It runs after every Reply to:
-1. Compress long responses for context (so future prompts aren't bloated)
-2. Track conversation history
-3. Maintain session theme
-4. Merge entities from the turn into active tracking
-5. Garbage collect stale entities
+Summarize is the **Conversation Historian**. It runs after every Reply to:
+1. Append the current turn to conversation history
+2. Compress older turns when threshold exceeded (LLM)
+3. Build a structured audit ledger (SummarizeOutput)
+4. Add newly created entities to context
+
+**V4 Key Change**: Summarize does NOT curate entity context. That's Understand's job.
 
 **Summarize does NOT produce user-facing output.** It updates internal state.
+
+---
+
+## What Summarize Does (V4)
+
+| Responsibility | Description |
+|----------------|-------------|
+| **Append Turn** | Add current user + assistant to recent_turns |
+| **Compress History** | LLM-summarize older turns into narrative (no IDs) |
+| **Audit Ledger** | Build SummarizeOutput with entity deltas, artifact counts |
+| **Add Entities** | Add newly created entities to EntityContextModel |
+| **Track Clarification** | Store pending_clarification for context threading |
+
+---
+
+## What Summarize Does NOT Do (V4)
+
+| Not Our Job | Who Does It |
+|-------------|-------------|
+| **Entity Curation** | Understand (curates based on user intent) |
+| **Entity Lifecycle** | Understand (promote, demote, drop) |
+| **Engagement Summary** | Think (has the goal) |
+| **User-facing Text** | Reply |
+| **Decisions** | Think |
 
 ---
 
@@ -22,10 +47,13 @@ Summarize receives:
 | `final_response` | Reply node | The text shown to user |
 | `user_message` | Router | What user said |
 | `router_output` | Router | Goal, complexity, agent |
-| `think_output` | Think | Decision type, steps, proposal_message |
+| `think_output` | Think | Decision type, steps |
 | `step_results` | Act | Tool results per step |
+| `step_metadata` | Act | V4: Full artifacts for generate steps |
 | `turn_entities` | Act | Entities created/modified this turn |
-| `conversation` | State | Existing history, entities, summaries |
+| `conversation` | State | Existing history |
+| `entity_context` | State | V4: Tiered entity context |
+| `session_constraints` | State | V4: Accumulated constraints |
 
 ---
 
@@ -33,119 +61,100 @@ Summarize receives:
 
 Summarize updates:
 
-| Output | Content | Used By |
+| Output | Content | Purpose |
 |--------|---------|---------|
 | `conversation.recent_turns` | Full text of last N turns | Context for Think/Act |
-| `conversation.history_summary` | Compressed older turns | Context for Think |
-| `conversation.engagement_summary` | 1-sentence session theme | Context for all nodes |
-| `conversation.active_entities` | Recent entities for reference | Think/Act entity resolution |
-| `conversation.step_summaries` | Compressed step results | Act older step lookup |
-| `entity_registry` | Full entity lifecycle tracking | V3 entity management |
+| `conversation.history_summary` | Narrative of older turns (no IDs) | Context for Understand |
+| `summarize_output` | V4: Structured audit ledger | Machine-readable deltas |
+| `entity_context` | V4: Updated with new entities | For Understand to curate |
+| `session_constraints` | V4: Successful query patterns | For Think |
+| `current_turn` | Incremented turn number | Turn tracking |
 
 ---
 
-## Three LLM Calls
+## Two LLM Calls (V4 Simplified)
 
 ### 1. Response Summary (`AssistantResponseSummary`)
 
-**When**: Reply's output > 400 chars AND Think's decision was NOT propose/clarify
+**When**: Reply's output > 400 chars
 
 **Input**: `final_response` (Reply's full text)
 
 **Output**: 1-sentence summary of what was accomplished
 
-**V3 Safeguard**: If Think decided `propose` or `clarify`, we skip the LLM entirely and return a deterministic summary like "Proposed a plan and awaiting user confirmation." This prevents hallucinating completion from proposals.
-
 **Critical Rules**:
 - **Proposals ≠ Completed actions**
-  - "I'll save the recipes" → "Proposed to save recipes; awaiting confirmation"
-  - "Done! I saved the recipes." → "Saved recipes: [exact names]"
+  - "I'll save the recipes" → "Proposed to save recipes"
+  - "Done! I saved the recipes." → "Saved recipes: [names]"
 - Use EXACT entity names from the text
-- Don't invent or paraphrase names
 
-**Used For**: `conversation.recent_turns[].assistant_summary` - shown in context for Think/Act
-
-### 2. Turn Compression (`TurnSummary`)
+### 2. Conversation Compression (`_compress_turns_to_narrative`)
 
 **When**: `recent_turns` exceeds `FULL_DETAIL_TURNS` (currently 3)
 
-**Input**: Oldest turn's user + assistant text
+**Input**: Oldest turns to compress
 
-**Output**: 1-sentence summary of the exchange
-
-**Critical Rules**:
-- **Proposals ≠ Completed actions** (same rule applies)
-  - "I'll design 3 recipes" → "User requested X; assistant proposed a plan"
-  - "Done! Designed 3 recipes" → "Assistant created recipes: [names]"
-- Focus on: what user asked, what action was taken
-- Mention any entities created/modified
-- Keep specific (IDs, names)
-
-**Used For**: `conversation.history_summary` - provides context for older interactions
-
-### 3. Session Theme (`EngagementSummary`)
-
-**When**: Significant action (high complexity or multi-step)
-
-**Input**: Current summary + latest exchange
-
-**Output**: 1-sentence theme update
+**Output**: 2-3 sentence narrative summary
 
 **Critical Rules**:
-- Focus on the ongoing theme, not individual actions
-- "Planning rice bowl meal prep" not "Just saved a recipe"
-
-**Used For**: `conversation.engagement_summary` - shown at top of context
+- Focus on conversation arc, not entity IDs
+- "User explored meal planning, decided on fish recipes, saved 3 options"
+- NO UUIDs, NO technical details
+- This is for Understand's narrative context
 
 ---
 
-## Entity Management
+## V4: SummarizeOutput (Structured Audit Ledger)
 
-### Input: `turn_entities` (from Act)
+```json
+{
+  "turn_summary": "Created 3 fish recipes, saved to database",
+  "entities_created": [
+    {"id": "abc123", "type": "recipe", "label": "Honey Glazed Cod"}
+  ],
+  "entities_updated": [],
+  "entities_deleted": [],
+  "artifacts_generated": {"recipes": 3},
+  "artifacts_saved": {"recipes": 3},
+  "errors": [],
+  "next_step_suggestion": "Would you like to add these to a meal plan?"
+}
+```
 
-Entities extracted during Act steps with:
-- `id`: UUID or temp_id
-- `type`: recipe, meal_plan, task, etc.
-- `label`: Human-readable name
-- `state`: PENDING or ACTIVE
-- `source`: db_read, db_write, generate, analyze
-
-### Processing
-
-1. **Merge to EntityRegistry**: Add all entities to registry for lifecycle tracking
-2. **Filter for active_entities**: Only store entities from DB sources (db_read, db_write) in `active_entities`. PENDING entities from generate/analyze steps are NOT promoted.
-3. **Garbage collect**: Mark entities not referenced in `PENDING_TTL_TURNS` as inactive.
-
-### Why Filtering Matters
-
-GENERATE steps produce entities with temp/hallucinated IDs that don't exist in the database. If these are promoted to `active_entities`, later turns will try to use these IDs for FK references and fail.
-
-**Only store entities that exist in the database.**
+This is machine-readable for debugging and analytics, not for prompts.
 
 ---
 
-## Decision Context Tracking
+## Entity Handling (V4)
+
+### What Summarize Does
+
+1. **Add new entities to context**: Entities created this turn go to active tier
+2. **Set turn number**: Update current_turn on entity context
+
+### What Summarize Does NOT Do
+
+- Promote/demote entities (Understand does this)
+- Drop stale entities (Understand does this)
+- Garbage collect based on time (removed in V4)
+
+**The key insight**: Entity relevance is intent-dependent, not time-dependent.
+Understand sees user intent and curates accordingly.
+
+---
+
+## Clarification Tracking
 
 Summarize tracks `pending_clarification` for context threading:
 
 | Decision | What's Stored |
 |----------|---------------|
 | `plan_direct` | Nothing - execution complete |
-| `propose` | proposal_message, assumptions, goal |
+| `propose` | proposal_message, goal |
 | `clarify` | clarification_questions, goal |
+| `understand` | Disambiguation questions |
 
 This helps the next turn know we're waiting for user confirmation.
-
----
-
-## What Summarize Does NOT Do
-
-- Generate user-facing text (that's Reply)
-- Make decisions about what to do (that's Think)
-- Execute any actions (that's Act)
-- Route requests (that's Router)
-
-Summarize is purely about **maintaining state** for future turns.
 
 ---
 
@@ -155,6 +164,3 @@ Summarize is purely about **maintaining state** for future turns.
 |----------|-------|---------|
 | `SUMMARIZE_THRESHOLD` | 400 chars | Minimum length to trigger LLM summarization |
 | `FULL_DETAIL_TURNS` | 3 | How many recent turns to keep in full |
-| `FULL_DETAIL_STEPS` | 3 | How many recent step results to keep in full |
-| `PENDING_TTL_TURNS` | 3 | How long before PENDING entities are garbage collected |
-

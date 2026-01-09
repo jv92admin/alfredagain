@@ -302,13 +302,22 @@ Previous step read meal plan. For each recipe_id, you may need to read recipe_in
     # === MEAL PLAN PATTERNS ===
     elif subdomain == "meal_plans":
         if any(verb in desc_lower for verb in ["create", "add", "save", "plan"]):
-            examples.append("""**Add to Meal Plan**:
+            examples.append("""**Add to Meal Plan** — always include `recipe_id` for real meals:
 ```json
 {"tool": "db_create", "params": {"table": "meal_plans", "data": {
-  "date": "2025-01-02", "meal_type": "dinner", "recipe_id": "<uuid>", "servings": 2
+  "date": "2025-01-02", "meal_type": "dinner", "recipe_id": "recipe_1", "servings": 4
 }}}
 ```
-If recipe doesn't exist, suggest creating it first.""")
+
+**Leftovers** — same recipe_id, add notes:
+```json
+{"date": "2025-01-03", "meal_type": "lunch", "recipe_id": "recipe_1", "notes": "leftovers"}
+```
+
+**Non-recipe** (prep, stock, experiments) — use `other`:
+```json
+{"date": "2025-01-04", "meal_type": "other", "notes": "Making chicken stock"}
+```""")
     
     # === INVENTORY PATTERNS ===
     elif subdomain == "inventory":
@@ -924,13 +933,10 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 
 **🔗 LINKED TABLES: `recipes` ↔ `recipe_ingredients`**
 
-Any write (create/update/delete) must touch BOTH tables:
-- `recipes` — parent (has `id`)
-- `recipe_ingredients` — children (linked by `recipe_id`)
-
-Order: Create parent→children. Delete children→parent.
-
-**⚠️ Don't assume data hygiene — always check/modify both tables, even if one returns empty.**
+- **CREATE:** recipes first → recipe_ingredients with that recipe_id
+- **DELETE:** Just delete from `recipes` — recipe_ingredients CASCADE automatically
+- **UPDATE (metadata):** Just update `recipes` table
+- **UPDATE (ingredients):** Delete old recipe_ingredients → Create new ones
 
 **Recipe Variations:**
 - Use `parent_recipe_id` to link a variation to its base recipe
@@ -957,15 +963,6 @@ Order: Create parent→children. Delete children→parent.
 | category | text | Yes |
 | is_purchased | boolean | No (default false) |
 | source | text | Yes |
-
-**⚠️ Smart Shopping List Updates:**
-When adding ingredients from recipes/meal plans:
-1. **Read first** — Check what's already on the shopping list
-2. **Combine duplicates** — If "olive oil" is already listed, don't add a second row
-3. **Update quantities** — For countable items (2 eggs + 3 eggs = 5 eggs), increase quantity
-4. **Keep separate for staples** — Bottles/jars (soy sauce, olive oil) often don't need quantity math
-
-Pattern: `db_read` → merge in analyze step → `db_create` new items + `db_update` existing quantities
 
 ### ingredients
 | Column | Type | Nullable |

@@ -1,5 +1,5 @@
 """
-Alfred V3 - Step-Type-Specific Prompt Injection.
+Alfred V4 - Step-Type-Specific Prompt Injection.
 
 This module assembles Act prompts based on step_type, mode, and context.
 
@@ -9,16 +9,27 @@ Step Types:
 - generate: User profile + creative guidance
 - write: Schema + FK handling + entity tagging
 
+V4 Changes:
+- WorkingSet replaces scattered entity sections
+- TurnIdMapper handles ID mapping for FK references
+- BatchManifest tracks multi-item operations
+- EntityContextModel provides tiered entity resolution
+- SessionConstraints accumulates user preferences
+
 Mode affects verbosity and example inclusion.
 
 Note: Schema is passed in as a parameter (fetched by caller) to avoid async issues.
 """
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from alfred.core.entities import Entity
 from alfred.core.modes import Mode, MODE_CONFIG
 from alfred.prompts.personas import get_persona_for_subdomain, get_full_subdomain_content
+
+# V4 CONSOLIDATION: Only SessionIdRegistry needed now
+if TYPE_CHECKING:
+    from alfred.core.id_registry import SessionIdRegistry
+    from alfred.graph.state import BatchManifest
 
 
 def get_verbosity_label(mode: Mode) -> str:
@@ -31,7 +42,7 @@ def build_act_prompt(
     step_type: str,
     subdomain: str,
     mode: Mode,
-    entities: list[Entity] | None = None,
+    entities: list[dict] | None = None,  # V4 CONSOLIDATION: changed from Entity to dict
     prev_group_results: list[dict] | None = None,
     user_profile: dict | None = None,
     schema: str | None = None,  # Schema passed in by caller
@@ -83,7 +94,7 @@ def build_step_context(step_description: str, step_type: str) -> str:
 
 def build_read_sections(
     subdomain: str, 
-    entities: list[Entity] | None = None,
+    entities: list[dict] | None = None,  # V4 CONSOLIDATION
     schema: str | None = None,
 ) -> str:
     """
@@ -226,7 +237,7 @@ Use `temp_id` prefix for generated content. This allows the system to track it."
 
 def build_write_sections(
     subdomain: str,
-    entities: list[Entity] | None = None,
+    entities: list[dict] | None = None,  # V4 CONSOLIDATION
     prev_group_results: list[dict] | None = None,
     schema: str | None = None,
 ) -> str:
@@ -462,9 +473,8 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
             elif field in ("date", "due_date", "expiry_date"):
                 parts.append(f"@{value}")
             elif field == "recipe_id":
-                # Show shortened recipe_id for linking
-                short_id = str(value)[-8:] if len(str(value)) > 8 else value
-                parts.append(f"recipe:..{short_id}")
+                # V4: IDs are simple refs (recipe_1), show in full
+                parts.append(f"recipe:{value}")
             elif field in ("total_time", "servings"):
                 parts.append(f"{field}:{value}")
             elif field == "tags" and isinstance(value, list):
@@ -473,10 +483,9 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
                 parts.append(f"{field}:{value}")
     
     # Add ID if protocol says to
+    # V4: IDs are simple refs (recipe_1, inv_5), show in full
     if protocol.get("show_id", True) and record.get("id"):
-        id_str = str(record["id"])
-        short_id = id_str[-8:] if len(id_str) > 8 else id_str
-        parts.append(f"id:..{short_id}")
+        parts.append(f"id:{record['id']}")
     
     return " ".join(parts)
 
@@ -522,8 +531,8 @@ def _format_records_for_table(records: list[dict], table: str | None = None) -> 
         
         lines = []
         for recipe_id, ingredients in grouped.items():
-            short_id = str(recipe_id)[-8:] if len(str(recipe_id)) > 8 else recipe_id
-            lines.append(f"  - recipe:..{short_id}: {len(ingredients)} ingredients ({', '.join(ingredients[:5])}{'...' if len(ingredients) > 5 else ''})")
+            # V4: IDs are simple refs, show in full
+            lines.append(f"  - recipe:{recipe_id}: {len(ingredients)} ingredients ({', '.join(ingredients[:5])}{'...' if len(ingredients) > 5 else ''})")
         return lines
     
     # Standard formatting
@@ -612,7 +621,6 @@ def _format_user_profile(profile: dict, mode: Mode) -> str:
 def build_act_quick_prompt(
     intent: str,
     subdomain: str,
-    action_type: str,
     schema: str,
     today: str,
     user_message: str = "",
@@ -628,7 +636,6 @@ def build_act_quick_prompt(
     Args:
         intent: Plaintext intent from Understand (e.g., "Add 1lb popcorn to inventory")
         subdomain: Target subdomain (inventory, shopping, recipes, etc.)
-        action_type: "read", "create", "update", or "delete"
         schema: Database schema for the subdomain
         today: Today's date in ISO format
         user_message: The user's original message (contains actual data to process)
@@ -673,9 +680,8 @@ You are Alfred's execution engine for a simple, single-step request.
     system_prompt = quick_header + crud
     
     # === USER PROMPT: Same structure as Act ===
-    step_type = "read" if action_type == "read" else "write"
     subdomain_intro = get_subdomain_intro(subdomain)
-    subdomain_persona = get_persona_for_subdomain(subdomain, step_type)
+    subdomain_persona = get_persona_for_subdomain(subdomain, "read")  # Default to read persona
     
     user_parts = []
     
@@ -687,8 +693,7 @@ You are Alfred's execution engine for a simple, single-step request.
 
 ## STATUS
 | Today | {today} |
-| Task | {intent} |
-| Type | {action_type} |""")
+| Task | {intent} |""")
     
     # Task section (same as Act)
     user_parts.append(f"""---
@@ -729,23 +734,180 @@ Your job: **{intent}**""")
 {subdomain_persona}""")
     
     # Decision prompt (simplified - no step_complete)
-    action_tool_map = {
-        "read": "db_read",
-        "create": "db_create", 
-        "update": "db_update",
-        "delete": "db_delete",
-    }
-    expected_tool = action_tool_map.get(action_type, "db_read")
-    
-    user_parts.append(f"""---
+    user_parts.append("""---
 
 ## DECISION
 
-**Detected action:** {action_type} → typically `{expected_tool}`
+Analyze the intent and choose the appropriate tool:
+- **db_read** for listing/showing/getting
+- **db_create** for adding/creating/saving
+- **db_update** for changing/modifying/updating
+- **db_delete** for removing/deleting/clearing
 
-Return: `{{"tool": "...", "params": {{"table": "...", ...}}}}`""")
+Return: `{"tool": "...", "params": {"table": "...", ...}}`""")
     
     user_prompt = "\n\n".join(user_parts)
     
     return system_prompt, user_prompt
+
+
+# =============================================================================
+# V4 Context Building Functions
+# =============================================================================
+
+
+def build_v4_context_sections(
+    step_type: str,
+    registry: "SessionIdRegistry | None" = None,
+    batch_manifest: "BatchManifest | None" = None,
+) -> str:
+    """
+    V4 CONSOLIDATION: Build context sections for Act prompts.
+    
+    Uses SessionIdRegistry as single source of truth.
+    
+    Args:
+        step_type: Current step type
+        registry: SessionIdRegistry instance
+        batch_manifest: BatchManifest instance (if batch operation)
+    """
+    sections = []
+    
+    # 1. Entity context from registry
+    if registry:
+        entity_section = registry.format_for_act_prompt()
+        if entity_section and "No entities" not in entity_section:
+            sections.append(entity_section)
+    
+    # 2. Batch Manifest (if multi-item operation)
+    if batch_manifest and batch_manifest.total > 1:
+        sections.append(batch_manifest.to_prompt_table())
+    
+    if not sections:
+        return ""
+    
+    return "\n\n---\n\n".join(sections)
+
+
+def build_write_context(
+    registry: "SessionIdRegistry | None" = None,
+    batch_manifest: "BatchManifest | None" = None,
+    compiled_payloads: list | None = None,
+) -> str:
+    """
+    V4 CONSOLIDATION: Build context specifically for WRITE steps.
+    
+    Write steps need:
+    1. What to save (from registry)
+    2. Batch progress (if multi-item)
+    
+    Returns a focused context section.
+    """
+    sections = []
+    
+    # 1. Batch Manifest (what we're saving)
+    if batch_manifest and batch_manifest.total > 0:
+        sections.append(batch_manifest.to_prompt_table())
+    
+    # 2. Entity context from registry
+    if registry:
+        entity_section = registry.format_for_act_prompt()
+        if entity_section and "No entities" not in entity_section:
+            sections.append(entity_section)
+    
+    # 3. Content to Save (compiled payloads)
+    if compiled_payloads:
+        import json
+        lines = ["## Content to Save (Pre-Compiled)", ""]
+        for payload in compiled_payloads:
+            if hasattr(payload, 'target_table'):
+                for record in payload.records:
+                    lines.append(f"**{record.ref}** → `{payload.target_table}`:")
+                    lines.append("```json")
+                    lines.append(json.dumps(record.data, indent=2, default=str))
+                    lines.append("```")
+                    if record.linked_records:
+                        for linked in record.linked_records:
+                            lines.append(f"  └─ `{linked.table}`: {len(linked.records)} records")
+                    lines.append("")
+        sections.append("\n".join(lines))
+    
+    if not sections:
+        return "*No content to save.*"
+    
+    return "\n\n---\n\n".join(sections)
+
+
+def build_entity_context_for_understand(
+    registry: "SessionIdRegistry | None" = None,
+) -> str:
+    """
+    V4 CONSOLIDATION: Build entity context for Understand node.
+    
+    Uses SessionIdRegistry to show all tracked entities.
+    """
+    if registry:
+        return registry.format_for_understand_prompt()
+    return "*No entities tracked.*"
+
+
+# V4 CONSOLIDATION: build_constraints_context removed - constraints not needed with simplified system
+
+
+# =============================================================================
+# V4 Summarize Context Building
+# =============================================================================
+
+
+def build_summarize_context(
+    step_results: dict[int, Any],
+    step_metadata: dict[int, dict],
+    registry: "SessionIdRegistry | None" = None,
+    batch_manifest: "BatchManifest | None" = None,
+) -> str:
+    """
+    V4 CONSOLIDATION: Build context for Summarize node.
+    
+    Uses SessionIdRegistry for entity information.
+    """
+    sections = []
+    
+    # 1. Entity Summary from registry
+    if registry:
+        entity_section = registry.format_for_act_prompt()
+        if entity_section and "No entities" not in entity_section:
+            sections.append(entity_section)
+    
+    # 2. Step Results Summary
+    if step_metadata:
+        lines = ["### Steps Executed", ""]
+        for idx, meta in sorted(step_metadata.items()):
+            step_type = meta.get("step_type", "unknown")
+            desc = meta.get("description", "")[:50]
+            artifacts = meta.get("artifacts", [])
+            artifact_count = len(artifacts) if artifacts else 0
+            
+            status = "✅"
+            if step_type == "generate" and artifact_count > 0:
+                status = f"📝 ({artifact_count} items)"
+            elif step_type == "write":
+                status = "💾"
+            
+            lines.append(f"- Step {idx + 1} [{step_type}]: {desc} {status}")
+        sections.append("\n".join(lines))
+    
+    # 3. Batch Progress (if applicable)
+    if batch_manifest and batch_manifest.total > 0:
+        lines = [
+            "### Batch Progress",
+            f"- Total: {batch_manifest.total}",
+            f"- Completed: {batch_manifest.completed_count}",
+            f"- Failed: {batch_manifest.failed_count}",
+        ]
+        sections.append("\n".join(lines))
+    
+    if not sections:
+        return "No turn activity to summarize."
+    
+    return "\n\n".join(sections)
 

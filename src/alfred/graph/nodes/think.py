@@ -27,7 +27,7 @@ from alfred.background.profile_builder import (
     get_cached_dashboard,
     get_cached_profile,
 )
-from alfred.core.entities import EntityRegistry
+from alfred.core.id_registry import SessionIdRegistry
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.state import AlfredState, ThinkStep, ThinkOutput
 from alfred.llm.client import call_llm, set_current_node
@@ -65,28 +65,19 @@ def adjust_step_complexity(step: ThinkStep) -> ThinkStep:
     return step
 
 
-def _get_mode_planning_guidance(mode: Mode) -> str:
-    """Get planning guidance based on mode."""
-    if mode == Mode.QUICK:
-        return """**Mode: QUICK**
-- Maximum 2 steps
-- No proposal needed - execute directly
-- Simple operations only"""
-    elif mode == Mode.COOK:
-        return """**Mode: COOK**
-- Maximum 4 steps
-- Focus on recipe operations
-- Light proposal for complex requests"""
-    elif mode == Mode.PLAN:
-        return """**Mode: PLAN**
-- Up to 8 steps for complex operations
-- Propose for multi-step plans
-- Full planning with parallelization"""
-    else:  # CREATE
-        return """**Mode: CREATE**
-- Focus on generation steps
-- Up to 4 steps
-- Rich output, creative freedom"""
+def _format_entity_context_for_think(
+    registry: SessionIdRegistry,
+    referenced_entities: list[str],
+) -> str:
+    """
+    V4 CONSOLIDATION: Format entity context for Think's prompt.
+    
+    Uses SessionIdRegistry to show what entities are available.
+    """
+    if not registry.ref_to_uuid:
+        return ""
+    
+    return registry.format_for_think_prompt()
 
 
 # Load prompt once at module level
@@ -140,19 +131,27 @@ async def think_node(state: AlfredState) -> dict:
         processed_message = getattr(understand_output, "processed_message", None)
         referenced_entities = getattr(understand_output, "referenced_entities", []) or []
 
+    # V4 CONSOLIDATION: Load SessionIdRegistry for entity context
+    registry_data = state.get("id_registry")
+    entity_context_section = ""
+    entity_counts_section = ""
+    if registry_data:
+        registry = SessionIdRegistry.from_dict(registry_data)
+        registry.set_turn(state.get("current_turn", 1))
+        entity_context_section = _format_entity_context_for_think(registry, referenced_entities)
+        
+        # Build entity counts from registry
+        entity_counts = {}
+        for ref, entity_type in registry.ref_types.items():
+            entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
+        if entity_counts:
+            entity_counts_section = f"**Entity counts:** {entity_counts}"
+
     # Get mode context
     mode_data = state.get("mode_context", {})
     mode_context = ModeContext.from_dict(mode_data) if mode_data else ModeContext.default()
     mode = mode_context.selected_mode
-    mode_guidance = _get_mode_planning_guidance(mode)
-    
-    # Get entity counts (not full data)
-    registry_data = state.get("entity_registry", {})
-    entity_counts = {}
-    if registry_data:
-        registry = EntityRegistry.from_dict(registry_data)
-        entity_counts = registry.get_counts_by_type()
-    entity_counts_section = f"**Entity counts:** {entity_counts}" if entity_counts else ""
+    # Mode guidance now inline in Task section
 
     # Format conversation context (condensed for Think)
     context_section = format_condensed_context(conversation)
@@ -181,11 +180,23 @@ async def think_node(state: AlfredState) -> dict:
     pending_section = ""
     if pending_clarification:
         pending_type = pending_clarification.get("type", "")
-        if pending_type in ("propose", "clarify"):
-            pending_section = f"""## Previous Turn
+        if pending_type == "propose":
+            proposal_goal = pending_clarification.get("goal", "")
+            pending_section = f"""## ↑ Proposal Response
 
-You asked for {'confirmation' if pending_type == 'propose' else 'clarification'}.
-The user's current message is their response. Use this context to plan.
+**You proposed:** {proposal_goal}
+*(Full proposal in conversation above)*
+
+**User is responding.** If they confirm → execute what you proposed.
+If they modify → adjust the plan.
+
+"""
+        elif pending_type == "clarify":
+            pending_section = """## ↑ Clarification Response
+
+**You asked for more details** *(see conversation above)*
+
+**User is answering.** Use their response to plan.
 
 """
     
@@ -199,17 +210,15 @@ The user's current message is their response. Use this context to plan.
     if referenced_entities:
         understand_section += f"\n**Referenced entities**: {referenced_entities}"
     
-    user_prompt = f"""{pending_section}## Task
-
-**Goal**: {router_output.goal}
+    # Extract just the mode name for compact display
+    mode_name = mode.name  # QUICK, COOK, PLAN, or CREATE
+    max_steps = {"QUICK": 2, "COOK": 4, "PLAN": 8, "CREATE": 4}.get(mode_name, 4)
+    
+    user_prompt = f"""## Task
 
 **User said**: "{user_message}"{understand_section}
 
-**Agent**: {router_output.agent}
-
-**Today**: {today}
-
-{mode_guidance}
+**Today**: {today} | **Mode**: {mode_name} (max {max_steps} steps)
 
 {entity_counts_section}
 
@@ -219,13 +228,15 @@ The user's current message is their response. Use this context to plan.
 
 {dashboard_section}
 
+{entity_context_section}
+
 ---
 
 ## Conversation Context
 
 {context_section}
 
----
+{pending_section}---
 
 ## Your Output
 

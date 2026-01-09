@@ -16,7 +16,6 @@ from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field, model_validator
 
-from alfred.core.entities import Entity, EntityRegistry, EntityState
 from alfred.core.modes import Mode, ModeContext
 
 
@@ -78,19 +77,20 @@ class RouterOutput(BaseModel):
 
 class ThinkStep(BaseModel):
     """
-    V3 Step definition with group-based parallelization.
+    Step definition with group-based parallelization.
     
     Steps in the same group have no dependencies and can run in parallel.
     Groups execute in order: 0 → 1 → 2 → ...
+    
+    Simplified in V4.1: Removed unused fields (data_requirements, referenced_entities,
+    input_from_steps). Entity tracking is handled by SessionIdRegistry.
     """
     
     description: str  # Natural language step description
     step_type: Literal["read", "analyze", "generate", "write"]
     subdomain: str  # "inventory", "recipes", "shopping", "meal_plans", "preferences"
     group: int = 0  # Execution group (same group = can run in parallel)
-    referenced_entities: list[str] | None = None  # Entity IDs this step uses
     
-    # Legacy compatibility
     @property
     def complexity(self) -> str:
         """Map step_type to complexity for model selection."""
@@ -107,24 +107,115 @@ class ThinkStep(BaseModel):
 # =============================================================================
 
 
+# =============================================================================
+# V4 Understand Models
+# =============================================================================
+
+
+class EntityMention(BaseModel):
+    """
+    V4: A structured entity mention from user input.
+    
+    Represents a user's reference to an entity with resolution info.
+    """
+    
+    text: str  # Raw text from user ("that recipe", "the cod dish")
+    entity_type: str | None = None  # Inferred type (recipe, meal_plan, etc.)
+    
+    # Resolution result
+    resolution: Literal["exact", "inferred", "ambiguous", "unknown"] = "unknown"
+    resolved_id: str | None = None  # Resolved entity ID if successful
+    confidence: float = 0.0  # 0.0-1.0
+    
+    # For ambiguous cases
+    candidates: list[str] = Field(default_factory=list)  # Candidate entity IDs
+    disambiguation_reason: str | None = None  # Why it's ambiguous
+
+
+class TurnConstraintSnapshot(BaseModel):
+    """
+    V4: Constraints detected in this turn's input.
+    
+    These get merged into SessionConstraints deterministically.
+    """
+    
+    # New constraints detected this turn
+    new_constraints: list[str] = Field(default_factory=list)  # ["use cod", "no dairy"]
+    
+    # Constraints that override previous values
+    overrides: dict[str, str] = Field(default_factory=dict)  # {"protein": "cod" overrides "salmon"}
+    
+    # Reset signals
+    reset_all: bool = False  # "never mind", "start over"
+    reset_subdomain: str | None = None  # Subdomain change resets that domain's constraints
+
+
+class EntityCurationDecision(BaseModel):
+    """
+    V4: Understand's decision about entity context curation.
+    
+    Understand is the sole curator of entity context. It decides based on
+    user intent what entities should be active, demoted, or dropped.
+    """
+    
+    # Entities to keep in active tier (user referenced or continuing to use)
+    keep_active: list[str] = Field(default_factory=list)
+    
+    # Entities to promote from background to active (user referenced)
+    promote_to_active: list[str] = Field(default_factory=list)
+    
+    # Entities to demote from active to background (no longer relevant)
+    demote_to_background: list[str] = Field(default_factory=list)
+    
+    # Entities to drop entirely (user said "forget that", starting fresh)
+    drop_entities: list[str] = Field(default_factory=list)
+    
+    # Clear all context (user said "never mind", "start fresh")
+    clear_all: bool = False
+    
+    # Reason for curation (for debugging)
+    curation_reason: str | None = None
+
+
 class UnderstandOutput(BaseModel):
     """
-    Output from the Understand node (V3).
+    Output from the Understand node (V4).
     
     Understand handles:
-    - Entity state updates (confirmation/rejection signals)
     - Entity reference resolution ("that recipe" → specific ID)
+    - Entity context CURATION (what's active, what's background, what's dropped)
     - Clarification detection
-    - Quick mode detection (Phase 2)
+    - Quick mode detection
+    - Constraint extraction
+    
+    V4 Changes:
+    - Understand is the SOLE curator of entity context
+    - EntityMention with confidence and resolution type
+    - EntityCurationDecision for intent-based context management
+    - TurnConstraintSnapshot for constraint accumulation
     
     Understand does NOT plan steps.
     """
     
-    # Entity state updates
+    # Entity state updates (legacy - still supported)
     entity_updates: list[dict] = Field(default_factory=list)  # [{"id": "x", "new_state": "active"}]
     referenced_entities: list[str] = Field(default_factory=list)  # Entity IDs user is referring to
     
-    # Clarification
+    # V4: Structured entity mentions
+    entity_mentions: list[EntityMention] = Field(default_factory=list)
+    
+    # V4: ENTITY CURATION - Understand decides what's relevant
+    entity_curation: EntityCurationDecision | None = None
+    
+    # V4: Disambiguation support
+    needs_disambiguation: bool = False
+    disambiguation_options: list[dict] = Field(default_factory=list)  # [{id, label, reason}]
+    disambiguation_question: str | None = None
+    
+    # V4: Constraint snapshot
+    constraint_snapshot: TurnConstraintSnapshot | None = None
+    
+    # Clarification (legacy, still supported)
     needs_clarification: bool = False
     clarification_questions: list[str] | None = None
     clarification_reason: str | None = None  # "ambiguous_reference", "missing_info"
@@ -132,8 +223,9 @@ class UnderstandOutput(BaseModel):
     # Pass-through
     processed_message: str = ""  # User message with resolved references
     
-    # Quick mode detection (Phase 2)
+    # Quick mode detection
     quick_mode: bool = False  # True if this is a simple 1-step query
+    quick_mode_confidence: float = 0.0  # V4: Confidence gating
     quick_intent: str | None = None  # Plaintext intent: "Show user their inventory"
     quick_subdomain: str | None = None  # Target subdomain: "inventory", "shopping", etc.
 
@@ -142,14 +234,13 @@ class ThinkOutput(BaseModel):
     """
     Output from the Think node.
     
-    V3 Changes:
-    - steps now use ThinkStep with group field
-    - needs_proposal replaces decision for cleaner flow
+    Simplified in V4.1: Removed unused fields (data_requirements, success_criteria).
+    Entity tracking handled by SessionIdRegistry, not Think declarations.
     
-    Think can decide to:
-    - Execute directly (simple requests)
-    - Propose plan for confirmation (complex requests in Plan mode)
-    - Clarify (rare - most clarification handled by Understand)
+    Think decides to:
+    - plan_direct: Execute immediately (simple, unambiguous requests)
+    - propose: Show plan for confirmation (complex/exploratory)
+    - clarify: Ask questions (rare - Understand handles most)
     """
 
     # Always present
@@ -158,13 +249,13 @@ class ThinkOutput(BaseModel):
     # Steps to execute (with group field for parallelization)
     steps: list[ThinkStep] = Field(default_factory=list)
     
-    # Proposal flow (replaces V2 decision field)
-    needs_proposal: bool = False  # If True, show user before executing
+    # Decision type
+    decision: Literal["plan_direct", "propose", "clarify"] = "plan_direct"
+    
+    # For propose
     proposal_message: str | None = None
     
-    # Legacy fields (kept for migration)
-    decision: Literal["plan_direct", "propose", "clarify"] = "plan_direct"
-    assumptions: list[str] | None = None
+    # For clarify
     clarification_questions: list[str] | None = None
     
     @model_validator(mode="after")
@@ -197,6 +288,104 @@ class ThinkOutput(BaseModel):
 # =============================================================================
 
 
+# =============================================================================
+# V4 Batch Tracking
+# =============================================================================
+
+
+class BatchItem(BaseModel):
+    """A single item in a batch operation."""
+    
+    ref: str  # Reference ID (gen_recipe_1, recipe_1, etc.)
+    label: str  # Human-readable label
+    status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
+    result_id: str | None = None  # DB ID when created
+    error: str | None = None  # Error message if failed
+
+
+class BatchManifest(BaseModel):
+    """
+    V4: Explicit batch manifest for multi-item operations.
+    
+    Enforces completion tracking - cannot call step_complete while items are pending.
+    """
+    
+    total: int  # Total items in batch
+    items: list[BatchItem]  # Per-item tracking
+    
+    @property
+    def completed_count(self) -> int:
+        return sum(1 for item in self.items if item.status == "completed")
+    
+    @property
+    def failed_count(self) -> int:
+        return sum(1 for item in self.items if item.status == "failed")
+    
+    @property
+    def pending_count(self) -> int:
+        return sum(1 for item in self.items if item.status == "pending")
+    
+    @property
+    def all_done(self) -> bool:
+        """Returns True if no items are pending (all completed or failed)."""
+        return self.pending_count == 0
+    
+    def mark_completed(self, ref: str, result_id: str) -> None:
+        """Mark an item as completed with its DB ID."""
+        for item in self.items:
+            if item.ref == ref:
+                item.status = "completed"
+                item.result_id = result_id
+                return
+    
+    def mark_failed(self, ref: str, error: str) -> None:
+        """Mark an item as failed with error message."""
+        for item in self.items:
+            if item.ref == ref:
+                item.status = "failed"
+                item.error = error
+                return
+    
+    def to_prompt_table(self) -> str:
+        """Format batch manifest as markdown table for Act prompt."""
+        lines = [
+            "## Batch Manifest",
+            "",
+            "| Ref | Label | Status | DB ID |",
+            "|-----|-------|--------|-------|",
+        ]
+        for item in self.items:
+            status_icon = {
+                "pending": "⏳",
+                "in_progress": "🔄",
+                "completed": "✅",
+                "failed": "❌",
+            }.get(item.status, "?")
+            # V4: result_id is now a simple ref, show in full
+            db_id = item.result_id if item.result_id else "—"
+            lines.append(f"| {item.ref} | {item.label} | {status_icon} {item.status} | {db_id} |")
+        
+        # Add progress summary
+        lines.append("")
+        lines.append(f"**Progress:** {self.completed_count}/{self.total} completed")
+        if self.failed_count:
+            lines.append(f"**Failed:** {self.failed_count} items")
+        if self.pending_count:
+            lines.append(f"**Remaining:** {self.pending_count} items")
+        
+        return "\n".join(lines)
+
+
+class BatchProgress(BaseModel):
+    """V4: Batch progress tracking in ActOutput."""
+    
+    completed: int
+    total: int
+    completed_items: list[str]  # refs of completed items
+    failed_items: list[dict]  # [{ref, error}]
+    pending_items: list[str]  # refs still pending
+
+
 class ToolCallAction(BaseModel):
     """Request to call a CRUD tool."""
 
@@ -212,6 +401,12 @@ class StepCompleteAction(BaseModel):
     result_summary: str  # Brief description of outcome
     data: Any = None  # Full result for caching
     note_for_next_step: str | None = None  # Short note for next step (IDs, counts, etc.)
+    
+    # V4: Artifacts from generate steps (preserved in full, not summarized)
+    artifacts: list[dict] | None = None  # Full generated content for downstream write steps
+    
+    # V4: Batch progress tracking
+    batch_progress: BatchProgress | None = None  # For multi-item operations
 
 
 class RequestSchemaAction(BaseModel):
@@ -352,12 +547,14 @@ class AlfredState(TypedDict, total=False):
     This is a TypedDict so LangGraph can properly type-check
     and merge state updates from each node.
     
-    V3 Additions:
-    - entity_registry: EntityRegistry for lifecycle tracking
+    V4 CONSOLIDATION:
+    - id_registry: SessionIdRegistry - SINGLE source of truth for entity tracking
     - mode_context: ModeContext for complexity adaptation
     - understand_output: UnderstandOutput from Understand node
-    - group_results: Results organized by execution group
-    - current_turn: Turn counter for entity GC
+    - current_turn: Turn counter
+    
+    Deprecated (removed): entity_registry, turn_entities, entity_context, 
+                          working_set, id_mapper, session_constraints
     """
 
     # User context
@@ -370,10 +567,7 @@ class AlfredState(TypedDict, total=False):
     # V3: Mode context (from CLI/UI)
     mode_context: dict[str, Any]  # ModeContext serialized
 
-    # V3: Entity registry (lifecycle tracking)
-    entity_registry: dict[str, Any]  # EntityRegistry serialized
-    
-    # V3: Current turn number (for entity GC)
+    # V4 CONSOLIDATION: Turn number (for entity tracking)
     current_turn: int
 
     # Router output
@@ -392,7 +586,23 @@ class AlfredState(TypedDict, total=False):
     # Act loop state
     current_step_index: int
     step_results: dict[int, Any]  # Cache of tool outputs by step index
+    # V4: Step metadata for artifact preservation
+    # Keys: step index, Values: {step_type, subdomain, artifacts, data}
+    step_metadata: dict[int, dict]
     current_step_tool_results: list[Any]  # Tool results within current step (multi-tool pattern)
+    
+    # V4: Batch tracking for multi-item operations
+    # Set by Think when planning batch operations, tracked by Act
+    current_batch_manifest: dict | None  # BatchManifest.model_dump()
+    
+    # V4 CONSOLIDATION: Session ID Registry - SINGLE SOURCE OF TRUTH
+    # PERSISTS ACROSS TURNS. LLMs only see simple refs (recipe_1, inv_5).
+    # Populated by CRUD layer on db_read/db_create. Used for all ID translation.
+    # Also stores temporal tracking (turn_created, turn_last_ref) and pending artifacts.
+    id_registry: dict | None  # SessionIdRegistry.to_dict()
+    
+    # V4: Summarize output - structured audit ledger
+    summarize_output: dict | None  # SummarizeOutput.model_dump()
     current_subdomain: str | None  # Active subdomain for schema
     schema_requests: int  # Count of schema requests (for safeguard)
     pending_action: ActAction | None
@@ -410,9 +620,7 @@ class AlfredState(TypedDict, total=False):
     # Step notes (CRUD steps leave notes for next step)
     prev_step_note: str | None  # Note from previous step for context
     
-    # Within-turn entity tracking (IDs created this turn, for cross-step reference)
-    # Accumulated as steps complete; merged into entity_registry by Summarize
-    turn_entities: list[dict]  # List of Entity.to_dict() dicts
+    # V4 CONSOLIDATION: turn_entities removed - use id_registry instead
     
     # Conversation context (Phase 5)
     conversation: ConversationContext

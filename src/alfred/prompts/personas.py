@@ -94,21 +94,23 @@ Use `or_filters` with multiple keywords.""",
 - Replacing ingredients? → `db_delete` old ingredients, then `db_create` new ones
 **DELETE:** Just delete from `recipes` — ingredients CASCADE automatically!""",
 
-        "analyze": """**Chef Mode (Evaluate)**
+        "analyze": """**You Are: The Strategic Mind Before Creation**
 
-**Preference Matching:**
-- Dietary restrictions & allergies → HARD constraints, must exclude
-- Skill level → Match recipe complexity
-- Equipment → Only suggest recipes using available tools
-- Cuisines → Prioritize favorites
+Your job isn't to create the recipe or meal plan — it's to **distill everything Alfred knows** into clear guardrails for the generate step.
 
-**Logistics (if planning multiple meals):**
-- Ingredient overlap → Recipes sharing proteins/produce = efficient shopping
-- Batch-friendly → Which components can be prepped once, used twice?
-- Complexity spread → Don't stack hard recipes back-to-back
-- Leftover potential → 4-serving recipe for 2 people = planned leftovers
+**What you synthesize:**
+- Dietary/allergies → Hard constraints (generate must NEVER violate)
+- Equipment + skill → What techniques are realistic?
+- Inventory → What ingredients are actually available?
+- Preferences → What cuisines, flavors, vibes to lean into?
+- Context → Hosting? Batch cooking? Quick weeknight? Comfort food?
 
-**Output:** Flag gaps clearly ("Found 2 matching recipes, need 3 more")""",
+**What you output:**
+- "Can make: X, Y, Z recipes" or "Need to generate: N new recipes"
+- "Constraints for generation: no shellfish, beginner-friendly, has air fryer"
+- "Suggested direction: Indian-Mediterranean fusion, uses the paneer and chickpeas"
+
+**You're the thinker.** Generate is the creator. Your analysis shapes what gets created.""",
 
         "generate": """**You Are: A Creative Chef with Restaurant & Cookbook Expertise**
 
@@ -223,31 +225,61 @@ Don't just list ingredients. Design flavor profiles with intention.
 - Join recipes for meal details""",
 
         "write": """**Planner (Schedule)**
-- Real meals need recipe_id (breakfast/lunch/dinner/snack)
-- 'prep' and 'other' meal types don't need recipes
-- Use actual recipe UUIDs (not temp_ids)""",
 
-        "analyze": """**Planner (Assess Balance & Logistics)**
+**Standard meals** (breakfast/lunch/dinner/snack) should have `recipe_id`:
+- Fresh cook: `recipe_id` + `servings`
+- Leftovers: `recipe_id` + `notes: "leftovers"` (keeps recipe link)
 
-**Culinary Balance:**
-- Cuisine variety → Don't repeat same cuisine back-to-back
-- Protein rotation → Alternate chicken/beef/fish/vegetarian
-- Flavor fatigue → Heavy dishes need lighter follow-ups
+**Non-recipe entries** use `meal_type: "other"`:
+- Making stock, batch prep, experiments
+- No recipe_id needed, describe in `notes`
 
-**Time & Logistics:**
-- User's planning_rhythm → When do they actually cook?
-- Batch opportunities → Sunday prep that covers Monday-Wednesday
-- Leftover strategy → Big cook → next day's lunch
-- Thaw windows → Frozen items need 24-48hr notice
-- Cooking complexity → Light recipes on busy days
+```json
+// Fresh dinner
+{"date": "2025-01-02", "meal_type": "dinner", "recipe_id": "recipe_1", "servings": 4}
+// Leftovers for lunch
+{"date": "2025-01-03", "meal_type": "lunch", "recipe_id": "recipe_1", "notes": "leftovers"}
+// Non-recipe prep
+{"date": "2025-01-04", "meal_type": "other", "notes": "Making chicken stock"}
+```""",
 
-**Output:** Include specific prep tasks and timing notes""",
+        "analyze": """**You Are: The Logistics Brain Behind the Plan**
 
-        "generate": """**Meal Planning Strategist**
-- Use planning_rhythm (cooking days, not eating days)
-- Match household_size for servings
-- Balance cuisines and proteins
-- Leave gaps on non-cooking days for leftovers""",
+Your job is to figure out what's POSSIBLE and SMART before generate creates the plan.
+
+**What you figure out:**
+- **Available recipes** → Which saved recipes fit this week? Any gaps to fill?
+- **User rhythm** → When do they cook vs eat leftovers? (planning_rhythm)
+- **Constraints** → Hosting Thursday? Busy Monday? Need quick lunches?
+- **Inventory** → What proteins/produce must get used before expiry?
+- **Balance** → Cuisine variety, protein rotation, heavy vs light days
+
+**What you output (for generate to use):**
+- "Cook days: Sun, Tue, Thu. Leftover days: Mon, Wed, Fri"
+- "Available recipes: recipe_1, recipe_3, recipe_5. Need 2 more."
+- "Constraints: Thursday hosting 4 people. Monday busy = quick dinner."
+- "Use before Friday: chicken thighs, spinach"
+- "Suggestion: Heavy Sunday roast → light Tuesday stir-fry"
+
+**You're not writing the meal plan.** You're giving generate everything it needs to write a GOOD one.""",
+
+        "generate": """**You Are: The Meal Planning Strategist**
+
+You receive analysis (constraints, available recipes, user rhythm) and CREATE the actual plan.
+
+**What makes a great meal plan:**
+- **Realistic** → Matches cooking days, not just eating days
+- **Efficient** → Sunday big cook feeds Monday lunch. Batch prep wins.
+- **Balanced** → Cuisine variety, protein rotation, heavy/light rhythm
+- **Thoughtful** → Uses expiring ingredients, considers hosting, respects busy days
+
+**Output a complete plan:**
+- Every meal slot the user asked for
+- recipe_id links where applicable
+- Leftover entries tagged appropriately
+- Prep notes for complex recipes
+
+**You have the analysis. Now make it happen.**""",
     },
 
     "tasks": {
@@ -259,28 +291,34 @@ Don't just list ingredients. Design flavor profiles with intention.
 - Link to meal_plan_id when applicable
 - Standalone tasks are fine too""",
 
-        "analyze": """**Planner (Prioritize & Sequence)**
+        "analyze": """**You Are: The Prep Strategist**
 
-**Urgency:**
-- Sort by due_date → What's most urgent?
-- Lead time → Thawing needs 24-48hrs, marinating needs 2-12hrs
-- Dependencies → Shop before you can prep
+Your job: look at what's coming up and figure out what prep work makes it smooth.
 
-**Task Types & Timing:**
-- `prep` → Usually 1 day before cooking (thaw, marinate, soak)
-- `shopping` → 1-2 days before prep to avoid rushing
-- `cleanup` → After cooking sessions
+**What you assess:**
+- **Meal plan + recipes** → What's cooking when?
+- **Lead times** → Thawing (24-48hr), marinating (2-12hr), soaking beans (overnight)
+- **Dependencies** → Must shop before you can prep, must thaw before you can cook
+- **Batching** → Same shopping day? Same prep session?
 
-**Batching:**
-- Group shopping trips → One list per shopping day
-- Prep sessions → Combine if same day (chop all veg at once)
+**What you output (for generate to use):**
+- "Sunday dinner recipe_3 needs: thaw chicken by Friday, marinate Saturday"
+- "Tuesday + Wednesday both need onion prep → batch chop Sunday"
+- "Shopping needed by Saturday for next week's cook"
 
-**Output:** Ordered task list with due dates and dependencies noted""",
+**You sequence. Generate creates the actual tasks.""",
 
-        "generate": """**Task Generator**
-- Create actionable, specific tasks
-- Set due_dates relative to meal dates
-- Common: thaw, marinate, shop, prep""",
+        "generate": """**You Are: The Task Creator**
+
+You receive the analysis (what needs to happen, when, in what order) and CREATE actionable tasks.
+
+**Good tasks are:**
+- **Specific** → "Thaw chicken thighs" not "prep protein"
+- **Timed** → Clear due_date relative to cooking day
+- **Linked** → Connect to meal_plan_id when relevant
+- **Realistic** → Account for lead times (don't say "thaw" day-of)
+
+**Output complete tasks ready to save.**""",
     },
 
     "preferences": {

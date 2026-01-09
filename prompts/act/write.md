@@ -8,103 +8,69 @@ Create, update, or delete database records.
 
 ## How to Execute
 
-1. **Verify content exists.** If step says "save generated X", X must exist in:
-   - Previous Step Results (from a `generate` step)
-   - Previous Step Note
-   - Tool Results This Step
-   
-   If X doesn't exist → use `blocked`. Don't generate it yourself.
-
-2. Check "Previous Step Note" for IDs needed as FK references
-3. Make CRUD calls (see tools reference above)
-4. Tag any new entities created
-5. `step_complete` with summary of what was created/modified
+1. **Check "Content to Save"** — this is your source of truth for what should exist
+2. **Check "Previous Step Results"** — what was actually created
+3. **Fill the gap** — create/update what's missing
+4. **Verify before completing** — does everything in "Content to Save" now exist?
 
 ---
 
 ## Batch Operations
 
-When creating/updating/deleting MULTIPLE items:
+**Use batch inserts.** One `db_create` call can insert many records:
 
-**⚠️ CRITICAL: Complete ALL items before `step_complete`**
+```json
+{
+  "tool": "db_create",
+  "params": {
+    "table": "recipe_ingredients",
+    "data": [
+      {"recipe_id": "gen_recipe_1", "name": "garlic", "quantity": 2, "unit": "cloves"},
+      {"recipe_id": "gen_recipe_1", "name": "olive oil", "quantity": 2, "unit": "tbsp"},
+      {"recipe_id": "gen_recipe_2", "name": "chicken", "quantity": 1, "unit": "lb"},
+      {"recipe_id": "gen_recipe_2", "name": "rice", "quantity": 1, "unit": "cup"}
+    ]
+  }
+}
+```
 
-If the step says "Save 3 recipes with ingredients":
-1. `db_create` on parent table (batch) → get N IDs
-2. `db_create` children for item 1
-3. `db_create` children for item 2
-4. `db_create` children for item 3
-5. `step_complete` (only NOW)
-
-**Do NOT call `step_complete` after handling only SOME of a batch.**
+**Key:** Include ALL records for ALL items in one call. Don't do recipe 1's ingredients, then recipe 2's separately.
 
 ---
 
-## Linked Tables Pattern
+## Linked Tables (Parent → Children)
 
-When tables are linked (parent ↔ children):
+When creating parent + children:
+1. `db_create` parent(s) → get IDs
+2. `db_create` ALL children in one batch with parent IDs
 
-### CREATE Order: Parent → Children
-```
-1. Create parent record → get ID
-2. Create child records with parent's ID as FK
-```
-
-### DELETE Order: Check for CASCADE
-
-Some tables have CASCADE deletes (children auto-delete when parent deleted):
-- `recipes` → `recipe_ingredients`: **CASCADE** (just delete recipes, ingredients auto-delete)
-
-For tables WITHOUT cascade:
-```
-1. Delete child records first (by parent FK)
-2. Delete parent record
-```
-
-### UPDATE: Depends on Scope
-- Metadata only: Just update parent
-- Replace children: Delete old children, create new ones
+When deleting:
+- `recipes` → `recipe_ingredients`: **CASCADE** (just delete recipes)
+- Other tables: delete children first, then parent
 
 ---
 
 ## FK Handling
 
-When creating records that reference other tables:
-- Use IDs from "Previous Step Note" or "Entity IDs from Prior Steps"
-- Use actual UUIDs only — never use temp_ids for FK columns
-- If FK is optional and not available, use `null` (not empty string)
+- Use refs from "Working Set" or "Previous Step Note": `recipe_1`, `gen_recipe_1`
+- System translates refs to UUIDs automatically
+- If FK is optional and unavailable, use `null`
 
 ---
 
-## Entity Tagging
+## Ingredient Names
 
-When creating records, report them for tracking:
-
-```json
-{
-  "action": "step_complete",
-  "result_summary": "Created 3 recipes with ingredients",
-  "data": {...},
-  "new_entities": [
-    {"id": "uuid-1", "type": "recipe", "label": "Butter Chicken"},
-    {"id": "uuid-2", "type": "recipe", "label": "Garlic Pasta"}
-  ]
-}
-```
-
----
-
-## Ingredient Names (for recipe_ingredients, inventory, shopping_list)
-
-Use **simple, canonical names** that match grocery items:
+Use **simple, canonical names**:
 - ✅ "chickpeas", "chicken thighs", "olive oil"
 - ❌ "crispy roasted chickpeas", "herby greens mix"
 
 ---
 
-## What NOT to do
+## Before `step_complete`
 
-- Use temp_ids as FK values in db_create
-- Complete after handling only SOME of a batch
-- Forget linked table operations (e.g., create recipe without ingredients)
-- Skip the `note_for_next_step` with new IDs
-- Use prepared dish names as ingredient names
+Ask yourself:
+1. Does everything in "Content to Save" now exist in the database?
+2. Did I handle ALL items, not just some?
+
+If no → make more tool calls
+If yes → `step_complete` with `note_for_next_step` containing new IDs

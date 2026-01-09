@@ -403,27 +403,190 @@ async def execute_crud(
     tool: Literal["db_read", "db_create", "db_update", "db_delete"],
     params: dict[str, Any],
     user_id: str,
+    registry: Any | None = None,
 ) -> Any:
     """
     Execute a CRUD tool by name.
+
+    V4: If registry (SessionIdRegistry) provided, handles ID translation:
+    - Filters: refs → UUIDs before execution
+    - Output: UUIDs → refs before returning to LLM
+    - Registry persists across turns (session-scoped)
 
     Args:
         tool: Tool name
         params: Tool parameters as a dict
         user_id: Current user's ID
+        registry: SessionIdRegistry for ID translation (session-scoped)
 
     Returns:
-        Tool result
+        Tool result (with refs if registry provided, UUIDs otherwise)
     """
+    # V4: Translate input refs to UUIDs
+    if registry:
+        params = _translate_input_params(tool, params, registry)
+    
+    # Sanitize data payloads - LLMs sometimes corrupt Unicode to NULL bytes
+    # PostgreSQL rejects \u0000 in text fields
+    if tool in ("db_create", "db_update") and "data" in params:
+        params["data"] = _sanitize_payload(params["data"])
+    
+    # Execute the raw operation
     match tool:
         case "db_read":
-            return await db_read(DbReadParams(**params), user_id)
+            result = await db_read(DbReadParams(**params), user_id)
         case "db_create":
-            return await db_create(DbCreateParams(**params), user_id)
+            result = await db_create(DbCreateParams(**params), user_id)
         case "db_update":
-            return await db_update(DbUpdateParams(**params), user_id)
+            result = await db_update(DbUpdateParams(**params), user_id)
         case "db_delete":
-            return await db_delete(DbDeleteParams(**params), user_id)
+            result = await db_delete(DbDeleteParams(**params), user_id)
         case _:
             raise ValueError(f"Unknown tool: {tool}")
+    
+    # V4: Translate output UUIDs to refs
+    if registry:
+        result = _translate_output(tool, result, params.get("table", ""), registry)
+    
+    return result
+
+
+def _translate_input_params(
+    tool: str,
+    params: dict[str, Any],
+    registry: Any,
+) -> dict[str, Any]:
+    """
+    Translate refs to UUIDs in CRUD parameters before execution.
+    
+    Handles:
+    - Filter values (db_read, db_update, db_delete)
+    - Payload FK fields (db_create, db_update)
+    """
+    params = params.copy()
+    table = params.get("table", "")
+    
+    # Translate filters
+    if "filters" in params and params["filters"]:
+        raw_filters = params["filters"]
+        # Convert dicts to FilterClause format for translation
+        translated = registry.translate_filters([
+            f if isinstance(f, dict) else f.model_dump() if hasattr(f, 'model_dump') else {"field": "", "op": "=", "value": ""}
+            for f in raw_filters
+        ])
+        params["filters"] = translated
+    
+    if "or_filters" in params and params["or_filters"]:
+        params["or_filters"] = registry.translate_filters([
+            f if isinstance(f, dict) else f.model_dump() if hasattr(f, 'model_dump') else {"field": "", "op": "=", "value": ""}
+            for f in params["or_filters"]
+        ])
+    
+    # Translate payload FK fields
+    if "data" in params:
+        data = params["data"]
+        if isinstance(data, list):
+            params["data"] = registry.translate_payload_batch(data, table)
+        elif isinstance(data, dict):
+            params["data"] = registry.translate_payload(data, table)
+    
+    return params
+
+
+def _translate_output(
+    tool: str,
+    result: Any,
+    table: str,
+    registry: Any,
+) -> Any:
+    """
+    Translate UUIDs to refs in CRUD output before returning to LLM.
+    """
+    if tool == "db_read":
+        # Read returns list of records - translate all IDs
+        if isinstance(result, list):
+            return registry.translate_read_output(result, table)
+    
+    elif tool == "db_create":
+        # Create returns single dict or list of dicts with new IDs
+        # Also translate FK fields that we have mappings for
+        fk_fields = registry._get_fk_fields(table)
+        
+        if isinstance(result, dict):
+            # Single record
+            result = result.copy()
+            if "id" in result:
+                entity_type = registry._table_to_type(table)
+                # Extract label for pending artifact matching
+                label = result.get("name") or result.get("title")
+                ref = registry.register_created(None, result["id"], entity_type, label=label)
+                result["id"] = ref
+            # Translate FK fields
+            for fk_field in fk_fields:
+                if fk_field in result and result[fk_field]:
+                    fk_uuid = str(result[fk_field])
+                    if fk_uuid in registry.uuid_to_ref:
+                        result[fk_field] = registry.uuid_to_ref[fk_uuid]
+            return result
+        elif isinstance(result, list):
+            # Batch create
+            translated = []
+            entity_type = registry._table_to_type(table)
+            for record in result:
+                if isinstance(record, dict):
+                    record = record.copy()
+                    if "id" in record:
+                        # Extract label for pending artifact matching
+                        label = record.get("name") or record.get("title")
+                        ref = registry.register_created(None, record["id"], entity_type, label=label)
+                        record["id"] = ref
+                    # Translate FK fields
+                    for fk_field in fk_fields:
+                        if fk_field in record and record[fk_field]:
+                            fk_uuid = str(record[fk_field])
+                            if fk_uuid in registry.uuid_to_ref:
+                                record[fk_field] = registry.uuid_to_ref[fk_uuid]
+                translated.append(record)
+            return translated
+    
+    elif tool == "db_update":
+        # Update returns list of updated records
+        if isinstance(result, list):
+            return registry.translate_read_output(result, table)
+    
+    elif tool == "db_delete":
+        # Delete returns list of deleted records
+        if isinstance(result, list):
+            return registry.translate_read_output(result, table)
+    
+    return result
+
+
+def _sanitize_payload(data: dict | list) -> dict | list:
+    """
+    Sanitize data payload before database operations.
+    
+    LLMs sometimes corrupt Unicode characters to NULL bytes (\u0000).
+    PostgreSQL rejects NULL bytes in text fields with error:
+    '\\u0000 cannot be converted to text.'
+    
+    This strips NULL bytes from all string values.
+    """
+    if isinstance(data, list):
+        return [_sanitize_payload(item) for item in data]
+    elif isinstance(data, dict):
+        return {k: _sanitize_value(v) for k, v in data.items()}
+    return data
+
+
+def _sanitize_value(value: Any) -> Any:
+    """Sanitize a single value, recursing into nested structures."""
+    if isinstance(value, str):
+        # Remove NULL bytes that LLMs sometimes produce
+        return value.replace("\x00", "")
+    elif isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    elif isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+    return value
 

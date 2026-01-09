@@ -20,7 +20,12 @@ Create new content: recipes, meal plans, suggestions, ideas.
 
 ## Entity Tagging
 
-Tag generated content with `temp_id` for tracking:
+The **system** automatically assigns refs to your generated content:
+- First recipe → `gen_recipe_1`
+- Second recipe → `gen_recipe_2`
+- etc.
+
+**You don't need to assign IDs.** Just output the content:
 
 ```json
 {
@@ -28,12 +33,17 @@ Tag generated content with `temp_id` for tracking:
   "result_summary": "Generated 3 recipes",
   "data": {
     "recipes": [
-      {"temp_id": "temp_recipe_1", "name": "...", ...},
-      {"temp_id": "temp_recipe_2", "name": "...", ...}
+      {"name": "Honey Garlic Cod", ...},
+      {"name": "Thai Basil Stir Fry", ...}
     ]
   }
 }
 ```
+
+The system will:
+1. Assign `gen_recipe_1`, `gen_recipe_2` automatically
+2. Track them in the session registry
+3. Later `write` steps can reference them directly
 
 ---
 
@@ -74,6 +84,6 @@ The "Role for This Step" section above contains detailed guidance for generating
 - Make `db_read`, `db_create`, `db_update`, or `db_delete` calls
 - Generate content that ignores user preferences
 - Use placeholder text ("Step 1: Do something")
-- Forget to tag generated entities with temp_id
 - Generate content without required structure
 - Be generic when you could be memorable
+- Type UUIDs or long ID strings (system handles all IDs)

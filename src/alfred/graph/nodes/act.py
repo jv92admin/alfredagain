@@ -31,14 +31,18 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-from alfred.core.entities import Entity, EntityState
 from alfred.core.modes import Mode, ModeContext
+from alfred.core.id_registry import SessionIdRegistry
+from alfred.core.payload_compiler import compile_payloads, get_compiled_payload_for_step
 from alfred.graph.state import (
     ACT_CONTEXT_THRESHOLD,
     FULL_DETAIL_STEPS,
     ActAction,
     AlfredState,
     AskUserAction,
+    BatchItem,
+    BatchManifest,
+    BatchProgress,
     BlockedAction,
     FailAction,
     ThinkStep,
@@ -60,150 +64,45 @@ from alfred.prompts.examples import get_contextual_examples
 TRACKED_ENTITY_TYPES = {"recipes", "meal_plans", "tasks", "recipe", "meal_plan", "task"}
 
 
-def _extract_turn_entities(
-    step_data: Any, 
-    step_index: int, 
-    step_type: str,
-    current_turn: int,
-) -> list[Entity]:
-    """
-    Extract and tag entities from step results for lifecycle tracking.
-    
-    V3: Returns Entity objects with proper state tagging:
-    - db_read results → state=active (from DB, already exists)
-    - generate results → state=pending (awaiting confirmation)
-    - write results → state=pending (until confirmed)
-    """
-    entities: list[Entity] = []
-    
-    # Determine source and state based on step_type
-    if step_type == "read":
-        source = "db_read"
-        default_state = EntityState.ACTIVE
-    elif step_type == "generate":
-        source = "generate"
-        default_state = EntityState.PENDING
-    elif step_type == "write":
-        source = "db_write"
-        default_state = EntityState.PENDING  # Until user confirms
-    else:  # analyze
-        source = "analyze"
-        default_state = EntityState.PENDING
-    
-    def extract_from_record(record: dict, table: str | None = None) -> None:
-        if not isinstance(record, dict):
-            return
-        
-        # Get ID (could be real UUID or temp_id)
-        record_id = record.get("id") or record.get("temp_id")
-        if not record_id:
-            return
-            
-        # Infer table/type from record if not provided
-        entity_type = table
-        if entity_type is None:
-            if "recipe_id" in record or "instructions" in record:
-                entity_type = "recipe"
-            elif "meal_type" in record and "date" in record:
-                entity_type = "meal_plan"
-            elif "title" in record and ("due_date" in record or "category" in record):
-                entity_type = "task"
-            elif record.get("type"):
-                entity_type = record["type"]
-        
-        # Normalize table names to entity types
-        if entity_type == "recipes":
-            entity_type = "recipe"
-        elif entity_type == "meal_plans":
-            entity_type = "meal_plan"
-        elif entity_type == "tasks":
-            entity_type = "task"
-        
-        if entity_type:
-            # Determine state from record if specified
-            state = default_state
-            if "state" in record:
-                try:
-                    state = EntityState(record["state"])
-                except ValueError:
-                    pass
-            
-            entity = Entity(
-                id=str(record_id),
-                type=entity_type,
-                label=record.get("name") or record.get("title") or record.get("label") or str(record_id)[:8],
-                state=state,
-                source=source,
-                turn_created=current_turn,
-                turn_last_ref=current_turn,
-                subdomain=table,
-                data=record if step_type == "generate" else None,  # Keep full data for generated content
-            )
-            entities.append(entity)
-    
-    def process_item(item: Any, table: str | None = None) -> None:
-        if isinstance(item, dict):
-            if "id" in item or "temp_id" in item:
-                extract_from_record(item, table)
-            else:
-                # Check for nested collections like {"recipes": [...]}
-                for key, val in item.items():
-                    if isinstance(val, list):
-                        for v in val:
-                            process_item(v, key)
-                    elif isinstance(val, dict):
-                        process_item(val, key)
-        elif isinstance(item, list):
-            for v in item:
-                process_item(v, table)
-    
-    # Handle tuple format from CRUD: [(tool, table, result), ...]
-    if isinstance(step_data, list):
-        for item in step_data:
-            if isinstance(item, tuple) and len(item) >= 2:
-                if len(item) == 3:
-                    _tool, table, result = item
-                    process_item(result, table)
-                else:
-                    _tool, result = item
-                    process_item(result)
-            else:
-                process_item(item)
-    else:
-        process_item(step_data)
-    
-    return entities
+def _infer_entity_type_from_artifact(artifact: dict) -> str:
+    """Infer entity type from artifact structure. V4 CONSOLIDATION."""
+    if "instructions" in artifact or "cuisine" in artifact or "prep_time" in artifact:
+        return "recipe"
+    # Flat meal plan entry
+    if "meal_type" in artifact and "date" in artifact:
+        return "meal_plan"
+    # Nested meal plan structure: {"meal_plan": [...]} or has "meals" key
+    if "meal_plan" in artifact or "meals" in artifact:
+        return "meal_plan"
+    if "due_date" in artifact or ("title" in artifact and "status" in artifact):
+        return "task"
+    if artifact.get("type"):
+        return artifact["type"]
+    return "item"
 
 
-def _format_turn_entities(turn_entities: list[Entity | dict]) -> str:
-    """Format accumulated turn entities for Act's prompt."""
-    if not turn_entities:
-        return ""
+def _extract_artifact_label(artifact: dict, entity_type: str, index: int) -> str:
+    """Extract a human-readable label from an artifact."""
+    # Standard name/title fields
+    if artifact.get("name"):
+        return artifact["name"]
+    if artifact.get("title"):
+        return artifact["title"]
     
-    lines = ["### Entities Created This Turn (use these IDs for linking)"]
+    # Meal plan: try to extract date range
+    if entity_type == "meal_plan":
+        meal_plan = artifact.get("meal_plan", [])
+        if meal_plan and isinstance(meal_plan, list):
+            dates = [entry.get("date") for entry in meal_plan if entry.get("date")]
+            if dates:
+                return f"Meal Plan {dates[0]} to {dates[-1]}"
+        return f"Generated Meal Plan"
     
-    # Group by type for readability
-    by_type: dict[str, list[dict]] = {}
-    for e in turn_entities:
-        # Handle both Entity objects and dicts
-        if isinstance(e, Entity):
-            etype = e.type
-            ref = {"id": e.id, "label": e.label, "state": e.state.value}
-        else:
-            etype = e.get("type", "unknown")
-            ref = e
-        
-        if etype not in by_type:
-            by_type[etype] = []
-        by_type[etype].append(ref)
-    
-    for etype, ents in by_type.items():
-        lines.append(f"**{etype}:**")
-        for e in ents:
-            state_badge = f" [{e.get('state', 'active')}]" if e.get('state') else ""
-            lines.append(f"  - `{e['id']}` — {e.get('label', 'unnamed')}{state_badge}")
-    
-    return "\n".join(lines)
+    return f"item_{index + 1}"
+
+
+# V4 CONSOLIDATION: _extract_turn_entities and _format_turn_entities removed
+# Entity tracking is now handled exclusively by SessionIdRegistry
 
 
 # =============================================================================
@@ -495,30 +394,95 @@ def _get_system_prompt(step_type: str = "read") -> str:
     return base
 
 
-def _format_step_results(step_results: dict[int, Any], current_index: int) -> str:
+def _format_step_results(
+    step_results: dict[int, Any], 
+    current_index: int,
+    step_metadata: dict[int, dict] | None = None,
+    current_step_type: str | None = None,
+) -> str:
     """Format previous step results for context.
     
+    V4 Changes:
+    - For write steps following generate steps, inject FULL artifact content
+    - step_metadata tracks step_type and artifacts per step
+    - No more "(use retrieve_step for details)" for generate step content
+    
     Last FULL_DETAIL_STEPS get FULL data (essential for analyze steps).
-    Older steps get summarized.
+    Older steps get summarized (except generate artifacts for write steps).
     
     Uses table-aware formatting to reduce token bloat while preserving
     the critical info (IDs, names) that Act needs for subsequent steps.
     """
+    import json
     from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
     
     if not step_results:
         return "### Previous Step Results\n*No previous steps completed yet.*"
 
     lines = ["### Previous Step Results", ""]
+    step_metadata = step_metadata or {}
     
     # Determine which steps get full detail
     max_step = max(step_results.keys()) if step_results else -1
     full_detail_threshold = max_step - FULL_DETAIL_STEPS + 1  # Last N steps get full detail
+    
+    # V4: Check if current step is a write step - if so, we need full artifacts from generate steps
+    is_write_step = current_step_type == "write"
 
     for idx in sorted(step_results.keys()):
         result = step_results[idx]
         step_num = idx + 1
         is_recent = idx >= full_detail_threshold
+        
+        # V4: Get step metadata for this step
+        metadata = step_metadata.get(idx, {})
+        was_generate_step = metadata.get("step_type") == "generate"
+        artifacts = metadata.get("artifacts")
+        
+        # V4: For write steps following generate, always show full artifacts
+        # This is the key fix - generated content must be available for saving
+        if is_write_step and was_generate_step and artifacts:
+            step_desc = metadata.get("description", "Generated content")
+            subdomain = metadata.get("subdomain", "recipes")
+            lines.append(f"**Step {step_num}** [generate] — {step_desc}:")
+            lines.append("")
+            lines.append("## Content to Save (from Step {})".format(step_num))
+            lines.append("")
+            
+            # V4: Use payload compiler to pre-normalize content for write
+            compiled = compile_payloads(subdomain, artifacts, {})
+            if compiled.success and compiled.payloads:
+                lines.append("### Pre-Compiled Payloads (schema-ready)")
+                lines.append("")
+                for payload in compiled.payloads:
+                    for record in payload.records:
+                        lines.append(f"**{record.ref}** → `{payload.target_table}`:")
+                        lines.append("```json")
+                        lines.append(json.dumps(record.data, indent=2, default=str))
+                        lines.append("```")
+                        # Show linked records if any
+                        if record.linked_records:
+                            for linked in record.linked_records:
+                                lines.append(f"  └─ `{linked.table}`: {len(linked.records)} records")
+                        lines.append("")
+                
+                # Surface compilation warnings
+                if compiled.warnings:
+                    lines.append("⚠️ **Compilation Notes:**")
+                    for warning in compiled.warnings:
+                        lines.append(f"  - {warning}")
+                    lines.append("")
+            else:
+                # Fallback: show raw artifacts if compilation failed
+                for i, artifact in enumerate(artifacts):
+                    if isinstance(artifact, dict):
+                        ref = artifact.get("temp_id") or artifact.get("name") or f"item_{i+1}"
+                        lines.append(f"### {ref}")
+                        lines.append("```json")
+                        lines.append(json.dumps(artifact, indent=2, default=str))
+                        lines.append("```")
+                        lines.append("")
+            continue
         
         # Parse result format: [(tool_name, subdomain, result_data), ...]
         if isinstance(result, list) and result and isinstance(result[0], tuple):
@@ -541,6 +505,37 @@ def _format_step_results(step_results: dict[int, Any], current_index: int) -> st
                 lines.append(f"  {len(result)} records")
         elif isinstance(result, int):
             lines.append(f"**Step {step_num}**: Affected {result} records")
+        elif was_generate_step and artifacts:
+            # Generate step with artifacts - show summary with artifact count
+            lines.append(f"**Step {step_num}** [generate]: {len(artifacts)} items generated")
+            if is_recent:
+                # Show brief labels
+                for artifact in artifacts[:5]:
+                    if isinstance(artifact, dict):
+                        label = artifact.get("name") or artifact.get("temp_id") or "item"
+                        lines.append(f"  - {label}")
+                if len(artifacts) > 5:
+                    lines.append(f"  ... and {len(artifacts) - 5} more")
+        elif was_generate_step and result:
+            # V4: For generate steps without explicit artifacts, try to format the data
+            lines.append(f"**Step {step_num}** [generate]: Content generated")
+            if is_recent and isinstance(result, dict):
+                lines.append("```json")
+                lines.append(json.dumps(result, indent=2, default=str)[:2000])
+                lines.append("```")
+        elif metadata.get("step_type") == "analyze":
+            # Analyze steps produce conclusions - ALWAYS show these (crucial for next step)
+            step_desc = metadata.get("description", "Analysis")
+            lines.append(f"**Step {step_num}** [analyze] — {step_desc}:")
+            if isinstance(result, dict):
+                # Show the analysis result directly
+                lines.append("```json")
+                lines.append(json.dumps(result, indent=2, default=str)[:2000])
+                lines.append("```")
+            elif isinstance(result, str):
+                lines.append(f"  {result}")
+            else:
+                lines.append("  Analysis completed")
         else:
             lines.append(f"**Step {step_num}**: (use retrieve_step for details)")
         
@@ -562,18 +557,77 @@ def _subdomain_to_table(subdomain: str) -> str:
     return mapping.get(subdomain, subdomain)
 
 
+def _subdomain_to_entity_type(subdomain: str) -> str:
+    """Map subdomain to entity type for SessionIdRegistry refs."""
+    mapping = {
+        "inventory": "inv",
+        "shopping": "shopping",
+        "recipes": "recipe",
+        "meal_plans": "meal_plan",
+        "tasks": "task",
+        "preferences": "preference",
+    }
+    return mapping.get(subdomain, subdomain)
+
+
+def _normalize_subdomain(raw: str) -> str:
+    """
+    Normalize approximate subdomain to canonical value.
+    
+    Single source of truth for valid subdomains.
+    Understand passes natural/approximate values, Act Quick normalizes.
+    """
+    raw_lower = raw.lower().strip()
+    
+    # Canonical values (no change needed)
+    canonical = {"inventory", "recipes", "shopping", "meal_plans", "preferences"}
+    if raw_lower in canonical:
+        return raw_lower
+    
+    # Common variations → canonical
+    aliases = {
+        # Singular → plural
+        "recipe": "recipes",
+        "meal_plan": "meal_plans",
+        "preference": "preferences",
+        # Natural language
+        "pantry": "inventory",
+        "fridge": "inventory",
+        "ingredients": "inventory",
+        "shopping_list": "shopping",
+        "groceries": "shopping",
+        "meals": "meal_plans",
+        "meal planning": "meal_plans",
+        "diet": "preferences",
+        "dietary": "preferences",
+        "restrictions": "preferences",
+    }
+    
+    if raw_lower in aliases:
+        logger.info(f"Normalized subdomain: {raw} → {aliases[raw_lower]}")
+        return aliases[raw_lower]
+    
+    # Unknown - return as-is (will fail at schema lookup with clear error)
+    logger.warning(f"Unknown subdomain: {raw}")
+    return raw_lower
+
+
 def _format_step_data_clean(data: Any, table: str | None) -> list[str]:
-    """Format step data in clean, readable format with IDs preserved."""
+    """Format step data in clean, readable format with IDs preserved.
+    
+    V4: IDs are now simple refs (recipe_1, inv_5) from the registry,
+    so we display them in full (no truncation needed).
+    """
     from alfred.prompts.injection import _format_records_for_table
     
     if isinstance(data, list):
         if not data:
             return ["  (no records)"]
         formatted = _format_records_for_table(data, table)
-        # Add a summary line with all IDs for easy copy-paste
-        ids = [str(r.get("id"))[-8:] for r in data if isinstance(r, dict) and r.get("id")]
+        # V4: IDs are simple refs - display in full
+        ids = [str(r.get("id")) for r in data if isinstance(r, dict) and r.get("id")]
         if ids:
-            formatted.append(f"  **IDs (short):** {', '.join(ids)}")
+            formatted.append(f"  **IDs:** {', '.join(ids)}")
         return formatted
     elif isinstance(data, int):
         return [f"  Affected {data} records"]
@@ -834,7 +888,14 @@ async def act_node(state: AlfredState) -> dict:
 
     # Build context sections
     # Previous step results (last FULL_DETAIL_STEPS in full, older summarized)
-    prev_step_section = _format_step_results(step_results, current_step_index)
+    # V4: Pass step_metadata and current step_type for artifact preservation
+    step_metadata = state.get("step_metadata", {})
+    prev_step_section = _format_step_results(
+        step_results, 
+        current_step_index,
+        step_metadata=step_metadata,
+        current_step_type=step_type,
+    )
     this_step_section = _format_current_step_results(current_step_tool_results, tool_calls_made)
     
     # Conversation context (full for Act - last 2 turns, entities, etc.)
@@ -853,29 +914,42 @@ async def act_node(state: AlfredState) -> dict:
             archive_lines.append(f"- `{key}`: {desc}")
         archive_section = "\n".join(archive_lines) + "\n"
 
-    # Turn entities (IDs created earlier in this turn - for cross-step linking)
-    turn_entities = state.get("turn_entities", [])
-    turn_entities_section = _format_turn_entities(turn_entities)
-    if turn_entities_section:
-        turn_entities_section = turn_entities_section + "\n\n"
+    # V4 CONSOLIDATION: Load SessionIdRegistry - single source of truth
+    registry_data = state.get("id_registry")
+    session_registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+    session_registry.set_turn(state.get("current_turn", 1))
+    
+    # V4: Inject pending artifacts from SessionIdRegistry for write steps
+    # This is the CRITICAL fix: generated content from prior turns is now available
+    pending_artifacts_section = ""
+    if step_type == "write":
+        pending = session_registry.get_all_pending_artifacts()
+        if pending:
+            import json
+            pa_lines = ["### Pending Generated Content (from prior operations)"]
+            pa_lines.append("This content was generated but not yet saved. Use it for your db_create calls.")
+            pa_lines.append("")
+            for ref, content in pending.items():
+                label = content.get("name") or content.get("title") or ref
+                pa_lines.append(f"#### {ref}: {label}")
+                pa_lines.append("```json")
+                pa_lines.append(json.dumps(content, indent=2, default=str))
+                pa_lines.append("```")
+                pa_lines.append("")
+            pending_artifacts_section = "\n".join(pa_lines) + "\n"
 
-    # Common context block (reused across all step types)
-    # NOTE: We intentionally DON'T show "Original Goal" here.
-    # The step description is the ONLY scope for this turn.
-    # Showing the full goal causes Act to optimize for the whole goal instead of the step.
-    context_block = f"""---
-
-## Context
-
-### Conversation History
-{conversation_section}
-
-{archive_section}
-{prev_step_section}
-
-{this_step_section}
-
----"""
+    # V4 CONSOLIDATION: Use SessionIdRegistry for all entity display
+    # Single source of truth - no separate WorkingSet or EntityContextModel
+    
+    # Mark referenced entities (from Understand) as touched this turn
+    understand_output = state.get("understand_output")
+    if understand_output:
+        referenced = getattr(understand_output, "referenced_entities", []) or []
+        for ref in referenced:
+            session_registry.touch_ref(ref)  # Updates last_ref timestamp
+    
+    # V4 CONSOLIDATION: Format entity context for Act prompt
+    working_set_section = session_registry.format_for_act_prompt(current_step_index)
 
     # Fetch user profile for analyze/generate steps (async enrichment)
     profile_section = ""
@@ -945,7 +1019,7 @@ Your job this step: **{current_step.description}**
 
 ## 2. Data Available
 
-{turn_entities_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
+{prev_step_section if prev_step_section else "*No previous step data.*"}
 
 {archive_section}---
 
@@ -1003,7 +1077,7 @@ Your job this step: **{current_step.description}**
 
 ## 2. Data Available
 
-{turn_entities_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
+{prev_step_section if prev_step_section else "*No previous step data.*"}
 
 {archive_section}---
 
@@ -1074,6 +1148,38 @@ Generate the requested content and complete the step:
 
 """
         
+        # V4: Build batch manifest section if present
+        batch_manifest_section = ""
+        batch_manifest_data = state.get("current_batch_manifest")
+        if batch_manifest_data:
+            batch_manifest = BatchManifest(**batch_manifest_data)
+            batch_manifest_section = batch_manifest.to_prompt_table() + "\n\n---\n\n"
+        
+        # Build step history: this step's progress + previous step data
+        step_history = []
+        
+        # This step's progress
+        if this_step_section:
+            step_history.append("**This Step:**\n" + this_step_section)
+        else:
+            step_history.append("**This Step:** No tool calls yet.")
+        
+        # Previous step data
+        if prev_step_section:
+            step_history.append("\n**Previous Steps:**\n" + prev_step_section)
+        
+        step_history_section = "\n".join(step_history)
+        
+        # Pending artifacts - ONLY show for write steps with pending content
+        artifacts_section = ""
+        if pending_artifacts_section:
+            artifacts_section = f"""## 5. Pending Generated Content
+
+{pending_artifacts_section}
+---
+
+"""
+
         user_prompt = f"""{dynamic_header}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
@@ -1083,7 +1189,7 @@ Generate the requested content and complete the step:
 
 ---
 
-{prev_note_section}## 1. Task
+{prev_note_section}## 1. Current Step
 
 User said: "{state.get("user_message", "")}"
 
@@ -1091,9 +1197,9 @@ Your job this step: **{current_step.description}**
 
 ---
 
-## 2. Tool Results This Step
+{batch_manifest_section}## 2. Step History
 
-{this_step_section if this_step_section else "*No tool calls yet — make your first db_ call.*"}
+{step_history_section}
 
 ---
 
@@ -1104,14 +1210,13 @@ Your job this step: **{current_step.description}**
 ---
 
 {contextual_examples if contextual_examples else ""}
+## 4. Entities in Context
 
-## 4. Previous Steps
+{working_set_section}
 
-{turn_entities_section}{prev_step_section if prev_step_section else "*No previous steps.*"}
+---
 
-{archive_section}---
-
-## 5. Context
+{artifacts_section}## 6. Context
 
 {conversation_section if conversation_section else "*No additional context.*"}
 
@@ -1124,7 +1229,7 @@ What's next?
 - Need data? → `{{"action": "tool_call", "tool": "db_read", "params": {{"table": "...", "filters": [...], "limit": N}}}}`
 - Need to create? → `{{"action": "tool_call", "tool": "db_create", "params": {{"table": "...", "data": {{...}}}}}}`
 
-**Note for next step:** When completing, include a brief note with IDs or key info the next step might need."""
+**IMPORTANT:** When completing, include a brief note with IDs or key info the next step might need."""
 
     # Call LLM for decision (step_results are already in the prompt)
     decision = await call_llm(
@@ -1204,18 +1309,80 @@ What's next?
                 ),
             }
         
+        # V4 CONSOLIDATION: Load SESSION ID registry - single source of truth
+        # The registry sits between Act and CRUD - LLMs only see simple refs
+        registry_data = state.get("id_registry")
+        session_registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+        session_registry.set_turn(state.get("current_turn", 1))
+        
         try:
-            # Execute the CRUD tool with fixed params
+            # V4: Execute CRUD with registry - handles ALL ID translation:
+            # - Filters: recipe_1 → real UUID before query
+            # - Payloads: FK refs → real UUIDs before insert/update
+            # - Output: real UUIDs → refs (recipe_1, recipe_2) after query
             result = await execute_crud(
                 tool=decision.tool,
-                params=fixed_params,  # Use fixed params
+                params=fixed_params,
                 user_id=user_id,
+                registry=session_registry,  # V4: Session registry (persists across turns)
             )
 
             # Append to current step's tool results (accumulate within step)
             # Store as (tool_name, table, result) tuple for entity card support
+            # NOTE: result now contains refs (recipe_1), not UUIDs
             table_name = fixed_params.get("table", "unknown")
             new_tool_results = current_step_tool_results + [(decision.tool, table_name, result)]
+
+            # V4 CONSOLIDATION: Clean up registry on delete
+            # This prevents ghost refs from persisting after entities are deleted
+            if decision.tool == "db_delete":
+                # Extract deleted refs from filters
+                filters = fixed_params.get("filters", [])
+                deleted_refs = []
+                for f in filters:
+                    if f.get("field") == "id":
+                        value = f.get("value")
+                        if isinstance(value, str):
+                            deleted_refs.append(value)
+                        elif isinstance(value, list):
+                            deleted_refs.extend(value)
+                
+                if deleted_refs:
+                    # Remove from registry (single source of truth)
+                    for ref in deleted_refs:
+                        session_registry.remove_ref(ref)
+                    logger.info(f"Act: Cleaned up {len(deleted_refs)} deleted entities: {deleted_refs}")
+            
+            # V4: Update batch manifest if present (track completed items)
+            updated_batch_manifest = None
+            batch_manifest_data = state.get("current_batch_manifest")
+            if batch_manifest_data and decision.tool == "db_create":
+                batch_manifest = BatchManifest(**batch_manifest_data)
+                
+                # Try to match created records to batch items
+                if isinstance(result, list):
+                    for record in result:
+                        if isinstance(record, dict) and record.get("id"):
+                            # Try to find matching batch item by name/label
+                            record_name = record.get("name") or record.get("title") or ""
+                            for item in batch_manifest.items:
+                                if item.status == "pending":
+                                    # Match by label similarity or just take first pending
+                                    if item.label.lower() in record_name.lower() or record_name.lower() in item.label.lower():
+                                        batch_manifest.mark_completed(item.ref, str(record["id"]))
+                                        break
+                            else:
+                                # No match found, mark first pending item
+                                pending_items = [i for i in batch_manifest.items if i.status == "pending"]
+                                if pending_items:
+                                    batch_manifest.mark_completed(pending_items[0].ref, str(record["id"]))
+                elif isinstance(result, dict) and result.get("id"):
+                    # Single record created
+                    pending_items = [i for i in batch_manifest.items if i.status == "pending"]
+                    if pending_items:
+                        batch_manifest.mark_completed(pending_items[0].ref, str(result["id"]))
+                
+                updated_batch_manifest = batch_manifest.model_dump()
 
             # Return ToolCallAction - will loop back for more operations
             action = ToolCallAction(
@@ -1223,11 +1390,17 @@ What's next?
                 params=decision.params,
             )
 
-            return {
+            state_update = {
                 "pending_action": action,
                 "current_step_tool_results": new_tool_results,
+                "id_registry": session_registry.to_dict(),  # V4 CONSOLIDATION: Single source
                 # Note: NO step_index increment - step continues
             }
+            
+            if updated_batch_manifest:
+                state_update["current_batch_manifest"] = updated_batch_manifest
+            
+            return state_update
 
         except Exception as e:
             # Tool call failed
@@ -1265,6 +1438,35 @@ What's next?
 
     # Handle step_complete - NOW we advance the step
     if decision.action == "step_complete":
+        # V4: Batch validation - cannot complete step with pending items
+        batch_manifest_data = state.get("current_batch_manifest")
+        batch_progress = None
+        if batch_manifest_data:
+            batch_manifest = BatchManifest(**batch_manifest_data)
+            
+            # Check for pending items
+            if batch_manifest.pending_count > 0:
+                pending_refs = [item.ref for item in batch_manifest.items if item.status == "pending"]
+                logger.warning(f"Act: Step complete called with {batch_manifest.pending_count} pending items: {pending_refs}")
+                
+                # Return blocked action - cannot complete with pending items
+                return {
+                    "pending_action": BlockedAction(
+                        reason_code="PLAN_INVALID",
+                        details=f"Cannot complete step: {batch_manifest.pending_count} items still pending: {pending_refs[:3]}{'...' if len(pending_refs) > 3 else ''}",
+                        suggested_next="ask_user",
+                    ),
+                }
+            
+            # Create batch progress for the response
+            batch_progress = BatchProgress(
+                completed=batch_manifest.completed_count,
+                total=batch_manifest.total,
+                completed_items=[item.ref for item in batch_manifest.items if item.status == "completed"],
+                failed_items=[{"ref": item.ref, "error": item.error} for item in batch_manifest.items if item.status == "failed"],
+                pending_items=[item.ref for item in batch_manifest.items if item.status == "pending"],
+            )
+        
         # For read/write steps: keep the actual tool results (not LLM's summary)
         # For analyze/generate: use decision.data (LLM's output IS the result)
         if step_type in ("read", "write") and current_step_tool_results:
@@ -1279,15 +1481,50 @@ What's next?
         new_step_results = step_results.copy()
         new_step_results[current_step_index] = step_data
 
-        # Extract note for next step (read/write steps only)
+        # V4: Store step metadata with artifacts for generate/analyze steps
+        # This allows write steps to access full generated content
+        step_metadata = state.get("step_metadata", {}).copy()
+        artifacts = None
+        if step_type in ("generate", "analyze") and decision.data:
+            # Extract artifacts from generate step data
+            # Artifacts are the full generated content (recipes, plans, etc.)
+            if isinstance(decision.data, dict):
+                # If data has explicit artifacts key, use it
+                if "artifacts" in decision.data:
+                    artifacts = decision.data["artifacts"]
+                elif "recipes" in decision.data:
+                    # Common pattern: generated recipes
+                    artifacts = decision.data.get("recipes", [])
+                    if isinstance(artifacts, dict):
+                        artifacts = [artifacts]
+                elif "meal_plan" in decision.data:
+                    # Generated meal plan - wrap the whole thing as one artifact
+                    # The meal_plan key signals this is a meal plan structure
+                    artifacts = [decision.data]
+                else:
+                    # Wrap entire data as single artifact
+                    artifacts = [decision.data]
+            elif isinstance(decision.data, list):
+                artifacts = decision.data
+        
+        step_metadata[current_step_index] = {
+            "step_type": step_type,
+            "subdomain": current_step.subdomain,
+            "description": current_step.description,
+            "artifacts": artifacts,
+        }
+
+        # Extract note for next step (ALL step types - especially analyze!)
         note_for_next = None
-        if step_type in ("read", "write") and hasattr(decision, 'note_for_next_step'):
+        if hasattr(decision, 'note_for_next_step') and decision.note_for_next_step:
             note_for_next = decision.note_for_next_step
 
         action = StepCompleteAction(
             result_summary=decision.result_summary or "Step completed",
             data=step_data,
             note_for_next_step=note_for_next,
+            artifacts=artifacts,
+            batch_progress=batch_progress,
         )
         
         # Archive generate/analyze step results for cross-turn retrieval
@@ -1312,41 +1549,64 @@ What's next?
                 "data": step_data,
             }
 
-        # V3: Extract and tag entities for lifecycle tracking
-        current_turn = state.get("current_turn", 0)
-        new_entities = _extract_turn_entities(
-            step_data, 
-            current_step_index, 
-            step_type,
-            current_turn,
-        )
+        # V4 CONSOLIDATION: Register generated artifacts in SessionIdRegistry
+        # This is the ONLY place we track entities now
+        if step_type == "generate" and artifacts:
+            for i, artifact in enumerate(artifacts):
+                if isinstance(artifact, dict):
+                    entity_type = _infer_entity_type_from_artifact(artifact)
+                    label = _extract_artifact_label(artifact, entity_type, i)
+                    
+                    # Register with SessionIdRegistry INCLUDING FULL CONTENT
+                    # This is what allows "save" in a later turn to work
+                    session_registry.register_generated(
+                        entity_type=entity_type,
+                        label=label,
+                        content=artifact,
+                        source_step=current_step_index,
+                    )
         
-        # Touch existing entities that appear in step results
-        # This keeps them "alive" for garbage collection purposes
-        from alfred.core.entities import EntityRegistry
-        registry_data = state.get("entity_registry", {})
-        registry = EntityRegistry.from_dict(registry_data) if registry_data else EntityRegistry()
-        
-        for entity in new_entities:
-            # If entity already exists in registry, touch it
-            if registry.get(entity.id):
-                registry.touch(entity.id, current_turn)
-        
-        # Convert to dicts for state storage
-        existing_entities = state.get("turn_entities", [])
-        new_entity_dicts = [e.to_dict() for e in new_entities]
-        accumulated_entities = existing_entities + new_entity_dicts
+        # V4 FIX: Clear pending artifacts AND archives after successful write step
+        # When we save generated content, clear it so it doesn't show as "still pending"
+        if step_type == "write" and current_step_tool_results:
+            # Check if any db_create operations succeeded
+            for tool_result in current_step_tool_results:
+                if len(tool_result) >= 3:
+                    tool_name, subdomain, result = tool_result[:3]
+                    if tool_name == "db_create" and result:
+                        # Clear pending artifacts for this subdomain's entity type
+                        entity_type = _subdomain_to_entity_type(subdomain)
+                        pending_to_clear = [
+                            ref for ref in session_registry.pending_artifacts.keys()
+                            if ref.startswith(f"gen_{entity_type}")
+                        ]
+                        for ref in pending_to_clear:
+                            del session_registry.pending_artifacts[ref]
+                            logger.info(f"Cleared pending artifact {ref} after save")
+                        
+                        # Also clear related archive keys (generated_recipes, etc.)
+                        archive_keys_to_clear = []
+                        if subdomain == "recipes":
+                            archive_keys_to_clear.append("generated_recipes")
+                        elif subdomain == "meal_plans":
+                            archive_keys_to_clear.append("generated_meal_plan")
+                        
+                        for key in archive_keys_to_clear:
+                            if key in new_archive:
+                                del new_archive[key]
+                                logger.info(f"Cleared archive key '{key}' after save")
 
         return {
             "pending_action": action,
             "current_step_index": current_step_index + 1,
             "step_results": new_step_results,
-            "current_step_tool_results": [],  # Reset for next step
+            "step_metadata": step_metadata,
+            "current_step_tool_results": [],
+            "current_batch_manifest": None,
+            "id_registry": session_registry.to_dict(),  # V4 CONSOLIDATION: Single source
             "schema_requests": 0,
             "content_archive": new_archive,
-            "prev_step_note": note_for_next,  # Pass note to next step
-            "turn_entities": accumulated_entities,  # Accumulated entity IDs
-            "entity_registry": registry.to_dict(),  # Update registry with touched entities
+            "prev_step_note": note_for_next,
         }
 
     # Handle other actions (ask_user, blocked, fail)
@@ -1463,6 +1723,10 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
         logger.error("Act Quick: Missing quick_intent or quick_subdomain")
         return {"error": "Missing quick mode fields"}
     
+    # Normalize subdomain to canonical values (single source of truth)
+    # Understand passes approximate values, Act Quick normalizes
+    quick_subdomain = _normalize_subdomain(quick_subdomain)
+    
     logger.info(f"Act Quick: intent='{quick_intent}', subdomain='{quick_subdomain}'")
     
     # Get schema for the subdomain
@@ -1471,17 +1735,6 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
     # Build prompt using shared components
     user_id = state.get("user_id", "")
     today = date.today().isoformat()
-    
-    # Infer action type from intent for better example selection
-    intent_lower = quick_intent.lower()
-    if any(verb in intent_lower for verb in ["add", "create", "insert", "save"]):
-        action_type = "create"
-    elif any(verb in intent_lower for verb in ["update", "change", "modify", "set"]):
-        action_type = "update"
-    elif any(verb in intent_lower for verb in ["delete", "remove", "clear"]):
-        action_type = "delete"
-    else:
-        action_type = "read"
     
     # Get user's original message - CRITICAL for data extraction
     user_message = state.get("user_message", "")
@@ -1506,7 +1759,6 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
     system_prompt, user_prompt = build_act_quick_prompt(
         intent=quick_intent,
         subdomain=quick_subdomain,
-        action_type=action_type,
         schema=subdomain_schema,
         today=today,
         user_message=user_message,
@@ -1523,22 +1775,7 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
             complexity="low",  # Quick mode uses fast model
         )
         
-        logger.info(f"Act Quick: tool={decision.tool}, expected_action={action_type}")
-        
-        # Log warning if tool doesn't match expected action (but trust LLM's choice)
-        expected_tool_map = {
-            "read": "db_read",
-            "create": "db_create",
-            "update": "db_update",
-            "delete": "db_delete",
-        }
-        expected_tool = expected_tool_map.get(action_type, "db_read")
-        
-        if decision.tool != expected_tool:
-            logger.warning(
-                f"Act Quick: Tool mismatch! Intent analysis said '{action_type}' but LLM chose '{decision.tool}'. "
-                f"Trusting LLM's choice but this may indicate a prompt issue."
-            )
+        logger.info(f"Act Quick: tool={decision.tool}")
         
         # Convert structured params to dict for CRUD
         params = decision.params.model_dump(exclude_none=True)
@@ -1570,38 +1807,31 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
                 "step_results": {},
             }
         
-        # Execute the tool
+        # V4 CONSOLIDATION: Load SESSION ID registry - single source of truth
+        registry_data = state.get("id_registry")
+        session_registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+        session_registry.set_turn(state.get("current_turn", 1))
+        
+        # Execute the tool with registry - handles all ID translation
         result = await execute_crud(
             tool=decision.tool,
             params=fixed_params,
             user_id=user_id,
+            registry=session_registry,  # V4: Session registry (persists across turns)
         )
         
         logger.info(f"Act Quick: Got {len(result) if isinstance(result, list) else 1} results")
         
-        # Store result for Reply
+        # Store result for Reply (NOTE: result now contains refs, not UUIDs)
         step_results = {
             0: [(decision.tool, quick_subdomain, result)]  # Format like normal act results
         }
         
-        # Extract entities for tracking
-        current_turn = state.get("current_turn", 0)
-        step_type = "read" if decision.tool == "db_read" else "write"
-        new_entities = _extract_turn_entities(
-            step_results[0],
-            0,
-            step_type,
-            current_turn,
-        )
-        
-        # Convert to dicts for state storage
-        new_entity_dicts = [e.to_dict() for e in new_entities]
-        
         return {
             "step_results": step_results,
             "current_step_index": 1,  # Mark as complete
-            "turn_entities": new_entity_dicts,
             "quick_result": result,  # Direct result for Reply Quick
+            "id_registry": session_registry.to_dict(),  # V4 CONSOLIDATION: Single source
         }
         
     except Exception as e:

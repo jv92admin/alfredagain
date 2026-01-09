@@ -1,19 +1,21 @@
 """
-Alfred V3 - Summarize Node.
+Alfred V4 - Summarize Node.
 
-The Summarize node runs after Reply to:
-1. Add the current turn to conversation history
-2. Merge turn_entities into entity registry
-3. Garbage collect stale entities
-4. Compress older turns if we exceed FULL_DETAIL_TURNS
-5. Update engagement summary
+Summarize is the "Conversation Historian" - it records what happened.
 
-V3 Changes:
-- Entity lifecycle management (merge turn entities, garbage collect)
-- EntityRegistry integration for state transitions
-- Persist entity_registry and current_turn in conversation
+V4 Responsibilities:
+1. Append current turn to conversation history
+2. Compress older turns when threshold exceeded (LLM)
+3. Build SummarizeOutput (structured audit ledger, no LLM)
+4. Pass through entity_context for next turn's Understand to curate
 
-This maintains conversation memory and entity lifecycle across turns.
+What Summarize does NOT do (V4):
+- Entity curation (Understand handles this)
+- Entity lifecycle management (Understand handles this)
+- Engagement summary updates (Think has the goal)
+
+The key insight: Entity relevance is intent-dependent, not time-dependent.
+Understand sees the user's intent and curates accordingly.
 """
 
 import logging
@@ -22,7 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alfred.core.entities import Entity, EntityRegistry, EntityState
+from alfred.core.id_registry import SessionIdRegistry
 from alfred.graph.state import (
     FULL_DETAIL_STEPS,
     FULL_DETAIL_TURNS,
@@ -64,6 +66,47 @@ class EngagementSummary(BaseModel):
     summary: str  # What we're helping with overall
 
 
+# =============================================================================
+# V4: Structured Summarize Output
+# =============================================================================
+
+
+class SummarizeError(BaseModel):
+    """A structured error from the turn."""
+    
+    code: str  # Error code ("FK_VIOLATION", "TIMEOUT", etc.)
+    message: str  # Human-readable message
+    step_id: int | None = None  # Which step failed
+
+
+class SummarizeOutput(BaseModel):
+    """
+    V4: Structured audit ledger from Summarize.
+    
+    Produces machine-readable output, not narrative prose.
+    No content generation - just factual reporting.
+    """
+    
+    # Entity deltas (structured, not prose)
+    entities_created: list[dict] = []  # [{id, type, label}]
+    entities_updated: list[dict] = []  # [{id, type, label, changes}]
+    entities_deleted: list[str] = []  # IDs
+    
+    # Artifact tracking
+    artifacts_generated: dict[str, int] = {}  # {type: count} e.g., {"recipe": 3}
+    artifacts_saved: dict[str, int] = {}  # {type: count}
+    
+    # Errors encountered
+    errors: list[SummarizeError] = []
+    
+    # Factual turn summary (no embellishment)
+    turn_summary: str = ""  # "User requested 3 recipes; 3 generated, 2 saved, 1 failed"
+    
+    # Metrics
+    steps_completed: int = 0
+    steps_total: int = 0
+
+
 # Threshold for summarizing assistant responses (characters)
 SUMMARIZE_THRESHOLD = 400  # ~100 tokens
 
@@ -75,21 +118,16 @@ SUMMARIZE_THRESHOLD = 400  # ~100 tokens
 
 async def summarize_node(state: AlfredState) -> dict:
     """
-    Summarize node - maintains conversation memory and entity lifecycle.
+    V4 Summarize node - Conversation Historian.
     
-    V3 Runs after Reply to:
-    1. Add current turn to history
-    2. Merge turn_entities into entity registry
-    3. Garbage collect stale entities
-    4. Compress old turns to history_summary
-    5. Compress old step results to step_summaries
-    6. Update engagement summary if significant
+    Responsibilities:
+    1. Append current turn to conversation history
+    2. Compress older turns when threshold exceeded (LLM)
+    3. Build SummarizeOutput (structured audit ledger)
+    4. Add new entities to context (Understand curates next turn)
+    5. Track pending clarification
     
-    Args:
-        state: Current graph state with final_response
-        
-    Returns:
-        State update with updated conversation context and entity registry
+    Entity curation is NOT done here - Understand handles that.
     """
     set_current_node("summarize")
     
@@ -105,7 +143,10 @@ async def summarize_node(state: AlfredState) -> dict:
     if not final_response:
         return {}
     
-    # 1. Create current turn (with LLM-generated summary for long responses)
+    # ==========================================================================
+    # 1. Create current turn record
+    # ==========================================================================
+    
     routing_info = None
     if router_output:
         routing_info = {
@@ -114,88 +155,74 @@ async def summarize_node(state: AlfredState) -> dict:
             "complexity": router_output.complexity,
         }
     
-    # Detect if this was a proposal (Think decided propose/clarify, not plan_direct)
+    # For long responses, generate a brief summary for conversation context
     is_proposal = False
     if think_output and hasattr(think_output, "decision"):
         is_proposal = think_output.decision in ("propose", "clarify")
     
-    # Generate summary for long responses (used in conversation context)
     assistant_summary = await _summarize_assistant_response(final_response, is_proposal)
     
     current_turn = create_conversation_turn(
         user_message=user_message,
         assistant_response=final_response,
-        assistant_summary=assistant_summary,  # For context formatting
+        assistant_summary=assistant_summary,
         routing=routing_info,
     )
     
-    # 2. V3: Merge turn_entities into entity registry
-    entity_registry_data = state.get("entity_registry", {})
-    registry = EntityRegistry.from_dict(entity_registry_data) if entity_registry_data else EntityRegistry()
+    # ==========================================================================
+    # 2. Update conversation history
+    # ==========================================================================
     
-    turn_entities_data = state.get("turn_entities", [])
-    for te_dict in turn_entities_data:
-        try:
-            entity = Entity.from_dict(te_dict)
-            registry.add(entity)
-        except Exception as e:
-            logger.warning(f"Failed to add entity to registry: {e}")
+    # Get recent turns
+    recent_turns = list(conversation.get("recent_turns", []))
+    recent_turns.append(current_turn)
     
-    # 3. V3: Garbage collect stale entities
-    removed_ids = registry.garbage_collect(current_turn_num)
-    if removed_ids:
-        logger.info(f"Summarize: Garbage collected {len(removed_ids)} stale entities")
+    # Compress older turns if threshold exceeded (LLM call)
+    conversation_summary = conversation.get("history_summary", "")
     
-    # 4. Extract entities from step results (legacy support)
-    new_entities = extract_entities_from_step_results(step_results)
-    entity_refs = [EntityRef(**e.model_dump()) for e in new_entities.values()]
+    if len(recent_turns) > FULL_DETAIL_TURNS:
+        # Compress oldest turns into summary
+        turns_to_compress = recent_turns[:-FULL_DETAIL_TURNS]
+        recent_turns = recent_turns[-FULL_DETAIL_TURNS:]
     
-    # Also convert turn_entities to EntityRefs for legacy conversation tracking
-    for te in turn_entities_data:
-        entity_refs.append(EntityRef(
-            type=te.get("type", "unknown"),
-            id=te.get("id", ""),
-            label=te.get("label", ""),
-            source=te.get("source", "step_result"),
-        ))
-    
-    # 5. Update conversation context
-    content_archive = state.get("content_archive", {})
-    
-    updated_conversation = _update_conversation(
-        conversation=conversation,
-        current_turn=current_turn,
-        step_results=step_results,
-        think_output=think_output,
-        new_entities=entity_refs,
-        content_archive=content_archive,
-    )
-    
-    # 6. Compress old turns if needed (async LLM call)
-    if len(updated_conversation.get("recent_turns", [])) > FULL_DETAIL_TURNS:
-        updated_conversation = await _compress_old_turns(updated_conversation)
-    
-    # 7. Update engagement summary if this was significant
-    if _is_significant_action(router_output, step_results):
-        updated_conversation = await _update_engagement_summary(
-            updated_conversation, user_message, final_response
+        # LLM-compress turns into narrative (no entity IDs, just conversation arc)
+        conversation_summary = await _compress_turns_to_narrative(
+            existing_summary=conversation_summary,
+            turns_to_compress=turns_to_compress,
         )
+        logger.info(f"Summarize: Compressed {len(turns_to_compress)} turns to narrative")
     
-    # 8. Track pending clarification for context threading
+    # V4 CONSOLIDATION: Persist id_registry across turns
+    # This is what allows generated content to survive cross-turn references
+    id_registry = state.get("id_registry")
+    
+    updated_conversation = {
+        "recent_turns": recent_turns,
+        "history_summary": conversation_summary,
+        "engagement_summary": conversation.get("engagement_summary", ""),
+        "active_entities": conversation.get("active_entities", {}),
+        "all_entities": conversation.get("all_entities", {}),
+        "content_archive": conversation.get("content_archive", {}),
+        "step_summaries": conversation.get("step_summaries", []),
+        "id_registry": id_registry,  # V4: SessionIdRegistry with pending_artifacts
+    }
+    
+    # ==========================================================================
+    # 3. Track pending clarification
+    # ==========================================================================
+    
     if think_output and hasattr(think_output, "decision"):
         decision = think_output.decision
         if decision in ("propose", "clarify"):
             updated_conversation["pending_clarification"] = {
                 "type": decision,
                 "goal": getattr(think_output, "goal", ""),
-                "assumptions": getattr(think_output, "assumptions", None),
                 "questions": getattr(think_output, "clarification_questions", None),
                 "proposal_message": getattr(think_output, "proposal_message", None),
             }
         else:
             updated_conversation["pending_clarification"] = None
     
-    # Check Understand output for clarification (V3)
     understand_output = state.get("understand_output")
     if understand_output and hasattr(understand_output, "needs_clarification"):
         if understand_output.needs_clarification:
@@ -204,13 +231,27 @@ async def summarize_node(state: AlfredState) -> dict:
                 "questions": getattr(understand_output, "clarification_questions", None),
             }
     
-    # V3: Persist entity registry and current turn in conversation
-    updated_conversation["entity_registry"] = registry.to_dict()
-    updated_conversation["current_turn"] = current_turn_num
+    # ==========================================================================
+    # 4. Build SummarizeOutput (structured audit ledger, no LLM)
+    # ==========================================================================
+    
+    summarize_output = _build_summarize_output(
+        step_results=step_results,
+        step_metadata=state.get("step_metadata", {}),
+        think_output=think_output,
+    )
+    
+    # ==========================================================================
+    # 5. V4 CONSOLIDATION: Update turn number only
+    # Entity tracking is handled by SessionIdRegistry in Act node
+    # ==========================================================================
+    
+    updated_conversation["current_turn"] = current_turn_num + 1
     
     return {
         "conversation": updated_conversation,
-        "entity_registry": registry.to_dict(),  # Also update top-level for next turn
+        "summarize_output": summarize_output.model_dump(),
+        "current_turn": current_turn_num + 1,
     }
 
 
@@ -336,18 +377,18 @@ async def _summarize_assistant_response(response: str, is_proposal: bool = False
         response: The assistant's response text
         is_proposal: True if Think decided "propose" or "clarify" (not executed yet)
     """
+    # For proposals/clarifications: KEEP THE FULL TEXT (with reasonable truncation)
+    # Think NEEDS to see what was proposed to plan the next step correctly
+    if is_proposal:
+        # Proposals are usually short - just keep them (truncate at 500 chars if needed)
+        if len(response) < 500:
+            return response
+        else:
+            # Truncate but keep the essential proposal text
+            return response[:500] + "..."
+    
     if len(response) < SUMMARIZE_THRESHOLD:
         return response  # Short enough, keep as-is
-    
-    # If we KNOW this is a proposal, skip LLM and use deterministic summary
-    if is_proposal:
-        # Extract a brief mention of what was proposed
-        if "save" in response.lower():
-            return "Proposed a plan and awaiting user confirmation before proceeding."
-        elif "clarif" in response.lower():
-            return "Asked clarifying questions before proceeding."
-        else:
-            return "Proposed an approach and awaiting user confirmation."
     
     # CRITICAL: Extract entity names from FULL response before truncation
     # This prevents losing entity names that appear late in long responses
@@ -449,6 +490,70 @@ Use EXACT entity names from the text. Don't invent names.""",
     }
 
 
+async def _compress_turns_to_narrative(
+    existing_summary: str,
+    turns_to_compress: list[dict],
+) -> str:
+    """
+    V4: Compress conversation turns into narrative summary.
+    
+    Focus on conversation arc, NOT entity IDs:
+    - What was the user trying to accomplish?
+    - What did Alfred do?
+    - Any key decisions made?
+    
+    This is for conversation context, not entity tracking.
+    Entity tracking is handled by EntityContextModel.
+    """
+    if not turns_to_compress:
+        return existing_summary
+    
+    # Format turns for summarization
+    turns_text = ""
+    for turn in turns_to_compress:
+        user_msg = turn.get("user", "")[:200]
+        assistant_msg = turn.get("assistant_summary") or turn.get("assistant", "")[:200]
+        turns_text += f"User: {user_msg}\nAlfred: {assistant_msg}\n\n"
+    
+    try:
+        result = await call_llm(
+            response_model=TurnSummary,
+            system_prompt="""Summarize this conversation in 2-3 sentences.
+            
+Focus on:
+- What the user wanted to accomplish
+- Key actions taken or decisions made
+- Overall conversation arc
+
+Do NOT include:
+- Entity IDs or UUIDs
+- Technical details
+- Step-by-step breakdowns
+
+Write as a narrative: "User explored meal planning options, decided on 3 fish recipes..."
+""",
+            user_prompt=f"""Existing summary: {existing_summary or 'None'}
+
+New turns to incorporate:
+{turns_text}
+
+Write a brief narrative summary:""",
+            complexity="low",
+        )
+        
+        # Combine with existing
+        if existing_summary:
+            return f"{existing_summary} {result.summary}"
+        return result.summary
+        
+    except Exception as e:
+        logger.warning(f"Failed to compress turns: {e}")
+        # Fallback: just concatenate key points
+        if existing_summary:
+            return existing_summary
+        return "Prior conversation context available."
+
+
 async def _update_engagement_summary(
     conversation: ConversationContext,
     user_message: str,
@@ -548,3 +653,173 @@ def _count_records(result: Any) -> int:
         return 1
     return 0
 
+
+# =============================================================================
+# V4: Build Structured Summarize Output
+# =============================================================================
+
+
+def _build_summarize_output(
+    step_results: dict[int, Any],
+    step_metadata: dict[int, dict],
+    think_output: Any,
+) -> SummarizeOutput:
+    """
+    V4 CONSOLIDATION: Build structured SummarizeOutput from turn data.
+    
+    Produces machine-readable audit ledger, not narrative.
+    Entity tracking is now done by SessionIdRegistry - we just count artifacts here.
+    """
+    output = SummarizeOutput()
+    
+    # Count steps
+    output.steps_total = len(think_output.steps) if think_output else 0
+    output.steps_completed = len(step_results)
+    
+    # Track artifacts generated vs saved
+    for step_idx, metadata in step_metadata.items():
+        step_type = metadata.get("step_type")
+        artifacts = metadata.get("artifacts", [])
+        
+        if step_type == "generate" and artifacts:
+            for artifact in artifacts:
+                if isinstance(artifact, dict):
+                    artifact_type = _infer_artifact_type(artifact)
+                    output.artifacts_generated[artifact_type] = output.artifacts_generated.get(artifact_type, 0) + 1
+        
+        elif step_type == "write":
+            # Check step_results for saved counts
+            result = step_results.get(step_idx)
+            if result:
+                saved_count = _count_saved_in_result(result)
+                for artifact_type, count in saved_count.items():
+                    output.artifacts_saved[artifact_type] = output.artifacts_saved.get(artifact_type, 0) + count
+    
+    # Build factual turn summary
+    parts = []
+    
+    if think_output:
+        goal = getattr(think_output, "goal", "")
+        if goal:
+            parts.append(f"Goal: {goal[:50]}")
+    
+    if output.entities_created:
+        parts.append(f"{len(output.entities_created)} created")
+    
+    if output.artifacts_generated:
+        gen_str = ", ".join(f"{count} {t}" for t, count in output.artifacts_generated.items())
+        parts.append(f"generated: {gen_str}")
+    
+    if output.artifacts_saved:
+        saved_str = ", ".join(f"{count} {t}" for t, count in output.artifacts_saved.items())
+        parts.append(f"saved: {saved_str}")
+    
+    if output.errors:
+        parts.append(f"{len(output.errors)} errors")
+    
+    output.turn_summary = "; ".join(parts) if parts else "Turn completed"
+    
+    return output
+
+
+def _infer_artifact_type(artifact: dict) -> str:
+    """Infer artifact type from structure."""
+    if "instructions" in artifact or "cuisine" in artifact:
+        return "recipe"
+    if "meal_type" in artifact and "date" in artifact:
+        return "meal_plan"
+    if "due_date" in artifact or ("title" in artifact and "status" in artifact):
+        return "task"
+    return "item"
+
+
+def _count_saved_in_result(result: Any) -> dict[str, int]:
+    """Count saved items by type from a step result."""
+    counts: dict[str, int] = {}
+    
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, tuple) and len(item) >= 3:
+                tool, table, data = item[:3]
+                if tool == "db_create":
+                    item_type = _table_to_type(table)
+                    count = len(data) if isinstance(data, list) else 1
+                    counts[item_type] = counts.get(item_type, 0) + count
+    
+    return counts
+
+
+def _table_to_type(table: str) -> str:
+    """Convert table name to entity type."""
+    mapping = {
+        "recipes": "recipe",
+        "recipe_ingredients": "ingredient",
+        "meal_plans": "meal_plan",
+        "tasks": "task",
+        "inventory": "inventory",
+        "shopping_list": "shopping",
+    }
+    return mapping.get(table, table)
+
+
+# =============================================================================
+# V4: Query Pattern Extraction
+# =============================================================================
+
+
+def _extract_successful_query_patterns(
+    step_results: dict[int, Any],
+    step_metadata: dict[int, dict],
+) -> list[dict]:
+    """
+    Extract successful query patterns from read steps.
+    
+    When a read step returns results, we save the query pattern
+    so future turns can reference what worked.
+    
+    Returns list of patterns: [{subdomain, filters, record_count}]
+    """
+    patterns = []
+    
+    for step_idx, meta in step_metadata.items():
+        step_type = meta.get("step_type")
+        if step_type != "read":
+            continue
+        
+        result = step_results.get(step_idx)
+        if not result:
+            continue
+        
+        # Check if this read returned data
+        record_count = _count_records(result)
+        if record_count == 0:
+            continue
+        
+        # Extract the query pattern
+        subdomain = meta.get("subdomain", "")
+        description = meta.get("description", "")
+        
+        # Try to infer filters from description
+        filters = []
+        desc_lower = description.lower()
+        
+        # Common filter patterns in descriptions
+        if "expir" in desc_lower:
+            filters.append("expiry_date")
+        if "vegetarian" in desc_lower or "vegan" in desc_lower:
+            filters.append("dietary")
+        if any(cuisine in desc_lower for cuisine in ["italian", "mexican", "asian", "indian"]):
+            filters.append("cuisine")
+        if "quick" in desc_lower or "under 30" in desc_lower:
+            filters.append("time")
+        
+        pattern = {
+            "subdomain": subdomain,
+            "description_hint": description[:50],
+            "filters_inferred": filters,
+            "record_count": record_count,
+            "step_idx": step_idx,
+        }
+        patterns.append(pattern)
+    
+    return patterns

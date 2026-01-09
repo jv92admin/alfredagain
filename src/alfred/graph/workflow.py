@@ -25,7 +25,6 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from alfred.core.entities import EntityRegistry
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.nodes import (
     act_node,
@@ -168,9 +167,9 @@ def route_after_think(state: AlfredState) -> str:
     Route based on Think's decision.
     
     - plan_direct: Proceed to Act with steps
-    - propose: Skip to Reply to present assumptions for confirmation
+    - plan_direct: Execute the plan
+    - propose: Skip to Reply to present proposal for confirmation
     - clarify: Skip to Reply to ask clarifying questions
-    - needs_proposal (V3): Skip to Reply for proposal
     
     Returns:
         "act" or "reply"
@@ -180,22 +179,14 @@ def route_after_think(state: AlfredState) -> str:
     if not think_output:
         return "reply"  # Error case, let reply handle it
     
-    # V3: Check needs_proposal flag
-    if hasattr(think_output, "needs_proposal") and think_output.needs_proposal:
-        return "reply"
-    
-    # Check if ThinkOutput is the new format with decision
-    if hasattr(think_output, "decision"):
-        match think_output.decision:
-            case "plan_direct":
-                return "act"
-            case "propose" | "clarify":
-                return "reply"
-            case _:
-                return "act"  # Default fallback
-    
-    # Legacy format (no decision field) - go to act
-    return "act"
+    # Route based on decision type
+    match getattr(think_output, "decision", "plan_direct"):
+        case "plan_direct":
+            return "act"
+        case "propose" | "clarify":
+            return "reply"
+        case _:
+            return "act"  # Default fallback
 
 
 def create_alfred_graph() -> StateGraph:
@@ -351,8 +342,12 @@ async def run_alfred(
     # Copy content_archive from conversation for cross-turn persistence
     initial_archive = conv_context.get("content_archive", {})
     
-    # V3: Initialize or load entity registry
+    # V3: Initialize or load entity registry (legacy)
     entity_registry = conv_context.get("entity_registry", {})
+    
+    # V4 CONSOLIDATION: Load id_registry (SessionIdRegistry) for cross-turn persistence
+    # This contains pending_artifacts (generated content waiting to be saved)
+    id_registry = conv_context.get("id_registry", None)
     
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
@@ -373,7 +368,8 @@ async def run_alfred(
         "think_output": None,
         "context": {},
         "mode_context": mode_context,  # V3
-        "entity_registry": entity_registry,  # V3
+        "entity_registry": entity_registry,  # V3 (legacy)
+        "id_registry": id_registry,  # V4 CONSOLIDATION: SessionIdRegistry for cross-turn persistence
         "current_turn": current_turn,  # V3
         "current_step_index": 0,
         "step_results": {},
@@ -450,8 +446,11 @@ async def run_alfred_streaming(
     conv_context = conversation if conversation else initialize_conversation()
     initial_archive = conv_context.get("content_archive", {})
     
-    # V3: Initialize or load entity registry
+    # V3: Initialize or load entity registry (legacy)
     entity_registry = conv_context.get("entity_registry", {})
+    
+    # V4 CONSOLIDATION: Load id_registry (SessionIdRegistry) for cross-turn persistence
+    id_registry = conv_context.get("id_registry", None)
     
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
@@ -472,7 +471,8 @@ async def run_alfred_streaming(
         "think_output": None,
         "context": {},
         "mode_context": mode_context,  # V3
-        "entity_registry": entity_registry,  # V3
+        "entity_registry": entity_registry,  # V3 (legacy)
+        "id_registry": id_registry,  # V4 CONSOLIDATION: SessionIdRegistry for cross-turn persistence
         "current_turn": current_turn,  # V3
         "current_step_index": 0,
         "step_results": {},

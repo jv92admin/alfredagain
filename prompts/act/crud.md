@@ -23,13 +23,14 @@ Each filter: `{"field": "...", "op": "...", "value": "..."}`
 
 ### Exact Match
 ```json
-{"field": "id", "op": "=", "value": "uuid-here"}
+{"field": "id", "op": "=", "value": "recipe_1"}
 ```
 
 ### Multiple IDs (from prior step)
 ```json
-{"field": "id", "op": "in", "value": ["uuid-1", "uuid-2", "uuid-3"]}
+{"field": "id", "op": "in", "value": ["recipe_1", "recipe_2", "recipe_3"]}
 ```
+**Note:** Use simple refs like `recipe_1`, `inv_5`. Never type full UUIDs — the system translates automatically.
 
 ### Fuzzy Search
 ```json

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from alfred.graph.state import (
     AlfredState,
     AskUserAction,
+    BatchProgress,
     BlockedAction,
     FailAction,
     StepCompleteAction,
@@ -48,6 +49,132 @@ class ReplyOutput(BaseModel):
     """The final response to the user."""
     
     response: str
+
+
+# =============================================================================
+# V4 Status Formatting
+# =============================================================================
+
+
+def _format_batch_status(batch_progress) -> str:
+    """
+    V4: Format batch progress for Reply.
+    
+    Surfaces exact status: "3 of 3 saved" or "2 of 3 saved (1 failed)"
+    """
+    if not batch_progress:
+        return ""
+    
+    completed = batch_progress.completed
+    total = batch_progress.total
+    failed_items = batch_progress.failed_items
+    
+    if completed == total and not failed_items:
+        return f"✅ **{completed} of {total} saved successfully**"
+    
+    parts = [f"**{completed} of {total} saved**"]
+    
+    if failed_items:
+        failed_count = len(failed_items)
+        parts.append(f"❌ **{failed_count} failed**")
+        # Show specific failures
+        for failure in failed_items[:3]:
+            ref = failure.get("ref", "item")
+            error = failure.get("error", "unknown error")
+            parts.append(f"  - {ref}: {error}")
+        if len(failed_items) > 3:
+            parts.append(f"  ... and {len(failed_items) - 3} more failures")
+    
+    return "\n".join(parts)
+
+
+def _format_representational_status(step_results: dict, step_metadata: dict) -> str:
+    """
+    V4: Format representational status - what's generated vs saved.
+    
+    Speaks as witness: reports what actually happened, not what should have.
+    """
+    generated_count = 0
+    saved_count = 0
+    generated_items = []
+    saved_items = []
+    
+    for step_idx, metadata in step_metadata.items():
+        step_type = metadata.get("step_type")
+        artifacts = metadata.get("artifacts", [])
+        
+        if step_type == "generate":
+            generated_count += len(artifacts)
+            for artifact in artifacts:
+                if isinstance(artifact, dict):
+                    name = artifact.get("name") or artifact.get("title") or "item"
+                    generated_items.append(name)
+    
+    # Check step_results for actual saves (write steps)
+    for step_idx, result in step_results.items():
+        metadata = step_metadata.get(step_idx, {})
+        if metadata.get("step_type") == "write":
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, tuple) and len(item) >= 3:
+                        _tool, _table, data = item[:3]
+                        if isinstance(data, list):
+                            saved_count += len(data)
+                            for record in data:
+                                if isinstance(record, dict):
+                                    name = record.get("name") or record.get("title") or "item"
+                                    saved_items.append(name)
+                        elif isinstance(data, dict):
+                            saved_count += 1
+                            name = data.get("name") or data.get("title") or "item"
+                            saved_items.append(name)
+    
+    lines = []
+    
+    if generated_count > 0 and saved_count == 0:
+        lines.append(f"📝 **{generated_count} items generated but NOT yet saved**")
+        if generated_items:
+            lines.append(f"   Generated: {', '.join(generated_items[:5])}")
+        lines.append("   → Would you like me to save these?")
+    elif generated_count > 0 and saved_count > 0:
+        if saved_count == generated_count:
+            lines.append(f"✅ **{saved_count} of {generated_count} saved successfully**")
+        else:
+            unsaved = generated_count - saved_count
+            lines.append(f"⚠️ **{saved_count} of {generated_count} saved**")
+            lines.append(f"   {unsaved} items still pending")
+    elif saved_count > 0:
+        lines.append(f"✅ **{saved_count} items saved**")
+    
+    return "\n".join(lines)
+
+
+def _format_next_step_suggestion(step_results: dict, step_metadata: dict, think_output) -> str:
+    """
+    V4: Generate a single next-step suggestion (not multiple options).
+    """
+    # Check if there's unsaved generated content
+    has_unsaved = False
+    for step_idx, metadata in step_metadata.items():
+        if metadata.get("step_type") == "generate" and metadata.get("artifacts"):
+            # Check if there's a subsequent write step that saved these
+            has_write = any(
+                step_metadata.get(i, {}).get("step_type") == "write" 
+                for i in range(step_idx + 1, max(step_metadata.keys()) + 1)
+            )
+            if not has_write:
+                has_unsaved = True
+                break
+    
+    if has_unsaved:
+        return "💡 **Next:** Say 'save' to add these to your collection."
+    
+    # Check if this was a read operation
+    if step_results and not step_metadata:
+        return "💡 **Next:** Want me to do something with these?"
+    
+    # Default: no suggestion (keeps response clean)
+    return ""
 
 
 def _format_proposal_response(think_output) -> str:
@@ -492,7 +619,7 @@ async def reply_node(state: AlfredState) -> dict:
 ## Status: ⚠️ Blocked
 Reason: {pending_action.details}
 
-{_format_execution_summary(step_results, think_output)}
+{_format_execution_summary(step_results, think_output, state.get("step_metadata", {}))}
 
 ## Conversation Context
 {conversation_section}
@@ -573,14 +700,15 @@ If the user wanted an update but you only read, explain that the update didn't h
 ## Goal
 {think_output.goal if think_output else "Complete the user's request"}
 {mismatch_warning}
-{_format_execution_summary(step_results, think_output)}
+{_format_execution_summary(step_results, think_output, state.get("step_metadata", {}))}
 
 ## Conversation Context
 {conversation_section}
 
 ---
 
-Generate a natural, helpful response. Lead with the outcome, be specific, be concise."""
+Generate a natural, helpful response. Lead with the outcome, be specific, be concise.
+Speak as a WITNESS - report what actually happened, not what should have happened."""
 
     try:
         result = await call_llm(
@@ -607,14 +735,24 @@ Generate a natural, helpful response. Lead with the outcome, be specific, be con
 def _format_execution_summary(
     step_results: dict[int, Any],
     think_output: Any,
+    step_metadata: dict[int, dict] | None = None,
+    batch_progress: BatchProgress | None = None,
 ) -> str:
     """
     Format execution results as a structured handoff for Reply.
     
+    V4 Changes:
+    - Shows batch progress status first ("3 of 3 saved")
+    - Shows representational status (generated vs saved)
+    - Speaks as witness, not authority
+    - Includes single next-step suggestion
+    
     Shows:
+    - V4 status (batch, generated vs saved)
     - Plan overview (how many steps, completion status)
     - Each step's description + outcome
     - Key data in human-readable format
+    - Next-step suggestion
     """
     if not step_results:
         return "No steps were executed."
@@ -623,16 +761,31 @@ def _format_execution_summary(
     steps = think_output.steps if think_output else []
     total_steps = len(steps)
     completed_steps = len(step_results)
+    step_metadata = step_metadata or {}
     
     # Track what was generated vs saved for final summary
     generated_items: list[str] = []
     saved_items: list[str] = []
     
-    lines = [
-        "## Execution Summary",
-        f"Plan: {total_steps} steps | Completed: {completed_steps} | Status: {'✅ Success' if completed_steps >= total_steps else '⚠️ Partial'}",
-        "",
-    ]
+    lines = ["## Execution Summary"]
+    
+    # V4: Add batch progress status first if present
+    if batch_progress:
+        batch_status = _format_batch_status(batch_progress)
+        if batch_status:
+            lines.append("")
+            lines.append(batch_status)
+    
+    # V4: Add representational status (generated vs saved)
+    if step_metadata:
+        rep_status = _format_representational_status(step_results, step_metadata)
+        if rep_status:
+            lines.append("")
+            lines.append(rep_status)
+    
+    lines.append("")
+    lines.append(f"Plan: {total_steps} steps | Completed: {completed_steps} | Status: {'✅ Success' if completed_steps >= total_steps else '⚠️ Partial'}")
+    lines.append("")
     
     # Show full plan if partial completion (so Reply knows what was skipped)
     if completed_steps < total_steps and steps:
@@ -780,6 +933,12 @@ def _format_execution_summary(
         lines.append(f"Generated items: {', '.join(generated_items[:5])}")
         lines.append("Offer to save if appropriate.")
         lines.append("")
+    
+    # V4: Add single next-step suggestion
+    next_step = _format_next_step_suggestion(step_results, step_metadata, think_output)
+    if next_step:
+        lines.append("")
+        lines.append(next_step)
     
     return "\n".join(lines)
 

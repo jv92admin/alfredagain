@@ -13,8 +13,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from alfred.core.entities import EntityRegistry
 from alfred.core.modes import Mode, ModeContext
+from alfred.core.id_registry import SessionIdRegistry
 from alfred.graph.state import AlfredState, UnderstandOutput
 from alfred.llm.client import call_llm, set_current_node
 
@@ -59,8 +59,8 @@ def _format_active_entities_from_conversation(active: dict[str, dict]) -> str:
     for entity_id, entity_data in list(active.items())[:20]:  # Limit to 20
         etype = entity_data.get("type", "unknown")
         label = entity_data.get("label", "unknown")
-        short_id = entity_id[:8] if len(entity_id) > 8 else entity_id
-        lines.append(f"- {etype}: {label} ({short_id})")
+        # V4: IDs are simple refs, show in full
+        lines.append(f"- {etype}: {label} ({entity_id})")
     
     if len(active) > 20:
         lines.append(f"... and {len(active) - 20} more")
@@ -72,21 +72,23 @@ def _build_understand_context(state: AlfredState) -> str:
     """
     Build context for Understand prompt.
     
-    Uses conversation's active_entities (same as Think) for consistency.
-    EntityRegistry is for state tracking, not prompt injection.
+    V4 CONSOLIDATION: Uses SessionIdRegistry for all entity display.
     """
     parts = []
     
     # User message
     parts.append(f"## User Message\n\n{state['user_message']}")
     
-    # Use conversation's active_entities (like Think does) - NOT EntityRegistry
-    # This ensures Understand sees the same clean, limited entity list as Think
-    conversation = state.get("conversation", {})
-    active_entities = conversation.get("active_entities", {})
-    parts.append(f"## Recent Items\n\n{_format_active_entities_from_conversation(active_entities)}")
+    # V4 CONSOLIDATION: Load SessionIdRegistry and format for Understand
+    registry_data = state.get("id_registry")
+    if registry_data:
+        registry = SessionIdRegistry.from_dict(registry_data)
+        parts.append(registry.format_for_understand_prompt())
+    else:
+        parts.append("## Entity Registry\n\n*No entities tracked yet.*")
     
     # Recent turns
+    conversation = state.get("conversation", {})
     recent_turns = conversation.get("recent_turns", [])
     parts.append(f"## Recent Conversation\n\n{_format_recent_turns(recent_turns)}")
     
@@ -150,7 +152,7 @@ async def understand_node(state: AlfredState) -> dict[str, Any]:
             system_prompt=(
                 "You are Alfred's lightweight pre-processor. "
                 "Your job: (1) resolve references to IDs from Recent Items, "
-                "(2) detect quick mode for simple queries, "
+                "(2) detect quick mode for simple READ-ONLY queries (never for writes/deletes/multi-step), "
                 "(3) write a simple processed_message. "
                 "NEVER invent entity IDs. Keep processed_message short — Think does the planning."
             ),
@@ -190,21 +192,34 @@ async def understand_node(state: AlfredState) -> dict[str, Any]:
                 clarification_reason=None,
             )
     
-    # Apply entity updates to registry
-    registry_data = state.get("entity_registry", {})
-    registry = EntityRegistry.from_dict(registry_data) if registry_data else EntityRegistry()
-    
-    if output.entity_updates:
-        updated = registry.apply_updates(output.entity_updates)
-        logger.info(f"Understand: Updated {len(updated)} entity states")
-    
-    # Touch referenced entities
+    # V4 CONSOLIDATION: Touch referenced entities in SessionIdRegistry
     current_turn = state.get("current_turn", 0)
+    registry_data = state.get("id_registry")
+    registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+    registry.set_turn(current_turn)
+    
+    # Touch referenced entities (updates last_ref time)
     for entity_id in output.referenced_entities:
-        registry.touch(entity_id, current_turn)
+        registry.touch_ref(entity_id)
+        logger.debug(f"Understand: Touched {entity_id}")
+    
+    # V4 CONSOLIDATION: Entity curation is now just dropping refs from registry
+    # No more promote/demote - we just track recency via touch_ref
+    if output.entity_curation:
+        curation = output.entity_curation
+        
+        if curation.clear_all:
+            # Clear all refs (fresh start)
+            for ref in list(registry.ref_to_uuid.keys()):
+                registry.remove_ref(ref)
+            logger.info("Understand: Cleared all entities (user requested fresh start)")
+        elif curation.drop_entities:
+            for ref in curation.drop_entities:
+                registry.remove_ref(ref)
+            logger.info(f"Understand: Dropped {len(curation.drop_entities)} entities")
     
     return {
         "understand_output": output,
-        "entity_registry": registry.to_dict(),
+        "id_registry": registry.to_dict(),  # V4 CONSOLIDATION: Single source of truth
     }
 
