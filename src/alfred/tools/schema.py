@@ -110,7 +110,7 @@ SUBDOMAIN_REGISTRY: dict[str, SubdomainConfig] = {
         # No complexity rules - simple single-table operations
     },
     "meal_plans": {
-        "tables": ["meal_plans", "recipes"],
+        "tables": ["meal_plans"],  # Just meal_plans - recipes fetched via separate step if needed
         "complexity_rules": {"mutation": "medium"},  # References recipes, moderately complex
     },
     "tasks": {

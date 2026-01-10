@@ -79,6 +79,11 @@ class SessionIdRegistry:
     # Current turn number (set by nodes at start of turn)
     current_turn: int = 0
     
+    # V5: Understand context management - stores WHY an older entity is still active
+    # Only populated for entities beyond the automatic 2-turn window
+    # Example: {"gen_meal_plan_1": "User's ongoing weekly meal plan goal"}
+    ref_active_reason: dict[str, str] = field(default_factory=dict)
+    
     # =========================================================================
     # Ref Generation
     # =========================================================================
@@ -182,12 +187,36 @@ class SessionIdRegistry:
                     self.ref_turn_created[ref] = self.current_turn
                 self.ref_turn_last_ref[ref] = self.current_turn
             
-            # Translate FK fields (if we have mappings)
+            # Translate FK fields - with lazy registration for unknown UUIDs
+            # This is critical: when reading meal_plans, we see recipe_ids for recipes
+            # we haven't read yet. Without lazy registration, raw UUIDs leak to the LLM.
             for fk_field in fk_fields:
                 if fk_field in record and record[fk_field]:
                     fk_uuid = str(record[fk_field])
+                    
                     if fk_uuid in self.uuid_to_ref:
-                        new_record[fk_field] = self.uuid_to_ref[fk_uuid]
+                        # Already known - use existing ref and include label if available
+                        fk_ref = self.uuid_to_ref[fk_uuid]
+                        new_record[fk_field] = fk_ref
+                        # Enrich with label for display (e.g., "Butter Chicken (recipe_1)")
+                        label = self.ref_labels.get(fk_ref)
+                        if label and label != fk_ref:  # Only if we have a real label
+                            new_record[f"_{fk_field}_label"] = label
+                    else:
+                        # Lazy registration: assign a ref now so LLM never sees raw UUIDs
+                        fk_entity_type = self._fk_field_to_type(fk_field)
+                        fk_ref = self._next_ref(fk_entity_type)
+                        self.ref_to_uuid[fk_ref] = fk_uuid
+                        self.uuid_to_ref[fk_uuid] = fk_ref
+                        # Mark as "linked" since we discovered it via FK, not direct read
+                        self.ref_actions[fk_ref] = "linked"
+                        self.ref_types[fk_ref] = fk_entity_type
+                        self.ref_labels[fk_ref] = fk_ref  # No label until we read it
+                        if fk_ref not in self.ref_turn_created:
+                            self.ref_turn_created[fk_ref] = self.current_turn
+                        self.ref_turn_last_ref[fk_ref] = self.current_turn
+                        new_record[fk_field] = fk_ref
+                        logger.info(f"SessionRegistry: Lazy-registered {fk_ref} → {fk_uuid[:8]}... (via {fk_field})")
             
             translated.append(new_record)
         
@@ -515,6 +544,18 @@ class SessionIdRegistry:
         }
         return fk_map.get(table, [])
     
+    def _fk_field_to_type(self, fk_field: str) -> str:
+        """Convert FK field name to entity type for lazy registration."""
+        # FK field naming convention: <entity_type>_id
+        fk_type_map = {
+            "recipe_id": "recipe",
+            "ingredient_id": "ing",
+            "meal_plan_id": "meal",
+            "task_id": "task",
+            "parent_recipe_id": "recipe",
+        }
+        return fk_type_map.get(fk_field, fk_field.replace("_id", ""))
+    
     # =========================================================================
     # Prompt Formatting
     # =========================================================================
@@ -603,6 +644,54 @@ class SessionIdRegistry:
             if self.ref_turn_last_ref.get(ref) == self.current_turn
         ]
     
+    def get_active_entities(self, turns_window: int = 2) -> tuple[list[str], list[str]]:
+        """
+        Get active entities for Think/Act prompts.
+        
+        Returns:
+            (recent_refs, retained_refs):
+            - recent_refs: Automatically active (last N turns)
+            - retained_refs: Understand-curated (older but still relevant)
+        
+        This is the core method for context management.
+        Recent entities are automatically included based on recency.
+        Retained entities are explicitly kept active by Understand.
+        """
+        recent_refs = []
+        retained_refs = []
+        
+        for ref in self.ref_to_uuid.keys():
+            last_ref_turn = self.ref_turn_last_ref.get(ref, 0)
+            
+            # Automatic: entity referenced within turns_window
+            if self.current_turn - last_ref_turn < turns_window:
+                recent_refs.append(ref)
+            # Understand-retained: has an active reason
+            elif ref in self.ref_active_reason:
+                retained_refs.append(ref)
+        
+        return recent_refs, retained_refs
+    
+    def set_active_reason(self, ref: str, reason: str) -> None:
+        """
+        Mark an older entity as actively retained with a reason.
+        
+        Called when Understand decides an older entity is still relevant.
+        """
+        if ref in self.ref_to_uuid:
+            self.ref_active_reason[ref] = reason
+            logger.info(f"SessionRegistry: Retained {ref} — {reason}")
+    
+    def clear_active_reason(self, ref: str) -> None:
+        """
+        Remove active retention for an entity (demote to background).
+        
+        Called when Understand decides an older entity is no longer relevant.
+        """
+        if ref in self.ref_active_reason:
+            del self.ref_active_reason[ref]
+            logger.info(f"SessionRegistry: Demoted {ref} from active")
+    
     def get_entities_by_recency(self, limit: int = 20) -> list[str]:
         """Get refs sorted by recency (most recent first)."""
         refs = list(self.ref_to_uuid.keys())
@@ -618,56 +707,77 @@ class SessionIdRegistry:
     
     def format_for_act_prompt(self, current_step: int | None = None) -> str:
         """
-        Format entities for Act prompt. REPLACES WorkingSet.
+        V5: Format entities for Act prompt with delineated sections.
+        
+        MUST match Think's context window for consistency.
         
         Shows:
-        - Entities from this turn (most relevant)
-        - Generated pending items (need to be saved)
-        - Recent entities from prior turns
+        1. Pending artifacts (need to be saved)
+        2. This turn's step results (from current turn)
+        3. Recent Context (last 2 turns - same as Think)
+        4. Long Term Memory (Understand-retained - same as Think)
         """
-        lines = ["## Working Set", ""]
+        lines = []
         
-        # Section 1: Generated pending (highest priority for Act)
-        pending = self.get_generated_pending()
-        if pending:
-            lines.append("### Pending (not yet saved)")
-            lines.append("| Ref | Type | Label |")
-            lines.append("|-----|------|-------|")
-            for ref in pending:
-                lines.append(f"| `{ref}` | {self.ref_types.get(ref, '-')} | {self.ref_labels.get(ref, ref)} |")
+        # Get active entities split by source (same as Think)
+        recent_refs, retained_refs = self.get_active_entities(turns_window=2)
+        
+        # Section 1: Pending artifacts (highest priority for Act)
+        if self.pending_artifacts:
+            lines.append("## ⚠️ Content to Save")
+            lines.append("")
+            for ref, artifact in self.pending_artifacts.items():
+                label = artifact.get("name") or artifact.get("label") or ref
+                entity_type = self.ref_types.get(ref, "unknown")
+                lines.append(f"- `{ref}`: {label} ({entity_type})")
             lines.append("")
         
-        # Section 2: This turn's entities
-        this_turn = [r for r in self.get_entities_this_turn() if r not in pending]
-        if this_turn:
-            lines.append("### This Turn")
-            lines.append("| Ref | Type | Label | Action |")
-            lines.append("|-----|------|-------|--------|")
-            for ref in this_turn:
-                lines.append(
-                    f"| `{ref}` | {self.ref_types.get(ref, '-')} | "
-                    f"{self.ref_labels.get(ref, ref)} | {self.ref_actions.get(ref, '-')} |"
-                )
+        # Section 2: This turn's entities (from current step results)
+        this_turn_refs = self.get_entities_this_turn()
+        # Filter out pending (shown above), linked (shown inline with parents), and get unique from this turn
+        this_turn_new = [r for r in this_turn_refs 
+                        if r not in self.pending_artifacts 
+                        and self.ref_turn_created.get(r) == self.current_turn
+                        and self.ref_actions.get(r) != "linked"]  # Linked entities shown inline, not as separate items
+        if this_turn_new:
+            lines.append("## This Turn")
+            lines.append("")
+            for ref in this_turn_new:
+                label = self.ref_labels.get(ref, ref)
+                entity_type = self.ref_types.get(ref, "unknown")
+                action = self.ref_actions.get(ref, "-")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
             lines.append("")
         
-        # Section 3: Recent from prior turns (context)
-        prior_refs = [
-            r for r in self.get_entities_by_recency(10)
-            if r not in pending and r not in this_turn
-        ]
-        if prior_refs:
-            lines.append("### Prior Turns (for reference)")
-            lines.append("| Ref | Type | Label | Last Action | Turn |")
-            lines.append("|-----|------|-------|-------------|------|")
-            for ref in prior_refs[:5]:  # Limit to 5 from prior turns
-                lines.append(
-                    f"| `{ref}` | {self.ref_types.get(ref, '-')} | "
-                    f"{self.ref_labels.get(ref, ref)} | {self.ref_actions.get(ref, '-')} | "
-                    f"{self.ref_turn_last_ref.get(ref, '-')} |"
-                )
+        # Section 3: Recent Context (last 2 turns - matches Think)
+        recent_not_this_turn = [r for r in recent_refs 
+                               if r not in this_turn_new 
+                               and r not in self.pending_artifacts
+                               and self.ref_actions.get(r) != "linked"]  # Linked entities shown inline
+        if recent_not_this_turn:
+            lines.append("## Recent Context (last 2 turns)")
+            lines.append("")
+            for ref in recent_not_this_turn:
+                label = self.ref_labels.get(ref, ref)
+                entity_type = self.ref_types.get(ref, "unknown")
+                action = self.ref_actions.get(ref, "-")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
+            lines.append("")
         
-        if len(lines) == 2:  # Just header
-            lines.append("*No entities in registry.*")
+        # Section 4: Long Term Memory (Understand-retained - matches Think)
+        if retained_refs:
+            lines.append("## Long Term Memory")
+            lines.append("")
+            for ref in retained_refs:
+                label = self.ref_labels.get(ref, ref)
+                entity_type = self.ref_types.get(ref, "unknown")
+                lines.append(f"- `{ref}`: {label} ({entity_type})")
+            lines.append("")
+        
+        if not lines:
+            lines.append("## Available Entities")
+            lines.append("")
+            lines.append("*No entities in context.*")
         
         return "\n".join(lines)
     
@@ -701,43 +811,69 @@ class SessionIdRegistry:
     
     def format_for_think_prompt(self) -> str:
         """
-        Format entities for Think prompt.
+        V5: Format entities for Think prompt with delineated sections.
         
-        Shows what's available for planning (so Think knows what exists).
+        Shows:
+        1. Pending artifacts (need to be saved)
+        2. Recent Context (last 2 turns - automatic)
+        3. Long Term Memory (Understand-retained older entities)
         """
-        lines = ["## Entities in Context", ""]
+        lines = []
         
-        # Show pending artifacts FIRST - these need to be saved!
+        # Get active entities split by source
+        recent_refs, retained_refs = self.get_active_entities(turns_window=2)
+        
+        # Section 1: Pending artifacts (highest priority)
         if self.pending_artifacts:
-            lines.append("**⚠️ Generated (NOT YET SAVED):**")
+            lines.append("## ⚠️ Generated (NOT YET SAVED)")
+            lines.append("")
             for ref, artifact in self.pending_artifacts.items():
                 label = artifact.get("name") or artifact.get("label") or ref
-                lines.append(f"  - `{ref}`: {label} [generated, needs save]")
+                entity_type = self.ref_types.get(ref, "unknown")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [needs save]")
             lines.append("")
         
         if not self.ref_to_uuid and not self.pending_artifacts:
+            if not lines:
+                lines.append("## Available Items")
+                lines.append("")
             lines.append("*No entities tracked.*")
             return "\n".join(lines)
         
-        # Group saved entities by type
-        by_type: dict[str, list[str]] = {}
-        for ref in self.ref_to_uuid.keys():
-            entity_type = self.ref_types.get(ref, "unknown")
-            if entity_type not in by_type:
-                by_type[entity_type] = []
-            by_type[entity_type].append(ref)
-        
-        for entity_type, refs in sorted(by_type.items()):
-            lines.append(f"**{entity_type}s:** ({len(refs)} total)")
-            # Show first 5 with details
-            for ref in refs[:5]:
-                action = self.ref_actions.get(ref, "-")
+        # Section 2: Recent Context (last 2 turns - automatic)
+        # Filter out: pending (shown above), linked (shown inline with parent records)
+        recent_display = [r for r in recent_refs 
+                         if not (r.startswith("gen_") and r in self.pending_artifacts)
+                         and self.ref_actions.get(r) != "linked"]
+        if recent_display:
+            lines.append("## Recent Context (last 2 turns)")
+            lines.append("")
+            for ref in recent_display:
                 label = self.ref_labels.get(ref, ref)
-                # Mark if referenced this turn
-                this_turn = "← this turn" if self.ref_turn_last_ref.get(ref) == self.current_turn else ""
-                lines.append(f"  - `{ref}`: {label} [{action}] {this_turn}")
-            if len(refs) > 5:
-                lines.append(f"  - *... and {len(refs) - 5} more*")
+                entity_type = self.ref_types.get(ref, "unknown")
+                action = self.ref_actions.get(ref, "-")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
+            lines.append("")
+        
+        # Section 3: Long Term Memory (Understand-retained)
+        if retained_refs:
+            lines.append("## Long Term Memory (retained from earlier)")
+            lines.append("")
+            for ref in retained_refs:
+                label = self.ref_labels.get(ref, ref)
+                entity_type = self.ref_types.get(ref, "unknown")
+                reason = self.ref_active_reason.get(ref, "")
+                turn_created = self.ref_turn_created.get(ref, "?")
+                reason_note = f" — *{reason}*" if reason else ""
+                lines.append(f"- `{ref}`: {label} ({entity_type}, turn {turn_created}){reason_note}")
+            lines.append("")
+        
+        # If nothing in either section but we have entities, show summary
+        if not recent_refs and not retained_refs and self.ref_to_uuid:
+            lines.append("## Background Entities")
+            lines.append("")
+            lines.append(f"*{len(self.ref_to_uuid)} entities tracked but none currently active.*")
+            lines.append("*(Use entity refs from conversation to access them.)*")
             lines.append("")
         
         return "\n".join(lines)
@@ -763,6 +899,8 @@ class SessionIdRegistry:
             "ref_turn_last_ref": self.ref_turn_last_ref,
             "ref_source_step": self.ref_source_step,
             "current_turn": self.current_turn,
+            # V5: Understand context management
+            "ref_active_reason": self.ref_active_reason,
         }
     
     @classmethod
@@ -782,6 +920,8 @@ class SessionIdRegistry:
         registry.ref_turn_last_ref = data.get("ref_turn_last_ref", {})
         registry.ref_source_step = data.get("ref_source_step", {})
         registry.current_turn = data.get("current_turn", 0)
+        # V5: Understand context management
+        registry.ref_active_reason = data.get("ref_active_reason", {})
         return registry
 
 

@@ -240,7 +240,6 @@ def _format_understand_clarification(understand_output) -> str:
     """
     questions = getattr(understand_output, "clarification_questions", None)
     reason = getattr(understand_output, "clarification_reason", None)
-    processed = getattr(understand_output, "processed_message", "")
     
     if not questions:
         # Fallback if no questions provided

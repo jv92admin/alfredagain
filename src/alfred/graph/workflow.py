@@ -25,6 +25,7 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from alfred.core.id_registry import SessionIdRegistry
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.nodes import (
     act_node,
@@ -347,7 +348,14 @@ async def run_alfred(
     
     # V4 CONSOLIDATION: Load id_registry (SessionIdRegistry) for cross-turn persistence
     # This contains pending_artifacts (generated content waiting to be saved)
-    id_registry = conv_context.get("id_registry", None)
+    # CRITICAL: Deserialize from dict (stored as JSON in web sessions)
+    id_registry_data = conv_context.get("id_registry", None)
+    if id_registry_data is None:
+        id_registry = None
+    elif isinstance(id_registry_data, SessionIdRegistry):
+        id_registry = id_registry_data  # Already an object (in-memory session)
+    else:
+        id_registry = SessionIdRegistry.from_dict(id_registry_data)  # Deserialize from dict
     
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
@@ -450,7 +458,14 @@ async def run_alfred_streaming(
     entity_registry = conv_context.get("entity_registry", {})
     
     # V4 CONSOLIDATION: Load id_registry (SessionIdRegistry) for cross-turn persistence
-    id_registry = conv_context.get("id_registry", None)
+    # CRITICAL: Deserialize from dict (stored as JSON in web sessions)
+    id_registry_data = conv_context.get("id_registry", None)
+    if id_registry_data is None:
+        id_registry = None
+    elif isinstance(id_registry_data, SessionIdRegistry):
+        id_registry = id_registry_data  # Already an object (in-memory session)
+    else:
+        id_registry = SessionIdRegistry.from_dict(id_registry_data)  # Deserialize from dict
     
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1

@@ -473,8 +473,13 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
             elif field in ("date", "due_date", "expiry_date"):
                 parts.append(f"@{value}")
             elif field == "recipe_id":
-                # V4: IDs are simple refs (recipe_1), show in full
-                parts.append(f"recipe:{value}")
+                # V4: IDs are simple refs (recipe_1)
+                # V5: Include label if available (from prior reads)
+                label = record.get("_recipe_id_label")
+                if label:
+                    parts.append(f"recipe:{label} ({value})")
+                else:
+                    parts.append(f"recipe:{value}")
             elif field in ("total_time", "servings"):
                 parts.append(f"{field}:{value}")
             elif field == "tags" and isinstance(value, list):

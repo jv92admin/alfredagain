@@ -123,12 +123,10 @@ async def think_node(state: AlfredState) -> dict:
     if router_output is None:
         return {"error": "Router output missing"}
     
-    # Use Understand's processed message if available (has resolved references)
+    # Get resolved references from Understand (V5: no processed_message, just refs)
     user_message = state["user_message"]
-    processed_message = None
     referenced_entities = []
     if understand_output:
-        processed_message = getattr(understand_output, "processed_message", None)
         referenced_entities = getattr(understand_output, "referenced_entities", []) or []
 
     # V4 CONSOLIDATION: Load SessionIdRegistry for entity context
@@ -136,7 +134,11 @@ async def think_node(state: AlfredState) -> dict:
     entity_context_section = ""
     entity_counts_section = ""
     if registry_data:
-        registry = SessionIdRegistry.from_dict(registry_data)
+        # Handle both SessionIdRegistry objects and raw dicts
+        if isinstance(registry_data, SessionIdRegistry):
+            registry = registry_data
+        else:
+            registry = SessionIdRegistry.from_dict(registry_data)
         registry.set_turn(state.get("current_turn", 1))
         entity_context_section = _format_entity_context_for_think(registry, referenced_entities)
         
@@ -203,12 +205,10 @@ If they modify → adjust the plan.
     # Build the user prompt following: Task → Context → Instructions
     today = date.today().isoformat()
     
-    # Build task section with resolved info from Understand
+    # Build task section with ref resolution from Understand
     understand_section = ""
-    if processed_message and processed_message != user_message:
-        understand_section = f'\n**Resolved**: "{processed_message}"'
     if referenced_entities:
-        understand_section += f"\n**Referenced entities**: {referenced_entities}"
+        understand_section = f"\n**Entities mentioned**: {referenced_entities}"
     
     # Extract just the mode name for compact display
     mode_name = mode.name  # QUICK, COOK, PLAN, or CREATE

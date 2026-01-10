@@ -150,82 +150,93 @@ class TurnConstraintSnapshot(BaseModel):
     reset_subdomain: str | None = None  # Subdomain change resets that domain's constraints
 
 
+class RetentionDecision(BaseModel):
+    """
+    V5: Decision to retain an older entity as active.
+    
+    Used when Understand decides an entity beyond the automatic 2-turn window
+    should remain active because it's still relevant to the user's goal.
+    """
+    ref: str  # Entity ref (e.g., "gen_meal_plan_1")
+    reason: str  # Why it's still relevant (e.g., "User's ongoing weekly meal plan goal")
+
+
 class EntityCurationDecision(BaseModel):
     """
-    V4: Understand's decision about entity context curation.
+    V5: Understand's decision about entity context curation.
     
-    Understand is the sole curator of entity context. It decides based on
-    user intent what entities should be active, demoted, or dropped.
+    Understand is the memory manager. It decides based on user intent
+    what entities should be retained, demoted, or dropped.
+    
+    V5 Changes:
+    - Added `retain_active` with reasons (replaces promote_to_active)
+    - Reasons are stored for future Understand agents to read
     """
     
-    # Entities to keep in active tier (user referenced or continuing to use)
-    keep_active: list[str] = Field(default_factory=list)
+    # V5: Entities to retain as active WITH reasons (beyond automatic 2-turn window)
+    # These are older entities that Understand decides are still relevant
+    retain_active: list[RetentionDecision] = Field(default_factory=list)
     
-    # Entities to promote from background to active (user referenced)
-    promote_to_active: list[str] = Field(default_factory=list)
-    
-    # Entities to demote from active to background (no longer relevant)
-    demote_to_background: list[str] = Field(default_factory=list)
+    # Entities to demote from active (no longer relevant, but keep in registry)
+    demote: list[str] = Field(default_factory=list)
     
     # Entities to drop entirely (user said "forget that", starting fresh)
-    drop_entities: list[str] = Field(default_factory=list)
+    drop: list[str] = Field(default_factory=list)
     
     # Clear all context (user said "never mind", "start fresh")
     clear_all: bool = False
     
-    # Reason for curation (for debugging)
-    curation_reason: str | None = None
+    # Summary reason for this turn's curation decisions (for decision log)
+    curation_summary: str | None = None
 
 
 class UnderstandOutput(BaseModel):
     """
-    Output from the Understand node (V4).
+    Output from the Understand node (V5).
+    
+    Understand is Alfred's MEMORY MANAGER. It ensures the system remembers
+    what matters and forgets what doesn't across multi-turn conversations.
     
     Understand handles:
-    - Entity reference resolution ("that recipe" → specific ID)
-    - Entity context CURATION (what's active, what's background, what's dropped)
-    - Clarification detection
-    - Quick mode detection
-    - Constraint extraction
+    - Entity reference resolution ("that recipe" → specific ref)
+    - Entity context CURATION (what stays active beyond automatic 2-turn window)
+    - Disambiguation detection
+    - Quick mode detection (for simple READs)
     
-    V4 Changes:
-    - Understand is the SOLE curator of entity context
-    - EntityMention with confidence and resolution type
-    - EntityCurationDecision for intent-based context management
-    - TurnConstraintSnapshot for constraint accumulation
+    V5 Changes:
+    - REMOVED processed_message (redundant - Think has raw message)
+    - EntityCurationDecision now includes retention reasons
+    - Retention reasons stored for future Understand agents
     
-    Understand does NOT plan steps.
+    Understand does NOT plan steps or rewrite messages.
     """
     
     # Entity state updates (legacy - still supported)
     entity_updates: list[dict] = Field(default_factory=list)  # [{"id": "x", "new_state": "active"}]
-    referenced_entities: list[str] = Field(default_factory=list)  # Entity IDs user is referring to
+    referenced_entities: list[str] = Field(default_factory=list)  # Simple refs user is referring to
     
     # V4: Structured entity mentions
     entity_mentions: list[EntityMention] = Field(default_factory=list)
     
-    # V4: ENTITY CURATION - Understand decides what's relevant
+    # V5: ENTITY CURATION - Understand decides what's relevant
     entity_curation: EntityCurationDecision | None = None
     
     # V4: Disambiguation support
     needs_disambiguation: bool = False
-    disambiguation_options: list[dict] = Field(default_factory=list)  # [{id, label, reason}]
+    disambiguation_options: list[dict] = Field(default_factory=list)  # [{ref, label, reason}]
     disambiguation_question: str | None = None
     
-    # V4: Constraint snapshot
+    # V4: Constraint snapshot (for constraints like "use cod", "no dairy")
     constraint_snapshot: TurnConstraintSnapshot | None = None
     
-    # Clarification (legacy, still supported)
+    # Clarification (when truly ambiguous)
     needs_clarification: bool = False
     clarification_questions: list[str] | None = None
     clarification_reason: str | None = None  # "ambiguous_reference", "missing_info"
     
-    # Pass-through
-    processed_message: str = ""  # User message with resolved references
-    
-    # Quick mode detection
+    # Quick mode detection (for simple single-domain READs)
     quick_mode: bool = False  # True if this is a simple 1-step query
-    quick_mode_confidence: float = 0.0  # V4: Confidence gating
+    quick_mode_confidence: float = 0.0  # Confidence gating
     quick_intent: str | None = None  # Plaintext intent: "Show user their inventory"
     quick_subdomain: str | None = None  # Target subdomain: "inventory", "shopping", etc.
 

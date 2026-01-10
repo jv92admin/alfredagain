@@ -194,7 +194,15 @@ async def summarize_node(state: AlfredState) -> dict:
     
     # V4 CONSOLIDATION: Persist id_registry across turns
     # This is what allows generated content to survive cross-turn references
+    # CRITICAL: Serialize to dict for JSON storage in web sessions
     id_registry = state.get("id_registry")
+    # Handle both SessionIdRegistry objects and raw dicts (from prior sessions)
+    if id_registry is None:
+        id_registry_data = None
+    elif isinstance(id_registry, dict):
+        id_registry_data = id_registry  # Already a dict
+    else:
+        id_registry_data = id_registry.to_dict()
     
     updated_conversation = {
         "recent_turns": recent_turns,
@@ -204,7 +212,7 @@ async def summarize_node(state: AlfredState) -> dict:
         "all_entities": conversation.get("all_entities", {}),
         "content_archive": conversation.get("content_archive", {}),
         "step_summaries": conversation.get("step_summaries", []),
-        "id_registry": id_registry,  # V4: SessionIdRegistry with pending_artifacts
+        "id_registry": id_registry_data,  # V4: Serialized for JSON storage
     }
     
     # ==========================================================================
@@ -230,6 +238,19 @@ async def summarize_node(state: AlfredState) -> dict:
                 "type": "understand",
                 "questions": getattr(understand_output, "clarification_questions", None),
             }
+    
+    # ==========================================================================
+    # 3b. V5: Store Understand's decision log entries
+    # ==========================================================================
+    
+    decision_log = conversation.get("understand_decision_log", [])
+    new_entries = state.get("understand_decision_log_entries", [])
+    if new_entries:
+        decision_log = decision_log + new_entries
+        # Keep last 20 entries to prevent unbounded growth
+        decision_log = decision_log[-20:]
+        logger.info(f"Summarize: Added {len(new_entries)} Understand decision log entries")
+    updated_conversation["understand_decision_log"] = decision_log
     
     # ==========================================================================
     # 4. Build SummarizeOutput (structured audit ledger, no LLM)

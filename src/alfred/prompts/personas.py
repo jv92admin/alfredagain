@@ -222,7 +222,7 @@ Don't just list ingredients. Design flavor profiles with intention.
     "meal_plans": {
         "read": """**Planner (Review Schedule)**
 - Filter by date range
-- Join recipes for meal details""",
+- Recipe details come from `recipe_id` refs — don't fetch recipes yourself""",
 
         "write": """**Planner (Schedule)**
 

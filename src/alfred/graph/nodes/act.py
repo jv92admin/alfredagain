@@ -916,7 +916,12 @@ async def act_node(state: AlfredState) -> dict:
 
     # V4 CONSOLIDATION: Load SessionIdRegistry - single source of truth
     registry_data = state.get("id_registry")
-    session_registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+    if registry_data is None:
+        session_registry = SessionIdRegistry(session_id=state.get("conversation_id", ""))
+    elif isinstance(registry_data, SessionIdRegistry):
+        session_registry = registry_data
+    else:
+        session_registry = SessionIdRegistry.from_dict(registry_data)
     session_registry.set_turn(state.get("current_turn", 1))
     
     # V4: Inject pending artifacts from SessionIdRegistry for write steps
@@ -1007,9 +1012,9 @@ async def act_node(state: AlfredState) -> dict:
 
 ## 1. Task
 
-User said: "{state.get("user_message", "")}"
+**Your job this step:** {current_step.description}
 
-Your job this step: **{current_step.description}**
+*(User's full request: "{state.get("user_message", "")}" — other parts handled by later steps)*
 
 ---
 
@@ -1065,9 +1070,9 @@ Analyze the data above and complete the step:
 
 ## 1. Task
 
-User said: "{state.get("user_message", "")}"
+**Your job this step:** {current_step.description}
 
-Your job this step: **{current_step.description}**
+*(User's full request: "{state.get("user_message", "")}" — other parts handled by later steps)*
 
 ---
 
@@ -1191,9 +1196,9 @@ Generate the requested content and complete the step:
 
 {prev_note_section}## 1. Current Step
 
-User said: "{state.get("user_message", "")}"
+**Your job this step:** {current_step.description}
 
-Your job this step: **{current_step.description}**
+*(User's full request: "{state.get("user_message", "")}" — other parts handled by later steps)*
 
 ---
 
@@ -1312,7 +1317,12 @@ What's next?
         # V4 CONSOLIDATION: Load SESSION ID registry - single source of truth
         # The registry sits between Act and CRUD - LLMs only see simple refs
         registry_data = state.get("id_registry")
-        session_registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+        if registry_data is None:
+            session_registry = SessionIdRegistry(session_id=state.get("conversation_id", ""))
+        elif isinstance(registry_data, SessionIdRegistry):
+            session_registry = registry_data
+        else:
+            session_registry = SessionIdRegistry.from_dict(registry_data)
         session_registry.set_turn(state.get("current_turn", 1))
         
         try:
@@ -1348,10 +1358,11 @@ What's next?
                             deleted_refs.extend(value)
                 
                 if deleted_refs:
-                    # Remove from registry (single source of truth)
+                    # Mark as deleted but KEEP UUID mapping for subsequent steps
+                    # (e.g., need to search meal_plans by deleted recipe_id)
                     for ref in deleted_refs:
-                        session_registry.remove_ref(ref)
-                    logger.info(f"Act: Cleaned up {len(deleted_refs)} deleted entities: {deleted_refs}")
+                        session_registry.ref_actions[ref] = "deleted"
+                    logger.info(f"Act: Marked {len(deleted_refs)} entities as deleted: {deleted_refs}")
             
             # V4: Update batch manifest if present (track completed items)
             updated_batch_manifest = None
@@ -1566,25 +1577,21 @@ What's next?
                         source_step=current_step_index,
                     )
         
-        # V4 FIX: Clear pending artifacts AND archives after successful write step
-        # When we save generated content, clear it so it doesn't show as "still pending"
+        # V4 FIX: Clear archives after successful write step (pending artifacts 
+        # are cleared individually by register_created when each one is promoted)
         if step_type == "write" and current_step_tool_results:
             # Check if any db_create operations succeeded
             for tool_result in current_step_tool_results:
                 if len(tool_result) >= 3:
                     tool_name, subdomain, result = tool_result[:3]
                     if tool_name == "db_create" and result:
-                        # Clear pending artifacts for this subdomain's entity type
-                        entity_type = _subdomain_to_entity_type(subdomain)
-                        pending_to_clear = [
-                            ref for ref in session_registry.pending_artifacts.keys()
-                            if ref.startswith(f"gen_{entity_type}")
-                        ]
-                        for ref in pending_to_clear:
-                            del session_registry.pending_artifacts[ref]
-                            logger.info(f"Cleared pending artifact {ref} after save")
+                        # NOTE: pending_artifacts are cleared individually in 
+                        # SessionIdRegistry.register_created() when each gen_* ref
+                        # is promoted. We don't clear ALL gen_* refs here because
+                        # that would wipe unsaved artifacts (e.g., gen_recipe_2 when
+                        # only gen_recipe_1 was saved).
                         
-                        # Also clear related archive keys (generated_recipes, etc.)
+                        # Clear related archive keys (generated_recipes, etc.)
                         archive_keys_to_clear = []
                         if subdomain == "recipes":
                             archive_keys_to_clear.append("generated_recipes")
@@ -1809,7 +1816,12 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
         
         # V4 CONSOLIDATION: Load SESSION ID registry - single source of truth
         registry_data = state.get("id_registry")
-        session_registry = SessionIdRegistry.from_dict(registry_data) if registry_data else SessionIdRegistry(session_id=state.get("conversation_id", ""))
+        if registry_data is None:
+            session_registry = SessionIdRegistry(session_id=state.get("conversation_id", ""))
+        elif isinstance(registry_data, SessionIdRegistry):
+            session_registry = registry_data
+        else:
+            session_registry = SessionIdRegistry.from_dict(registry_data)
         session_registry.set_turn(state.get("current_turn", 1))
         
         # Execute the tool with registry - handles all ID translation

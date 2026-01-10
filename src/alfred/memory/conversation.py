@@ -771,5 +771,7 @@ def initialize_conversation() -> ConversationContext:
         "step_summaries": [],
         "active_entities": {},
         "all_entities": {},
+        # V5: Understand context management - history for future Understand agents
+        "understand_decision_log": [],
     }
 
