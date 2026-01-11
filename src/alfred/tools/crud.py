@@ -2,7 +2,7 @@
 Alfred V3 - Generic CRUD Tools.
 
 Four tools that handle all database operations:
-- db_read: Fetch rows with filters
+- db_read: Fetch rows with filters (including semantic search via _semantic filter)
 - db_create: Insert new records
 - db_update: Update existing records
 - db_delete: Delete records
@@ -10,7 +10,9 @@ Four tools that handle all database operations:
 These replace the domain-specific tools (manage_inventory, query_recipe, etc.)
 with a generic, table-agnostic approach.
 
-Includes ingredient lookup layer for auto-linking items to the ingredients catalog.
+Includes:
+- Ingredient lookup layer for auto-linking items to the ingredients catalog
+- Semantic search for recipes via pgvector embeddings
 """
 
 import logging
@@ -22,6 +24,20 @@ from alfred.db.client import get_client
 
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# Semantic Search Configuration
+# =============================================================================
+
+# Tables that support semantic search (have embedding column)
+SEMANTIC_SEARCH_TABLES = {"recipes"}
+
+# Default settings for semantic search
+SEMANTIC_DEFAULTS = {
+    "max_distance": 0.6,  # Cosine distance threshold (lower = stricter)
+    "limit": 20,  # Max results from semantic search
+}
+
 # Tables that benefit from ingredient lookup (have name + ingredient_id fields)
 INGREDIENT_LINKED_TABLES = {"inventory", "shopping_list", "recipe_ingredients"}
 
@@ -32,11 +48,16 @@ INGREDIENT_LINKED_TABLES = {"inventory", "shopping_list", "recipe_ingredients"}
 
 
 class FilterClause(BaseModel):
-    """A single filter condition for queries."""
+    """A single filter condition for queries.
+    
+    Special filter for semantic search:
+        field="_semantic", op="similar", value="light summer dinner"
+    Only works for tables with embeddings (currently: recipes).
+    """
 
     field: str
-    op: Literal["=", "!=", "neq", ">", "<", ">=", "<=", "in", "not_in", "ilike", "is_null", "is_not_null", "contains"]
-    value: Any  # For 'contains' on arrays: value is a single string to check
+    op: Literal["=", "!=", "neq", ">", "<", ">=", "<=", "in", "not_in", "ilike", "is_null", "is_not_null", "contains", "similar"]
+    value: Any  # For 'contains' on arrays: value is a single string to check; for 'similar': natural language query
 
 
 class DbReadParams(BaseModel):
@@ -149,6 +170,85 @@ def apply_filter(query: Any, f: FilterClause) -> Any:
 
 
 # =============================================================================
+# Semantic Search Helper
+# =============================================================================
+
+
+async def _semantic_search_recipes(
+    query: str,
+    user_id: str,
+    limit: int = 20,
+    max_distance: float = 0.6,
+) -> list[str]:
+    """
+    Perform semantic search on recipes using pgvector embeddings.
+    
+    Returns list of recipe IDs that semantically match the query.
+    Used by db_read when a _semantic filter is present.
+    
+    Args:
+        query: Natural language query (e.g., "light summer dinner")
+        user_id: Filter to user's recipes
+        limit: Max results to return
+        max_distance: Cosine distance threshold (0-1, lower = stricter)
+    
+    Returns:
+        List of recipe UUIDs that match semantically
+    """
+    from alfred.tools.ingredient_lookup import generate_embedding
+    
+    client = get_client()
+    
+    try:
+        # Generate embedding for the query
+        query_embedding = generate_embedding(query)
+        
+        # Call the Postgres semantic match function
+        result = client.rpc(
+            "match_recipe_semantic",
+            {
+                "query_embedding": query_embedding,
+                "user_id_filter": user_id,
+                "limit_n": limit,
+                "max_distance": max_distance,
+            }
+        ).execute()
+        
+        if result.data:
+            ids = [row["id"] for row in result.data]
+            logger.info(f"Semantic search '{query}' found {len(ids)} recipes")
+            return ids
+        
+        logger.info(f"Semantic search '{query}' found no matches")
+        return []
+        
+    except Exception as e:
+        logger.warning(f"Semantic search failed, falling back to empty: {e}")
+        return []
+
+
+def _extract_semantic_filter(
+    filters: list[FilterClause],
+) -> tuple[list[FilterClause], str | None]:
+    """
+    Extract _semantic filter from filter list.
+    
+    Returns:
+        (remaining_filters, semantic_query or None)
+    """
+    remaining = []
+    semantic_query = None
+    
+    for f in filters:
+        if f.field == "_semantic":
+            semantic_query = f.value
+        else:
+            remaining.append(f)
+    
+    return remaining, semantic_query
+
+
+# =============================================================================
 # CRUD Tool Implementations
 # =============================================================================
 
@@ -156,6 +256,11 @@ def apply_filter(query: Any, f: FilterClause) -> Any:
 async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
     """
     Read rows from a table with filters.
+    
+    Supports semantic search via special `_semantic` filter:
+        filters=[{"field": "_semantic", "op": "similar", "value": "light summer dinner"}]
+    
+    Currently semantic search is supported for: recipes
 
     Args:
         params: Query parameters (table, filters, columns, limit, order)
@@ -165,6 +270,26 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
         List of matching rows as dicts
     """
     client = get_client()
+    
+    # Extract semantic filter (if present)
+    filters_to_apply, semantic_query = _extract_semantic_filter(list(params.filters))
+    
+    # Handle semantic search for supported tables
+    semantic_ids: list[str] | None = None
+    if semantic_query and params.table in SEMANTIC_SEARCH_TABLES:
+        semantic_ids = await _semantic_search_recipes(
+            query=semantic_query,
+            user_id=user_id,
+            limit=SEMANTIC_DEFAULTS["limit"],
+            max_distance=SEMANTIC_DEFAULTS["max_distance"],
+        )
+        
+        # If semantic search returns nothing, return empty (no matches for this intent)
+        if not semantic_ids:
+            logger.info(f"Semantic search returned no results for '{semantic_query}'")
+            return []
+    elif semantic_query and params.table not in SEMANTIC_SEARCH_TABLES:
+        logger.warning(f"Semantic search not supported for table '{params.table}', ignoring _semantic filter")
 
     # Build SELECT clause
     select_clause = ",".join(params.columns) if params.columns else "*"
@@ -173,10 +298,13 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
     # Auto-filter by user_id for user-owned tables
     if params.table in USER_OWNED_TABLES:
         query = query.eq("user_id", user_id)
+    
+    # Apply semantic ID filter (restricts to semantically matched records)
+    if semantic_ids:
+        query = query.in_("id", semantic_ids)
 
     # Smart fuzzy matching for recipe name searches
     # Converts exact match to ilike with wildcards (LLM doesn't need to remember)
-    filters_to_apply = list(params.filters)
     if params.table == "recipes":
         for i, f in enumerate(filters_to_apply):
             if f.field == "name" and f.op == "=":

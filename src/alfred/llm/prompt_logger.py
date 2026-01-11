@@ -111,6 +111,8 @@ def _log_to_file(
     response: Any = None,
     error: str | None = None,
     config: dict | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
 ) -> Path | None:
     """Log to local file."""
     global _call_counter
@@ -132,13 +134,25 @@ def _log_to_file(
             config_parts.append(f"verbosity={config['verbosity']}")
         if config_parts:
             config_str = f"\n**Config:** {', '.join(config_parts)}"
+    
+    # Format token usage if available
+    token_str = ""
+    if prompt_tokens is not None or completion_tokens is not None:
+        token_parts = []
+        if prompt_tokens is not None:
+            token_parts.append(f"input={prompt_tokens:,}")
+        if completion_tokens is not None:
+            token_parts.append(f"output={completion_tokens:,}")
+        total = (prompt_tokens or 0) + (completion_tokens or 0)
+        token_parts.append(f"total={total:,}")
+        token_str = f"\n**Tokens:** {', '.join(token_parts)}"
 
     # Format the log content as markdown for readability
     content = f"""# LLM Call: {node}
 
 **Time:** {datetime.now().isoformat()}
 **Model:** {model}
-**Response Model:** {response_model}{config_str}
+**Response Model:** {response_model}{config_str}{token_str}
 
 ---
 
@@ -264,6 +278,8 @@ def log_prompt(
     response: Any = None,
     error: str | None = None,
     config: dict | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
 ) -> Path | None:
     """
     Log a prompt and response.
@@ -277,6 +293,8 @@ def log_prompt(
         response: The parsed response (optional)
         error: Any error that occurred (optional)
         config: Model config (reasoning_effort, verbosity, etc.)
+        prompt_tokens: Token count for input (from API response)
+        completion_tokens: Token count for output (from API response)
 
     Returns:
         Path to the log file (if file logging enabled), or None
@@ -300,6 +318,8 @@ def log_prompt(
             response=response,
             error=error,
             config=config,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )
     
     # Log to DB if enabled

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from alfred.config import settings
 from alfred.llm.model_router import get_node_config
 from alfred.llm.prompt_logger import log_prompt
+from alfred.observability.langsmith import get_session_tracker
 
 # Type variable for generic structured output
 T = TypeVar("T", bound=BaseModel)
@@ -122,8 +123,19 @@ async def call_llm(
     # GPT-5 models use reasoning_effort without temperature
 
     try:
-        # Make the call with Instructor
-        response = client.chat.completions.create(**api_kwargs)
+        # Make the call with Instructor (get raw completion for token tracking)
+        response, completion = client.chat.completions.create_with_completion(**api_kwargs)
+
+        # Track token usage and costs
+        usage = getattr(completion, "usage", None)
+        if usage:
+            tracker = get_session_tracker()
+            tracker.add(
+                model=model,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                node=_current_node,
+            )
 
         # Log the prompt + response
         log_prompt(
@@ -134,6 +146,8 @@ async def call_llm(
             response_model=response_model.__name__,
             response=response,
             config=config,  # Include reasoning/verbosity for debugging
+            prompt_tokens=usage.prompt_tokens if usage else None,
+            completion_tokens=usage.completion_tokens if usage else None,
         )
 
         return response

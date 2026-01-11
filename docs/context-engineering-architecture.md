@@ -214,7 +214,84 @@ Act only sees schema for tables relevant to current step:
 
 ---
 
-## 5. State vs Context
+## 5. Semantic Search Integration
+
+### The Problem
+
+Users express intent, not SQL:
+- "something light for summer" — no column for "lightness"
+- "quick comfort food" — vibes, not filters
+- "healthy breakfast ideas" — semantic meaning
+
+### The Solution: Hybrid Search
+
+`db_read` supports a special `_semantic` filter that uses pgvector embeddings:
+
+```python
+# Intent-based query
+filters=[{"field": "_semantic", "op": "similar", "value": "light summer dinner"}]
+
+# Hybrid: semantic + exact (AND logic)
+filters=[
+    {"field": "_semantic", "op": "similar", "value": "light summer"},
+    {"field": "name", "op": "ilike", "value": "%chicken%"}
+]
+```
+
+### How It Works
+
+| Step | What Happens |
+|------|--------------|
+| 1. Extract `_semantic` | Separate from other filters |
+| 2. Generate embedding | OpenAI `text-embedding-3-small` on query |
+| 3. Vector search | `match_recipe_semantic()` returns matching IDs |
+| 4. Apply as filter | `WHERE id IN (semantic_matches)` |
+| 5. Apply other filters | Remaining filters narrow further |
+
+**Result:** Semantic narrows first, then exact filters refine.
+
+### Currently Supported
+
+| Table | Semantic Search | Why |
+|-------|-----------------|-----|
+| `recipes` | ✅ Yes | Has `embedding` column, rich text (name, description, tags) |
+| `ingredients` | ✅ Yes | Has `embedding` column (used by ingredient_lookup) |
+| `meal_plans` | ❌ No | Just date + recipe_id — no semantic content |
+| `inventory` | ❌ No | Structured data (quantity, location) |
+
+### Multi-Step Pattern for Meal Plans
+
+For "light summer meals in my meal plan", Think plans two steps:
+
+```
+Step 1: [read/recipes] semantic search "light summer"
+        → returns [recipe_1, recipe_5, recipe_8]
+
+Step 2: [read/meal_plans] filter recipe_id IN [recipe_1, recipe_5, recipe_8]
+        → returns meal plans with those recipes
+```
+
+**Think handles the sequential planning. Act executes each step.**
+
+### Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Semantic + filter logic | AND (intersection) | "light chicken" means BOTH light AND chicken |
+| Who decides search type | Think (LLM) | Flexibility for complex queries |
+| Embedding model | `text-embedding-3-small` | Cost-effective, 1536 dimensions |
+| Distance threshold | 0.6 (configurable) | Balance precision/recall |
+
+### Future Consideration: Auto-Hybrid (OR logic)
+
+If needed, could add union mode:
+- Semantic matches OR exact matches
+- Would broaden results instead of narrowing
+- Not implemented yet — current AND logic covers most use cases
+
+---
+
+## 6. State vs Context
 
 ### Definitions
 
@@ -247,7 +324,7 @@ Act only sees schema for tables relevant to current step:
 
 ---
 
-## 6. V5 Enhancements Summary
+## 7. V5 Enhancements Summary
 
 | Feature | Implementation |
 |---------|----------------|
@@ -299,4 +376,4 @@ Entities discovered via FK (e.g., recipe_id in meal_plans):
 
 ---
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-10* (Added semantic search section)

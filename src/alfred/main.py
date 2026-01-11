@@ -41,6 +41,7 @@ def chat(
     from alfred.memory.conversation import initialize_conversation
     from alfred.llm.prompt_logger import enable_prompt_logging, get_session_log_dir
     from alfred.observability.session_logger import init_session_logger, close_session_logger
+    from alfred.observability.langsmith import get_session_tracker
 
     if log_prompts:
         enable_prompt_logging(True)
@@ -160,6 +161,12 @@ def chat(
     if session_logger:
         log_path = close_session_logger()
         console.print(f"[dim]Session log saved: {log_path}[/dim]")
+    
+    # Show cost summary
+    tracker = get_session_tracker()
+    if tracker.calls:
+        summary = tracker.summary()
+        console.print(f"\n[dim]Session Cost: ${summary['total_cost_usd']:.4f} ({summary['total_input_tokens']:,} in / {summary['total_output_tokens']:,} out tokens)[/dim]")
 
 
 def _show_conversation_context(conversation: dict, turn_count: int) -> None:

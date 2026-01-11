@@ -702,6 +702,20 @@ Structure: `{"field": "<column>", "op": "<operator>", "value": <value>}`
 | `in` | Value in array | `{"field": "name", "op": "in", "value": ["milk", "eggs"]}` |
 | `ilike` | Pattern match (% = wildcard) | `{"field": "name", "op": "ilike", "value": "%chicken%"}` |
 | `is_null` | Null check | `{"field": "expiry_date", "op": "is_null", "value": true}` |
+| `similar` | **Semantic search** (recipes only) | `{"field": "_semantic", "op": "similar", "value": "light summer dinner"}` |
+
+### Semantic Search (`_semantic` filter)
+
+For intent-based recipe queries, use the `_semantic` filter:
+- **Good for**: "light summer dinner", "quick comfort food", "healthy breakfast", "something like pasta carbonara"
+- **Combines with**: Other filters are applied AFTER semantic narrowing
+- **Example**: Find light recipes with chicken:
+  ```json
+  {"filters": [
+    {"field": "_semantic", "op": "similar", "value": "light healthy meal"},
+    {"field": "name", "op": "ilike", "value": "%chicken%"}
+  ]}
+  ```
 
 """
 
@@ -738,10 +752,20 @@ SEMANTIC_NOTES: dict[str, str] = {
     "inventory": """
 **Note**: When user says "pantry" or "what's in my pantry", they typically mean ALL their food inventory, not just items with `location='pantry'`. Only filter by `location` if user explicitly asks about a specific storage location (e.g., "what's in my fridge?").
 """,
-    "recipes": "",
+    "recipes": """
+**Semantic Search**: Use `_semantic` filter for intent-based queries:
+- "light summer dinner" → `{"field": "_semantic", "op": "similar", "value": "light summer dinner"}`
+- "quick comfort food" → `{"field": "_semantic", "op": "similar", "value": "quick comfort food"}`
+- "something healthy" → `{"field": "_semantic", "op": "similar", "value": "healthy nutritious meal"}`
+Combines with other filters (semantic narrows first, then other filters apply).
+""",
     "shopping": "",
     "meal_plans": """
 **Note**: Meal plans are cooking sessions (what to cook on what day). For reminders like "thaw chicken" or "buy wine", use the `tasks` subdomain instead.
+
+**Intent-based queries** (e.g., "light summer meals in my meal plan"):
+1. First: semantic search recipes for the intent → get matching recipe IDs
+2. Then: read meal_plans filtered by those recipe IDs
 """,
     "tasks": """
 **Note**: Tasks are freeform to-dos. They can optionally link to a meal_plan or recipe, but don't have to.
