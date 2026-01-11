@@ -13,10 +13,10 @@ Alfred is a multi-agent system where LLMs interpret context but do not own state
 
 | Layer | Responsibility | Deterministic? |
 |-------|---------------|----------------|
-| CRUD Layer | Database operations, ID translation | ✅ Yes |
-| Session Registry | Entity tracking, action history | ✅ Yes |
+| CRUD Layer | Database operations, ID translation, FK enrichment | ✅ Yes |
+| Session Registry | Entity tracking, action history, context curation | ✅ Yes |
 | Summarization | Conversation compression | Mostly ✅ |
-| Understand | Intent detection, entity resolution | 🤖 LLM |
+| Understand | Context curation, entity resolution (Memory Manager) | 🤖 LLM |
 | Think | Planning | 🤖 LLM |
 | Act | Execution | 🤖 LLM |
 | Reply | Response synthesis | 🤖 LLM |
@@ -53,6 +53,10 @@ An entity is anything with an ID that persists: recipes, inventory items, meal p
 │                                                             │
 │ GENERATED CONTENT                                           │
 │   pending_artifacts: gen_recipe_1 → {full JSON content}    │
+│                                                             │
+│ V5: CONTEXT CURATION                                        │
+│   ref_active_reason: gen_meal_plan_1 → "User's ongoing goal"│
+│   _lazy_enrich_queue: {ref: (table, name_col)} (transient) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,39 +69,32 @@ An entity is anything with an ID that persists: recipes, inventory items, meal p
 | `updated` | CRUD layer | After `db_update` succeeds |
 | `deleted` | CRUD layer | After `db_delete` succeeds |
 | `generated` | Act node | `register_generated()` |
+| `linked` | CRUD layer | FK lazy registration |
 
 **No LLM involvement in entity lifecycle tracking.**
+
+### V5: FK Lazy Registration with Enrichment
+
+When `db_read` returns records with FK fields (e.g., meal_plans with recipe_id):
+
+1. **Lazy Registration:** Unknown FK UUIDs get refs immediately (no UUID leaks)
+2. **Batch Enrichment:** `_enrich_lazy_registrations()` queries target tables for names
+3. **Label Update:** `ref_labels` populated with real names ("Butter Chicken")
+4. **Display Enrichment:** `_add_enriched_labels()` adds `_*_label` fields to result
+
+**Works for:** recipes, ingredients, tasks (anything with name/title column)
 
 ### View Methods (Presentation, Not Storage)
 
 Instead of separate data structures, `SessionIdRegistry` provides views:
 
-| Method | Purpose | Replaces |
-|--------|---------|----------|
-| `format_for_act_prompt()` | Entities for current step | `WorkingSet` |
-| `format_for_understand_prompt()` | Full context for curation | `EntityContextModel` |
-| `format_for_think_prompt()` | Entity summary for planning | `EntityRegistry.get_for_prompt()` |
-| `get_entities_this_turn()` | Filter by current turn | `turn_entities` state field |
-| `get_entities_by_recency()` | Sort by last reference | Background tier logic |
-
-### Deprecated Systems (TO DELETE)
-
-| Module | Status | Replaced By |
-|--------|--------|-------------|
-| `entities.py` | ❌ DELETE | `SessionIdRegistry` |
-| `entity_context.py` | ❌ DELETE | `SessionIdRegistry` view methods |
-| `working_set.py` | ❌ DELETE | `SessionIdRegistry.format_for_act_prompt()` |
-| `id_mapper.py` | ❌ DELETE | `SessionIdRegistry` |
-
-### State Fields to Remove
-
-| Field | Location | Replaced By |
-|-------|----------|-------------|
-| `entity_registry` | `AlfredState` | `id_registry` |
-| `turn_entities` | `AlfredState` | `SessionIdRegistry.get_entities_this_turn()` |
-| `entity_context` | `AlfredState` | `SessionIdRegistry` |
-| `working_set` | `AlfredState` | `SessionIdRegistry` |
-| `id_mapper` | `AlfredState` | `SessionIdRegistry` |
+| Method | Purpose |
+|--------|---------|
+| `format_for_act_prompt()` | Entities for current step (delineated: pending, recent, long-term) |
+| `format_for_understand_prompt()` | Full context with turn annotations |
+| `format_for_think_prompt()` | Entity summary for planning (delineated sections) |
+| `get_entities_this_turn()` | Filter by current turn |
+| `get_active_entities(turns_window)` | Returns (recent_refs, retained_refs) tuple |
 
 ---
 
@@ -119,6 +116,9 @@ LLMs should never see UUIDs. They're hard to work with and easy to hallucinate.
 
 ```
 db_read → SessionIdRegistry.translate_read_output() → LLM sees recipe_1
+       → _enrich_lazy_registrations() → FK names fetched
+       → _add_enriched_labels() → result has _recipe_id_label
+
 LLM says "delete recipe_1" → SessionIdRegistry.translate_filters() → db_delete with UUID
 ```
 
@@ -140,31 +140,42 @@ LLM says "delete recipe_1" → SessionIdRegistry.translate_filters() → db_dele
 
 | Node | Receives | Uses For |
 |------|----------|----------|
-| **Understand** | User message, entity context, recent conversation | Intent detection, entity resolution |
-| **Think** | Goal, entity context, constraints, dashboard | Planning steps |
-| **Act** | Step description, working set, prior step results | Executing one step |
+| **Understand** | User message, annotated conversation, previous decisions | Context curation, entity resolution |
+| **Think** | Goal, delineated entity context, dashboard | Planning steps |
+| **Act** | Step description, prior step results, delineated entities | Executing one step |
 | **Reply** | Execution summary, step results | Synthesizing response |
-| **Summarize** | Full response, execution results | Updating conversation history |
+| **Summarize** | Full response, execution results, registry | Persisting state |
 
-### Summarization Rules
+### V5: Understand as Memory Manager
 
-**What Summarize SHOULD do:**
-- Append current turn to conversation history
-- Compress older turns (beyond last 2) into narrative
-- Track deterministic facts (entities created, deleted, etc.)
+Understand's primary role is **context curation**, not message rewriting.
 
-**What Summarize SHOULD NOT do:**
-- Lose proposal details ("Proposed a plan" ❌)
-- Summarize entity state (that's registry's job)
-- Touch last 2 turns (they stay verbatim)
+**What Understand Does:**
+- Reference resolution: "that recipe" → `recipe_1`
+- Context curation: decide what stays active beyond 2-turn window
+- Retention decisions: explain WHY older entities should persist
+- Quick mode detection (single-part, single-domain READ only)
 
-### What Needs Audit
+**What Understand Does NOT Do:**
+- Rewrite/interpret user message (removed `processed_message`)
+- Give instructions to Think
+- Look up UUIDs
 
-| Current Behavior | Correct Behavior |
-|------------------|------------------|
-| Proposals summarized to "Proposed a plan" | Keep full proposal text |
-| Entity lifecycle managed by Summarize | Managed by CRUD layer/registry |
-| Multiple LLM calls for summaries | Deterministic where possible |
+### Entity Context Delineation
+
+Both Think and Act see entities in delineated sections:
+
+```
+## ⚠️ Generated (NOT YET SAVED)
+- gen_recipe_1: Thai Curry (recipe) [needs save]
+
+## Recent Context (last 2 turns)
+- recipe_1: Butter Chicken (recipe) [read]
+- inv_1: Eggs (inv) [read]
+
+## Long Term Memory (retained from earlier)
+- gen_meal_plan_1: Weekly Plan (meal, turn 2) — *User's ongoing goal*
+```
 
 ---
 
@@ -186,25 +197,20 @@ Each subdomain (recipes, inventory, meal_plans, etc.) has:
 - Domain-specific patterns
 - Example queries/operations
 
-### Injection Sources
+### V5: Step-Scoped Schema Injection
 
-```
-Act Prompt = Base Instructions
-           + Step Type Instructions (read/write/analyze/generate)
-           + Subdomain Schema
-           + Working Set (entities available)
-           + Prior Step Results
-           + Contextual Examples
-```
+Act only sees schema for tables relevant to current step:
+- meal_plans step → meal_plans schema only (not recipes)
+- Prevents Act from overstepping step scope
 
-### What Needs Audit
+### Display Formatting
 
-| Component | Location | Status |
-|-----------|----------|--------|
-| Step type prompts | `prompts/act/*.md` | ✅ Structured |
-| Subdomain schemas | `tools/schema.py` | ✅ Dynamic |
-| Entity injection | `working_set.py` | ❓ Simplify |
-| Example injection | `prompts/examples.py` | ❓ Audit coverage |
+| Entity Type | Display Format |
+|-------------|----------------|
+| Recipes | `- Butter Chicken total_time:45min id:recipe_1` |
+| Meal Plans | `- 2026-01-12 [lunch] → Butter Chicken (recipe_1) id:meal_1` |
+| Inventory | `- Eggs (12 count) [fridge] id:inv_1` |
+| Tasks | `- Buy groceries @2026-01-15 [pending] id:task_1` |
 
 ---
 
@@ -223,9 +229,9 @@ Act Prompt = Base Instructions
 |------|-------------|---------------|--------------|----------------|
 | Understand | Entity registry | Conversation history | - | Entity curation decisions |
 | Think | Dashboard, constraints | Entity context, user intent | - | Execution plan |
-| Act | Schema, registry | Prior steps, working set | DB via CRUD | Step results |
+| Act | Schema, registry | Prior steps, step description | DB via CRUD | Step results |
 | Reply | Execution results | - | - | Final response |
-| Summarize | Execution facts | - | Conversation history | - |
+| Summarize | Execution facts | - | Conversation history, registry | - |
 
 ### The Key Insight
 
@@ -241,69 +247,29 @@ Act Prompt = Base Instructions
 
 ---
 
-## Audit Checklist
+## 6. V5 Enhancements Summary
 
-### Entity Management ✅ COMPLETE
-- [x] Audit `entities.py` → **DELETED**
-- [x] Audit `entity_context.py` → **DELETED**
-- [x] Audit `working_set.py` → **DELETED**
-- [x] Remove `id_mapper.py` → **DELETED**
-- [x] Remove `session_state.py` → **DELETED**
-- [x] Remove redundant state fields → **DONE** (`turn_entities`, `entity_registry`, `entity_context`, `working_set`, `id_mapper`, `session_id_registry` → `id_registry`)
+| Feature | Implementation |
+|---------|----------------|
+| Understand as Memory Manager | Removed `processed_message`, added context curation |
+| Long-term entity retention | `ref_active_reason` stores WHY older entities stay active |
+| FK lazy registration | Unknown FK UUIDs get refs immediately |
+| Batch name enrichment | `_enrich_lazy_registrations()` queries for names |
+| Post-process labels | `_add_enriched_labels()` adds labels after enrichment |
+| Delineated entity sections | Pending → Recent → Long Term Memory |
+| Entity-type labels | `_compute_entity_label()` for type-specific formatting |
+| Meal plan display | `date [slot] → recipe_name (ref) id:meal_X` |
+| Multi-part query exclusion | "X and Y" explicitly not quick mode |
 
-### ID Management ✅ COMPLETE
-- [x] Verify all CRUD operations use registry → **DONE** (Act, Understand, Think use `id_registry`)
-- [x] Verify no UUIDs leak to prompts → **DONE** (All nodes use `format_for_*_prompt()` methods)
-- [x] Verify action tracking works for all operations → **DONE** (`ref_actions`, `ref_turn_created`, `ref_turn_last_ref`)
+---
 
-### Summarization ✅ COMPLETE
-- [x] Audit what Summarize actually does → **Simplified to conversation history only**
-- [x] Remove entity tracking from Summarize → **DONE** (removed all entity logic)
-- [x] Ensure proposals kept verbatim → **DONE** (prior fix)
-- [x] Ensure last 2 turns kept verbatim → **DONE** (prior implementation)
+## Critical Insights
 
-### Prompt Injection ✅ COMPLETE
-- [x] Simplify entity injection to use registry → **DONE** (all functions use `SessionIdRegistry`)
-- [x] Remove deprecated type hints → **DONE**
-
-### State vs Context ✅ COMPLETE
-- [x] Single source of truth: `id_registry` → **DONE**
-- [x] All deprecated fields removed from `AlfredState` → **DONE**
-
-### Cross-Turn Persistence ✅ COMPLETE (CRITICAL - previously missed!)
-- [x] `workflow.py`: Load `id_registry` from conversation at turn start → **DONE** (both `run_alfred` and `run_alfred_streaming`)
-- [x] `summarize.py`: Save `id_registry` to conversation at turn end → **DONE**
-- [x] Web app (`app.py`): Session stores updated conversation with `id_registry` → **VERIFIED** (uses `session["conversation"]`)
-- [x] CLI (`main.py`): Conversation dict passed between turns → **VERIFIED** (uses `run_alfred` return value)
-- [x] Test cross-turn flow: generate → confirm → save → ❓ **NEEDS MANUAL TEST**
-
-### Files Scanned (post-consolidation audit)
-| File | Status | Notes |
-|------|--------|-------|
-| `workflow.py` | ✅ Fixed | Added `id_registry` to initial_state |
-| `summarize.py` | ✅ Fixed | Added `id_registry` to updated_conversation |
-| `web/app.py` | ✅ OK | Uses conversation dict correctly |
-| `main.py` | ✅ OK | Uses conversation dict correctly |
-| `memory/conversation.py` | ✅ OK | `initialize_conversation()` returns empty dict, `id_registry: None` handled |
-| `nodes/act.py` | ✅ OK | Uses `state.get("id_registry")` with fallback |
-| `nodes/think.py` | ✅ OK | Uses `state.get("id_registry")` |
-| `nodes/understand.py` | ✅ OK | Uses `state.get("id_registry")` |
-| `tools/crud.py` | ✅ Fixed | Added NULL byte sanitization for LLM Unicode corruption |
-
-### Future Optimization: Direct Artifact Injection
-Currently, Act sees full generated content in prompt and re-types it (for visibility/debugging).
-
-**Future state** (once generate→save flow is stable):
-- Act outputs `{"use_artifact": "gen_recipe_1"}` instead of full JSON
-- System injects content directly from `pending_artifacts`
-- Benefits: No LLM corruption, faster, cheaper tokens
-- Prerequisite: Confidence in cross-turn artifact persistence
-
-### Critical Insight: Refs vs Content
+### Refs vs Content
 
 **What SessionIdRegistry stores per entity:**
 - ✅ Ref → UUID mapping
-- ✅ Label (e.g., "chicken thighs")
+- ✅ Label (e.g., "Butter Chicken")
 - ✅ Type, last action, turn info
 - ❌ Full entity content (e.g., quantity, location, all fields)
 
@@ -315,9 +281,7 @@ Currently, Act sees full generated content in prompt and re-types it (for visibi
 | generate | Labels + general context | ✅ Yes |
 | analyze (compare/match) | **Full row data** | ❌ No — read first! |
 
-This means Think must add a read step before any analyze step that needs to reason over data content, even if entities appear in "Entities in Context".
-
-### Critical Insight: Dashboard ≠ Context
+### Dashboard ≠ Context
 
 **Dashboard** shows what exists in the database (e.g., "1 saved recipe").
 **Entities in Context** shows what has refs registered in SessionIdRegistry.
@@ -325,20 +289,14 @@ This means Think must add a read step before any analyze step that needs to reas
 If an entity appears in Dashboard but NOT in "Entities in Context":
 - Think cannot use a ref for it (e.g., `recipe_1` doesn't exist)
 - Think must search by NAME, not by ref
-- Act will fail if given an unregistered ref (query returns 0 results)
 
-This happens when entities were created in a prior session, or the registry wasn't loaded properly.
+### Linked Entities
 
----
-
-## Next Steps
-
-1. **Complete this audit** - fill in the ❓ sections
-2. **Remove deprecated code** - `id_mapper.py`, redundant state fields
-3. **Simplify entity display** - single source from registry
-4. **Fix summarization** - deterministic where possible
-5. **Document the final architecture** - update this doc
+Entities discovered via FK (e.g., recipe_id in meal_plans):
+- Registered with action `linked`
+- Filtered from active entity lists
+- Shown inline with parent records only
 
 ---
 
-*Last updated: 2026-01-08*
+*Last updated: 2026-01-10*

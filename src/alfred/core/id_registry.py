@@ -84,6 +84,12 @@ class SessionIdRegistry:
     # Example: {"gen_meal_plan_1": "User's ongoing weekly meal plan goal"}
     ref_active_reason: dict[str, str] = field(default_factory=dict)
     
+    # V5: Lazy registration enrichment queue
+    # Tracks refs that were lazy-registered and need name enrichment
+    # Format: {ref: (table_to_query, name_column)}
+    # Cleared after enrichment batch runs
+    _lazy_enrich_queue: dict[str, tuple[str, str]] = field(default_factory=dict)
+    
     # =========================================================================
     # Ref Generation
     # =========================================================================
@@ -179,7 +185,9 @@ class SessionIdRegistry:
                 # V4: Track action, label, type DETERMINISTICALLY
                 self.ref_actions[ref] = "read"
                 self.ref_types[ref] = entity_type
-                label = record.get("name") or record.get("title") or ref
+                
+                # Compute label based on entity type
+                label = self._compute_entity_label(record, entity_type, ref)
                 self.ref_labels[ref] = str(label)
                 
                 # V4 CONSOLIDATION: Temporal tracking
@@ -211,11 +219,17 @@ class SessionIdRegistry:
                         # Mark as "linked" since we discovered it via FK, not direct read
                         self.ref_actions[fk_ref] = "linked"
                         self.ref_types[fk_ref] = fk_entity_type
-                        self.ref_labels[fk_ref] = fk_ref  # No label until we read it
+                        self.ref_labels[fk_ref] = fk_ref  # Placeholder until enriched
                         if fk_ref not in self.ref_turn_created:
                             self.ref_turn_created[fk_ref] = self.current_turn
                         self.ref_turn_last_ref[fk_ref] = self.current_turn
                         new_record[fk_field] = fk_ref
+                        
+                        # Queue for enrichment if table supports name lookup
+                        enrich_info = self._fk_field_to_enrich_info(fk_field)
+                        if enrich_info and enrich_info[1]:  # Has name column
+                            self._lazy_enrich_queue[fk_ref] = enrich_info
+                        
                         logger.info(f"SessionRegistry: Lazy-registered {fk_ref} → {fk_uuid[:8]}... (via {fk_field})")
             
             translated.append(new_record)
@@ -488,6 +502,43 @@ class SessionIdRegistry:
         ]
     
     # =========================================================================
+    # Lazy Registration Enrichment
+    # =========================================================================
+    
+    def get_lazy_enrich_queue(self) -> dict[str, tuple[str, str, str]]:
+        """
+        Get refs that need enrichment, grouped by table.
+        
+        Returns: {ref: (table, name_column, uuid)}
+        """
+        result = {}
+        for ref, (table, name_col) in self._lazy_enrich_queue.items():
+            uuid = self.ref_to_uuid.get(ref)
+            if uuid and not uuid.startswith("__pending__"):
+                result[ref] = (table, name_col, uuid)
+        return result
+    
+    def apply_enrichment(self, enrichments: dict[str, str]) -> None:
+        """
+        Apply name enrichments to lazy-registered refs.
+        
+        Args:
+            enrichments: {ref: name}
+        """
+        for ref, name in enrichments.items():
+            if ref in self.ref_labels and name:
+                old_label = self.ref_labels[ref]
+                self.ref_labels[ref] = name
+                logger.info(f"SessionRegistry: Enriched {ref}: '{old_label}' → '{name}'")
+        
+        # Clear the queue after applying
+        self._lazy_enrich_queue.clear()
+    
+    def clear_enrich_queue(self) -> None:
+        """Clear the enrichment queue without applying."""
+        self._lazy_enrich_queue.clear()
+    
+    # =========================================================================
     # Helpers
     # =========================================================================
     
@@ -555,6 +606,54 @@ class SessionIdRegistry:
             "parent_recipe_id": "recipe",
         }
         return fk_type_map.get(fk_field, fk_field.replace("_id", ""))
+    
+    def _compute_entity_label(self, record: dict, entity_type: str, ref: str) -> str:
+        """
+        Compute a human-readable label for an entity based on its type.
+        
+        Different entity types use different fields for their labels:
+        - recipes: name
+        - tasks: title  
+        - meal_plans: date [meal_type]
+        - inventory: name
+        """
+        # Standard name/title fields
+        if record.get("name"):
+            return record["name"]
+        if record.get("title"):
+            return record["title"]
+        
+        # Special handling for meal_plans: "Jan 12 [lunch]"
+        if entity_type == "meal" and record.get("date"):
+            date = record["date"]
+            meal_type = record.get("meal_type", "meal")
+            # Try to make date more readable if it's a string
+            try:
+                from datetime import datetime
+                if isinstance(date, str):
+                    dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
+                    date = dt.strftime("%b %d")  # "Jan 12"
+            except:
+                pass  # Keep original date string
+            return f"{date} [{meal_type}]"
+        
+        return ref
+    
+    def _fk_field_to_enrich_info(self, fk_field: str) -> tuple[str, str] | None:
+        """
+        Get (table, name_column) for enriching lazy-registered FK refs.
+        
+        Returns None if the FK type doesn't support name enrichment.
+        """
+        # Maps FK field → (target_table, name_column)
+        fk_enrich_map = {
+            "recipe_id": ("recipes", "name"),
+            "ingredient_id": ("ingredients", "name"),
+            "meal_plan_id": ("meal_plans", None),  # No single name field
+            "task_id": ("tasks", "title"),
+            "parent_recipe_id": ("recipes", "name"),
+        }
+        return fk_enrich_map.get(fk_field)
     
     # =========================================================================
     # Prompt Formatting

@@ -366,65 +366,44 @@ Understand could output confidence on retention decisions, helping prioritize if
 
 ---
 
-## Future Enhancements (Polish Phase)
+## Implemented Enhancements (V5)
 
-### 1. Lazy Registration with Name Enrichment
+### 1. Lazy Registration with Name Enrichment ✅
 
-**Problem:** When lazy-registering FK UUIDs (e.g., `recipe_id` in meal_plans), we only store the ref as the label. Recipe names don't show until recipes are explicitly read.
+**Implementation:** 
+- `_lazy_enrich_queue` tracks refs needing enrichment
+- `_enrich_lazy_registrations()` batch queries target tables
+- `_add_enriched_labels()` post-processes results with `_*_label` fields
+- Generic across all FK types (recipes, ingredients, tasks)
 
-**Solution:** Batch query for names during lazy registration:
-```python
-# In translate_read_output, after identifying unknown FK UUIDs:
-unknown_recipe_uuids = [uuid for uuid in fk_uuids if uuid not in self.uuid_to_ref]
-if unknown_recipe_uuids:
-    # Batch fetch names
-    names = await db_read("recipes", 
-        filters=[{"field": "id", "op": "in", "value": unknown_recipe_uuids}],
-        columns=["id", "name"])
-    # Register with real names
-    for record in names:
-        self.ref_labels[ref] = record["name"]  # "Butter Chicken" not "recipe_1"
-```
+**Files:** `id_registry.py`, `crud.py`
 
-**Impact:** Automatic enrichment without Think planning extra steps.
+### 2. Meal Plan Display Formatting ✅
 
-### 2. Meal Plan Display Formatting
+**Implementation:**
+- Custom `"format": "meal_plan"` protocol
+- `_format_meal_plan_record()` produces: `date [slot] → recipe_name (ref) id:meal_X`
+- Entity labels use `_compute_entity_label()` for "Jan 12 [lunch]" format
 
-**Problem:** Meal plans show as `2026-01-12 [lunch] recipe:recipe_1 id:meal_1` which is functional but not user-friendly.
+**Files:** `injection.py`, `id_registry.py`
 
-**Options:**
-- Computed label: "Mon Jan 12 lunch"
-- Richer format: "meal_1: dinner @ Jan 12 → Butter Chicken"
-- Human-readable dates in display
+### 3. Linked Entity Display Consistency ✅
 
-**Requires:** Update `_TABLE_FORMAT_PROTOCOLS` for meal_plans and possibly add date formatting helpers.
+**Implementation:**
+- Linked entities (action: `linked`) filtered from active entity lists
+- Shown inline with parent records only
+- `_compute_entity_label()` handles type-specific labels
+- Consistent format: `ref: Label (type) [action]`
 
-### 3. Linked Entity Display Consistency
-
-**Problem:** Different entity types display differently. Need consistent pattern for:
-- Primary entities (recipes, inventory items)
-- Linked entities (recipe_id in meal_plans, meal_plan_id in tasks)
-- Generated entities (gen_recipe_1)
-
-**Format proposal:**
-```
-- entity_ref: Human Label (type) [action]
-- recipe_1: Butter Chicken (recipe) [read]
-- meal_1: Mon lunch → recipe_1 (meal) [read]
-```
+**Files:** `id_registry.py`, `injection.py`
 
 ### 4. Cross-Domain Query Optimization
 
-**Problem:** "What's in my meal plan with recipe details?" requires Think to plan multiple steps.
+**Decision:** Keep Think planning multi-step (clearer, more predictable).
 
-**Options:**
-- Smart auto-join for common patterns (meal_plans + recipes)
-- Hint system: "For full details, also read recipes"
-- Accept current behavior (Think plans multi-step)
-
-**Decision:** Keep Think planning multi-step for now (clearer, more predictable).
+No implementation needed — current behavior is intentional.
 
 ---
 
 *Created: 2026-01-09*
-*Updated: 2026-01-09 - Added future enhancements section*
+*Updated: 2026-01-10 - Marked enhancements as implemented*

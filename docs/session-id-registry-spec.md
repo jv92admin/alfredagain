@@ -1,15 +1,15 @@
-# Session ID Registry — Proper Implementation Spec
+# Session ID Registry — Implementation Spec
 
-## Problem Statement
+## Overview
 
-The current ID system (`TurnIdRegistry`) resets every turn, breaking cross-turn operations like "delete those recipes I just listed."
+The `SessionIdRegistry` is Alfred's single source of truth for entity ID management. It ensures:
+1. LLMs never see UUIDs (only simple refs like `recipe_1`)
+2. ID mappings persist across turns
+3. FK references are automatically handled (lazy registration + enrichment)
 
-Additionally, the current architecture asks the **LLM to extract/resolve IDs** in Understand, which is:
-1. Error-prone (LLMs hallucinate or misformat IDs)
-2. Unnecessary (IDs should be deterministically mapped by the system)
-3. Confusing (mixing probabilistic entity resolution with deterministic ID lookup)
+---
 
-## The Correct Architecture
+## Architecture
 
 ### Separation of Concerns
 
@@ -29,19 +29,23 @@ Additionally, the current architecture asks the **LLM to extract/resolve IDs** i
 └─────────────────────────────────────────────────────────────────┘
                               ↕
 ┌─────────────────────────────────────────────────────────────────┐
-│         UNDERSTAND (LLM Layer, Probabilistic)                   │
+│         UNDERSTAND (LLM Layer — Memory Manager)                 │
 │                                                                 │
 │  - Context curation: what entities are relevant?               │
 │  - Reference resolution: "that recipe" → recipe_1 (from ctx)   │
-│  - Constraint extraction                                       │
+│  - Long-term retention decisions                               │
 │  - Quick mode detection                                        │
 │                                                                 │
-│  Does NOT: Look up UUIDs, extract IDs from scratch             │
-│  Does: Confirm which simple ref the user means                 │
+│  Does NOT: Look up UUIDs, rewrite messages, give instructions  │
+│  Does: Curate context, resolve references, explain retention   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Flow
+---
+
+## Data Flow
+
+### Read Flow
 
 ```
 TURN 1: "what recipes do i have?"
@@ -51,15 +55,18 @@ TURN 1: "what recipes do i have?"
                                     ↓
   SYSTEM (in CRUD layer) intercepts output:
     - Assigns: recipe_1 → abc123, recipe_2 → def456
-    - Replaces IDs in data
-    - Persists mapping in state.session_id_registry
+    - Sets labels: recipe_1 → "Thai Curry"
+    - Persists mapping in state.id_registry
                                     ↓
   LLM sees:
     [{id: "recipe_1", name: "Thai Curry"}, {id: "recipe_2", name: "Pasta"}]
                                     ↓
   Reply: "You have Thai Curry (recipe_1) and Pasta (recipe_2)"
+```
 
+### Cross-Turn Reference Flow
 
+```
 TURN 2: "delete all of them"
 
   Understand:
@@ -90,7 +97,7 @@ TURN: "create a simple cod recipe"
                                     ↓
   SYSTEM (post-generate):
     - Assigns: gen_recipe_1 → (pending, no UUID yet)
-    - Stores content with ref
+    - Stores content in pending_artifacts
                                     ↓
   LLM sees in subsequent steps:
     gen_recipe_1: "Simple Cod" (pending)
@@ -101,128 +108,153 @@ TURN: "create a simple cod recipe"
   SYSTEM (post-create):
     - Receives UUID xyz789 from DB
     - Updates: gen_recipe_1 → xyz789
-    - Optionally assigns: recipe_3 → xyz789 (saved alias)
+    - Clears pending_artifacts[gen_recipe_1]
+```
+
+### FK Lazy Registration Flow (V5)
+
+```
+TURN: "what's in my meal plan?"
+
+  db_read("meal_plans") returns:
+    [{id: "meal-uuid-1", date: "2026-01-12", recipe_id: "recipe-uuid-xyz"}]
+                                    ↓
+  SYSTEM (translate_read_output):
+    - Assigns: meal_1 → meal-uuid-1
+    - recipe_id "recipe-uuid-xyz" not in registry → LAZY REGISTER
+    - Assigns: recipe_1 → recipe-uuid-xyz (action: "linked")
+    - Queues for enrichment: recipe_1 → ("recipes", "name")
+                                    ↓
+  SYSTEM (_enrich_lazy_registrations):
+    - Batch queries: SELECT id, name FROM recipes WHERE id IN (...)
+    - Updates label: recipe_1 → "Butter Chicken"
+                                    ↓
+  SYSTEM (_add_enriched_labels):
+    - Adds _recipe_id_label: "Butter Chicken" to result
+                                    ↓
+  LLM sees:
+    [{id: "meal_1", date: "2026-01-12", recipe_id: "recipe_1", 
+      _recipe_id_label: "Butter Chicken"}]
+                                    ↓
+  Display: "2026-01-12 [lunch] → Butter Chicken (recipe_1) id:meal_1"
 ```
 
 ---
 
-## What Exists Now (To Deprecate/Refactor)
+## Registry Fields
 
-### Files to Modify
+### Core ID Mapping
+```python
+ref_to_uuid: dict[str, str]      # recipe_1 → abc123-uuid
+uuid_to_ref: dict[str, str]      # abc123-uuid → recipe_1
+counters: dict[str, int]         # recipe → 3 (next ref will be recipe_4)
+gen_counters: dict[str, int]     # recipe → 1 (next gen ref will be gen_recipe_2)
+```
 
-| File | Current State | Action |
-|------|---------------|--------|
-| `src/alfred/core/id_registry.py` | TurnIdRegistry resets each turn | Rename to `SessionIdRegistry`, persist across turns |
-| `src/alfred/core/id_mapper.py` | Legacy gen_* → UUID mapper | Merge into SessionIdRegistry or deprecate |
-| `src/alfred/tools/crud.py` | Has translation layer (correct) | Keep, ensure uses session registry |
-| `src/alfred/graph/nodes/act.py` | Initializes TurnIdRegistry | Use session registry from state |
-| `src/alfred/graph/nodes/understand.py` | Tries to populate registry from entity_context | Remove this; registry already has mappings |
-| `src/alfred/graph/state.py` | Has `id_registry: dict` field | Rename to `session_id_registry` |
+### Entity Metadata
+```python
+ref_actions: dict[str, str]      # recipe_1 → "read" | "created" | "linked" | etc.
+ref_labels: dict[str, str]       # recipe_1 → "Butter Chicken"
+ref_types: dict[str, str]        # recipe_1 → "recipe"
+```
 
-### Prompts to Update
+### Temporal Tracking
+```python
+ref_turn_created: dict[str, int]   # recipe_1 → 3 (first seen in turn 3)
+ref_turn_last_ref: dict[str, int]  # recipe_1 → 5 (last referenced in turn 5)
+ref_source_step: dict[str, int]    # gen_recipe_1 → 2 (created in step 2)
+current_turn: int                  # Current turn number
+```
 
-| Prompt | Current State | Action |
-|--------|---------------|--------|
-| `prompts/understand.md` | Asks LLM to output `resolved_id` UUIDs | Remove ID extraction; just reference resolution to simple refs |
-| `prompts/act/base.md` | Already mentions simple refs | Verify consistent |
-| `prompts/act/generate.md` | Doesn't exist yet | Create; tell LLM to use gen_* refs for created content |
-| `prompts/think.md` | Uses referenced_entities | Ensure expects simple refs |
+### Generated Content
+```python
+pending_artifacts: dict[str, dict]  # gen_recipe_1 → {full JSON content}
+```
 
-### Concepts to Remove
+### V5: Context Curation
+```python
+ref_active_reason: dict[str, str]        # gen_meal_plan_1 → "User's ongoing goal"
+_lazy_enrich_queue: dict[str, tuple]     # Transient: refs needing name enrichment
+```
 
-1. **LLM-based ID extraction** - Understand should NOT output UUIDs
-2. **Turn-scoped registry reset** - Registry persists across turns
-3. **Registry population from entity_context** - Registry IS the source of truth
+---
+
+## Key Methods
+
+### Registration
+- `_next_ref(entity_type)` → Generate next ref (recipe_1, recipe_2, ...)
+- `_next_gen_ref(entity_type)` → Generate next gen ref (gen_recipe_1, ...)
+- `register_generated(entity_type, label, content)` → Register pending artifact
+- `register_created(gen_ref, uuid, entity_type, label)` → Promote gen ref or create new
+
+### Translation
+- `translate_read_output(records, table)` → UUIDs → refs, lazy register FKs
+- `translate_filters(filters)` → refs → UUIDs for queries
+- `translate_payload(data, table)` → refs → UUIDs for create/update
+
+### Enrichment (V5)
+- `get_lazy_enrich_queue()` → Get refs needing name lookup
+- `apply_enrichment(enrichments)` → Update labels from batch query
+- `_compute_entity_label(record, entity_type)` → Type-specific label computation
+
+### View Methods
+- `format_for_think_prompt()` → Delineated: Pending → Recent → Long Term
+- `format_for_act_prompt()` → Same delineation for Act
+- `get_active_entities(turns_window)` → Returns (recent, retained) tuple
+
+### Serialization
+- `to_dict()` → Serialize for state storage
+- `from_dict(data)` → Deserialize from state
 
 ---
 
 ## Implementation Status
 
-### Phase 1: Core Registry Refactor ✅
+### All Phases Complete ✅
 
-- [x] **Rename `TurnIdRegistry` → `SessionIdRegistry`**
-  - File: `src/alfred/core/id_registry.py`
-  - Session-scoped, persists across turns
+| Phase | Status |
+|-------|--------|
+| Core Registry Refactor | ✅ Complete |
+| CRUD Integration | ✅ Complete |
+| Generate Step Handling | ✅ Complete |
+| Understand Prompt Cleanup | ✅ Complete |
+| Deprecation | ✅ Complete |
+| V5 Context Curation | ✅ Complete |
+| V5 FK Enrichment | ✅ Complete |
 
-- [x] **Update state to persist registry across turns**
-  - File: `src/alfred/graph/state.py`
-  - Field: `session_id_registry: dict | None`
+### Testing Status
 
-- [x] **Remove registry reset logic**
-  - File: `src/alfred/graph/nodes/act.py`
-  - Uses existing registry from state if present
-
-- [x] **Remove registry population from entity_context**
-  - File: `src/alfred/graph/nodes/understand.py`
-  - Registry is populated by CRUD layer only
-
-### Phase 2: CRUD Integration ✅
-
-- [x] **db_read populates registry**
-  - `translate_read_output` assigns refs and persists
-
-- [x] **db_create updates registry**
-  - gen_* refs → real UUIDs after insert
-
-- [x] **db_delete/update translates refs**
-  - Filter values translated before execution
-
-### Phase 3: Generate Step Handling ✅
-
-- [x] **Updated generate.md prompt**
-  - LLM outputs content, system assigns `gen_*` refs
-
-- [x] **Post-generate ref assignment**
-  - System assigns refs after generate step completes
-
-### Phase 4: Understand Prompt Cleanup ✅
-
-- [x] **Removed ID extraction from Understand prompt**
-  - Changed `resolved_id` → `resolved_ref`
-  - All examples use simple refs (recipe_1, not UUIDs)
-
-- [x] **Updated output model**
-  - `referenced_entities` contains simple refs
-
-### Phase 5: Deprecation ✅
-
-- [x] **id_mapper.py deprecated**
-  - Added deprecation notice
-  - Kept for backward compat during migration
-
-- [x] **All prompts updated**
-  - No UUID references in any prompt
-  - All examples use simple refs
-
-### Phase 6: Testing (Manual)
-
-- [ ] **Test: Read → Delete flow**
-  - Turn 1: Read recipes (assigns recipe_1, recipe_2)
-  - Turn 2: Delete recipe_1, recipe_2 (uses persisted mappings)
-
-- [ ] **Test: Generate → Save flow**
-  - Turn 1: Generate recipe (assigns gen_recipe_1)
-  - Turn 1: Save gen_recipe_1 (maps to real UUID)
-
-- [ ] **Test: Multi-turn reference**
-  - Turn 1: List recipes
-  - Turn 2: Add one to meal plan
-  - Turn 3: Delete the meal plan
+| Test | Status |
+|------|--------|
+| Read → Delete flow | ✅ Working |
+| Generate → Save flow | ✅ Working |
+| Multi-turn reference | ✅ Working |
+| FK lazy registration | ✅ Working |
+| Name enrichment | ✅ Working |
 
 ---
 
-## Success Criteria
+## Success Criteria ✅
 
-1. **No UUIDs in LLM context** - grep for UUID patterns returns nothing in prompt logs
-2. **Cross-turn operations work** - "delete those recipes" works after listing them
-3. **100% deterministic ID translation** - No LLM inference for ID mapping
-4. **Understand focuses on context curation** - Not ID extraction
-5. **Generate refs work** - gen_recipe_1 persists through save
+1. **No UUIDs in LLM context** ✅ — All prompts use simple refs
+2. **Cross-turn operations work** ✅ — Registry persists via conversation state
+3. **100% deterministic ID translation** ✅ — No LLM inference for ID mapping
+4. **Understand focuses on context curation** ✅ — Memory Manager role
+5. **Generate refs work** ✅ — gen_recipe_1 persists through save
+6. **FK refs enriched** ✅ — Lazy-registered refs get real names
 
 ---
 
-## Migration Notes
+## Files
 
-- Existing conversations with old-format IDs may break
-- Consider: Clear session_id_registry on major version bump
-- Entity context still useful for: labels, types, tiering (not ID storage)
+| File | Purpose |
+|------|---------|
+| `src/alfred/core/id_registry.py` | SessionIdRegistry implementation |
+| `src/alfred/tools/crud.py` | CRUD layer with ID translation + enrichment |
+| `src/alfred/graph/workflow.py` | Loads registry from conversation |
+| `src/alfred/graph/nodes/summarize.py` | Persists registry to conversation |
+| `src/alfred/prompts/injection.py` | Display formatting with labels |
+
+---
+
+*Last updated: 2026-01-10*

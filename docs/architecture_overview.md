@@ -1,7 +1,7 @@
 # Alfred Architecture Overview
 
-**Last Updated:** January 8, 2026  
-**Status:** V4 with SessionIdRegistry, unified entity management
+**Last Updated:** January 10, 2026  
+**Status:** V5 with context management, FK enrichment, improved display
 
 ---
 
@@ -11,7 +11,7 @@
 |-----|---------|
 | [context-engineering-architecture.md](context-engineering-architecture.md) | **How it works now** — entity management, ID translation, state vs context |
 | [session-id-registry-spec.md](session-id-registry-spec.md) | Session ID registry implementation details |
-| [v4-architecture-spec.md](v4-architecture-spec.md) | Historical V4 spec (for reference, mostly implemented) |
+| [understand-context-management-spec.md](understand-context-management-spec.md) | V5 Understand as "Memory Manager" |
 
 ---
 
@@ -52,11 +52,11 @@ Alfred is a **multi-agent conversational assistant** for kitchen management: inv
 
 | Node | Purpose | Key Output |
 |------|---------|------------|
-| **Understand** | Intent detection, entity resolution, quick mode | `quick_mode`, `referenced_entities` |
+| **Understand** | Memory manager: entity resolution, context curation, quick mode | `referenced_entities`, `entity_curation` |
 | **Think** | Plan steps with types and groups | `steps[]`, `decision` |
 | **Act** | Execute via CRUD or generate | Tool calls, `step_complete` |
 | **Reply** | Synthesize user-facing response | Natural language |
-| **Summarize** | Compress context | Updated conversation |
+| **Summarize** | Compress context, persist registry | Updated conversation |
 
 ---
 
@@ -89,6 +89,14 @@ System handles: abc123-uuid translation
 | `read` | CRUD layer after db_read |
 | `created` | CRUD layer after db_create |
 | `generated` | Act node after generate step |
+| `linked` | CRUD layer (FK lazy registration) |
+
+### V5: FK Lazy Registration with Enrichment
+
+When reading meal_plans with recipe_id FKs:
+1. System lazy-registers unknown FK UUIDs (e.g., `recipe_1`)
+2. Batch queries target table for names
+3. Enriches display: "Butter Chicken (recipe_1)"
 
 See [context-engineering-architecture.md](context-engineering-architecture.md) for full details.
 
@@ -109,7 +117,7 @@ See [context-engineering-architecture.md](context-engineering-architecture.md) f
 
 ## 6. Quick Mode
 
-Bypasses Think for simple single-step queries:
+Bypasses Think for simple **single-part** queries:
 
 | Subdomain | Read | Write |
 |-----------|------|-------|
@@ -118,6 +126,8 @@ Bypasses Think for simple single-step queries:
 | tasks | ✅ | ✅ |
 | recipes | ✅ | ❌ (linked tables) |
 | meal_plans | ✅ | ❌ (FK logic) |
+
+**V5:** Multi-part queries ("X and also Y") explicitly excluded from quick mode.
 
 ---
 
@@ -134,7 +144,7 @@ alfred/
 │   │   ├── workflow.py       # LangGraph definition
 │   │   └── nodes/            # understand, think, act, reply, summarize
 │   ├── tools/
-│   │   ├── crud.py           # CRUD + ID translation
+│   │   ├── crud.py           # CRUD + ID translation + FK enrichment
 │   │   └── schema.py         # Subdomain registry
 │   ├── prompts/
 │   │   ├── injection.py      # Dynamic prompt assembly
@@ -149,9 +159,10 @@ alfred/
 │   ├── reply.md
 │   └── summarize.md
 └── docs/
-    ├── architecture_overview.md      # This file
+    ├── architecture_overview.md           # This file
     ├── context-engineering-architecture.md  # Detailed "how it works"
-    └── session-id-registry-spec.md   # ID registry spec
+    ├── session-id-registry-spec.md        # ID registry spec
+    └── understand-context-management-spec.md  # V5 context curation
 ```
 
 ---
@@ -170,6 +181,7 @@ alfred/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| V5 | 2026-01-10 | Understand as Memory Manager, FK enrichment, improved display |
 | V4.1 | 2026-01-08 | Think prompt cleanup, deprecated unused fields |
 | V4 | 2026-01-06 | SessionIdRegistry, unified entity management |
 | V3 | 2026-01-02 | Step types, quick mode, async summarize |

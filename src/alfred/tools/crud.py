@@ -447,8 +447,106 @@ async def execute_crud(
     # V4: Translate output UUIDs to refs
     if registry:
         result = _translate_output(tool, result, params.get("table", ""), registry)
+        
+        # V5: Enrich lazy-registered FK refs with names
+        await _enrich_lazy_registrations(registry, user_id)
+        
+        # V5: Post-process to add labels that were just enriched
+        result = _add_enriched_labels(result, params.get("table", ""), registry)
     
     return result
+
+
+def _add_enriched_labels(result: Any, table: str, registry: Any) -> Any:
+    """
+    Post-process result to add FK labels that were just enriched.
+    
+    This runs AFTER enrichment to ensure newly-fetched labels are included.
+    """
+    if not result:
+        return result
+    
+    fk_fields = registry._get_fk_fields(table)
+    if not fk_fields:
+        return result
+    
+    def add_labels_to_record(record: dict) -> dict:
+        record = record.copy()
+        for fk_field in fk_fields:
+            fk_ref = record.get(fk_field)
+            label_field = f"_{fk_field}_label"
+            # Only add if we have a ref and don't already have the label
+            if fk_ref and label_field not in record:
+                fk_label = registry.ref_labels.get(fk_ref)
+                if fk_label and fk_label != fk_ref:
+                    record[label_field] = fk_label
+        return record
+    
+    if isinstance(result, list):
+        return [add_labels_to_record(r) if isinstance(r, dict) else r for r in result]
+    elif isinstance(result, dict):
+        return add_labels_to_record(result)
+    
+    return result
+
+
+async def _enrich_lazy_registrations(registry: Any, user_id: str) -> None:
+    """
+    Fetch names for lazy-registered FK refs.
+    
+    When a db_read returns records with FK fields (e.g., meal_plans with recipe_id),
+    we lazy-register those FKs to prevent UUID leakage. This function batch-fetches
+    the actual names so displays show "Butter Chicken" instead of "recipe_1".
+    
+    Generic across all FK types: recipes, ingredients, tasks, etc.
+    """
+    enrich_queue = registry.get_lazy_enrich_queue()
+    if not enrich_queue:
+        return
+    
+    # Group by table for batch queries
+    from collections import defaultdict
+    by_table: dict[str, list[tuple[str, str, str]]] = defaultdict(list)  # table -> [(ref, name_col, uuid)]
+    for ref, (table, name_col, uuid) in enrich_queue.items():
+        by_table[table].append((ref, name_col, uuid))
+    
+    enrichments: dict[str, str] = {}
+    
+    for table, items in by_table.items():
+        if not items:
+            continue
+        
+        # Get all UUIDs for this table
+        uuids = [uuid for _, _, uuid in items]
+        name_col = items[0][1]  # All items for same table have same name_col
+        
+        try:
+            # Batch query for names - use raw db_read since we already have UUIDs
+            result = await db_read(
+                DbReadParams(
+                    table=table,
+                    filters=[{"field": "id", "op": "in", "value": uuids}],
+                    columns=["id", name_col],
+                ),
+                user_id,
+            )
+            
+            # Build UUID → name map
+            uuid_to_name = {str(r["id"]): r.get(name_col) for r in result if r.get(name_col)}
+            
+            # Map back to refs
+            for ref, _, uuid in items:
+                if uuid in uuid_to_name:
+                    enrichments[ref] = uuid_to_name[uuid]
+                    
+        except Exception as e:
+            logger.warning(f"Failed to enrich lazy registrations for {table}: {e}")
+    
+    # Apply all enrichments
+    if enrichments:
+        registry.apply_enrichment(enrichments)
+    else:
+        registry.clear_enrich_queue()
 
 
 def _translate_input_params(
@@ -521,12 +619,17 @@ def _translate_output(
                 label = result.get("name") or result.get("title")
                 ref = registry.register_created(None, result["id"], entity_type, label=label)
                 result["id"] = ref
-            # Translate FK fields
+            # Translate FK fields and add labels
             for fk_field in fk_fields:
                 if fk_field in result and result[fk_field]:
                     fk_uuid = str(result[fk_field])
                     if fk_uuid in registry.uuid_to_ref:
-                        result[fk_field] = registry.uuid_to_ref[fk_uuid]
+                        fk_ref = registry.uuid_to_ref[fk_uuid]
+                        result[fk_field] = fk_ref
+                        # V5: Add label for display enrichment
+                        fk_label = registry.ref_labels.get(fk_ref)
+                        if fk_label and fk_label != fk_ref:
+                            result[f"_{fk_field}_label"] = fk_label
             return result
         elif isinstance(result, list):
             # Batch create
@@ -540,12 +643,17 @@ def _translate_output(
                         label = record.get("name") or record.get("title")
                         ref = registry.register_created(None, record["id"], entity_type, label=label)
                         record["id"] = ref
-                    # Translate FK fields
+                    # Translate FK fields and add labels
                     for fk_field in fk_fields:
                         if fk_field in record and record[fk_field]:
                             fk_uuid = str(record[fk_field])
                             if fk_uuid in registry.uuid_to_ref:
-                                record[fk_field] = registry.uuid_to_ref[fk_uuid]
+                                fk_ref = registry.uuid_to_ref[fk_uuid]
+                                record[fk_field] = fk_ref
+                                # V5: Add label for display enrichment
+                                fk_label = registry.ref_labels.get(fk_ref)
+                                if fk_label and fk_label != fk_ref:
+                                    record[f"_{fk_field}_label"] = fk_label
                 translated.append(record)
             return translated
     

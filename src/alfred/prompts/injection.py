@@ -418,6 +418,7 @@ _TABLE_FORMAT_PROTOCOLS = {
         "primary": "date",
         "details": ["meal_type", "recipe_id"],  # Show recipe_id for linking
         "show_id": True,
+        "format": "meal_plan",  # Custom format: date [slot] → recipe
     },
     "tasks": {
         "primary": "title",
@@ -451,6 +452,10 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
     # Special format: key-value pairs (for preferences, single-row configs)
     if protocol.get("format") == "key_value":
         return _format_record_key_value(record, protocol)
+    
+    # Special format: meal plan (date [slot] → recipe)
+    if protocol.get("format") == "meal_plan":
+        return _format_meal_plan_record(record, protocol)
     
     # Get primary identifier
     primary_field = protocol.get("primary", "name")
@@ -510,6 +515,36 @@ def _format_record_key_value(record: dict, protocol: dict) -> str:
             label = field.replace("_", " ").title()
             lines.append(f"    - {label}: {value_str}")
     return "\n".join(lines)
+
+
+def _format_meal_plan_record(record: dict, protocol: dict) -> str:
+    """
+    Format a meal plan record: date [slot] → recipe (id:meal_1)
+    
+    Examples:
+    - 2026-01-12 [lunch] → Butter Chicken (recipe_1) id:meal_1
+    - 2026-01-13 [dinner] → recipe_2 id:meal_2
+    """
+    date = record.get("date", "no-date")
+    meal_type = record.get("meal_type", "meal")
+    recipe_ref = record.get("recipe_id", "no-recipe")
+    meal_id = record.get("id", "")
+    
+    # Try to get enriched recipe name
+    recipe_label = record.get("_recipe_id_label")
+    
+    if recipe_label:
+        recipe_part = f"{recipe_label} ({recipe_ref})"
+    else:
+        recipe_part = recipe_ref
+    
+    # Format: date [slot] → recipe id:meal_X
+    parts = [f"  - {date} [{meal_type}] → {recipe_part}"]
+    
+    if meal_id:
+        parts.append(f"id:{meal_id}")
+    
+    return " ".join(parts)
 
 
 def _format_records_for_table(records: list[dict], table: str | None = None) -> list[str]:
