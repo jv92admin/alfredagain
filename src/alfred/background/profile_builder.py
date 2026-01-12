@@ -40,6 +40,11 @@ class UserProfile:
     # VIBES (current interests - freeform, up to 5 tags)
     current_vibes: list[str] = field(default_factory=list)
     
+    # SUBDOMAIN GUIDANCE (narrative preference modules per domain)
+    # Keys: inventory, recipes, meal_plans, shopping, tasks
+    # Values: ~200 token narrative strings
+    subdomain_guidance: dict[str, str] = field(default_factory=dict)
+    
     # From cooking_log aggregation
     top_recipes: list[dict] = field(default_factory=list)  # [{name, times_cooked, avg_rating}]
     recent_meals: list[dict] = field(default_factory=list)  # [{name, date, rating}]
@@ -120,6 +125,8 @@ async def build_user_profile(user_id: str) -> UserProfile:
             # Planning & Vibes (new flexible fields)
             profile.planning_rhythm = prefs.get("planning_rhythm") or []
             profile.current_vibes = prefs.get("current_vibes") or []
+            # Subdomain guidance (narrative preference modules)
+            profile.subdomain_guidance = prefs.get("subdomain_guidance") or {}
             # Legacy
             profile.time_budget_minutes = prefs.get("time_budget_minutes", 30) or 30
     except Exception:

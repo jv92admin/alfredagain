@@ -62,7 +62,7 @@ Keep meaningful descriptors (fresh vs dried, diced vs whole), skip prep instruct
         # Cross-domain: from meal_plan
         if prev_subdomain == "meal_plans":
             examples.append("""**Meal Plan → Shopping Pattern**:
-Previous step read meal plan. For each recipe_id, you may need to read recipe_ingredients, then add to shopping.""")
+Previous step read meal plan. Read recipes for those recipe_ids (ingredients auto-included), then add missing items to shopping.""")
     
     # === RECIPE PATTERNS ===
     elif subdomain == "recipes":

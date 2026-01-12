@@ -27,6 +27,7 @@ from alfred.background.profile_builder import (
     get_cached_dashboard,
     get_cached_profile,
 )
+from alfred.prompts.injection import format_all_subdomain_guidance
 from alfred.core.id_registry import SessionIdRegistry
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.state import AlfredState, ThinkStep, ThinkOutput
@@ -161,10 +162,16 @@ async def think_node(state: AlfredState) -> dict:
     # Fetch user profile and kitchen dashboard for decision-making
     profile_section = ""
     dashboard_section = ""
+    subdomain_guidance_section = ""
     if user_id:
         try:
             profile = await get_cached_profile(user_id)
             profile_section = format_profile_for_prompt(profile)
+            # Get subdomain guidance from profile (includes subdomain_guidance dict)
+            if profile.subdomain_guidance:
+                subdomain_guidance_section = format_all_subdomain_guidance(
+                    {"subdomain_guidance": profile.subdomain_guidance}
+                )
         except Exception:
             pass  # Profile is optional
         
@@ -225,6 +232,8 @@ If they modify → adjust the plan.
 ---
 
 {profile_section}
+
+{subdomain_guidance_section}
 
 {dashboard_section}
 

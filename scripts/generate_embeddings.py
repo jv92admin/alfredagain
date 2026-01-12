@@ -68,25 +68,16 @@ def create_recipe_text(recipe: dict) -> str:
     """
     Create text representation of a recipe for embedding.
     
-    Combines name, description, cuisine, tags, and difficulty.
+    LEAN: Just name + description. This captures the "vibe" of the recipe.
+    
+    For structured attributes (cuisine, difficulty, time, tags), use exact filters.
+    Semantic search is for ambiguous queries like "comfort food", "date night".
     """
     parts = [recipe.get("name", "")]
     
-    description = recipe.get("description")
-    if description:
-        parts.append(description[:200])  # Limit description length
-    
-    cuisine = recipe.get("cuisine")
-    if cuisine:
-        parts.append(f"cuisine: {cuisine}")
-    
-    tags = recipe.get("tags", [])
-    if tags:
-        parts.append(f"tags: {', '.join(tags[:5])}")
-    
-    difficulty = recipe.get("difficulty")
-    if difficulty:
-        parts.append(f"difficulty: {difficulty}")
+    # Description only - the "vibe" of the recipe
+    if description := recipe.get("description"):
+        parts.append(description[:300])
     
     return " | ".join(parts)
 
@@ -160,8 +151,8 @@ async def generate_recipe_embeddings(batch_size: int = 20, force: bool = False) 
     supabase = get_client()
     openai = get_openai_client()
     
-    # Fetch recipes without embeddings (or all if force)
-    query = supabase.table("recipes").select("id, name, description, cuisine, tags, difficulty")
+    # Fetch recipes - only need name and description for lean embeddings
+    query = supabase.table("recipes").select("id, name, description")
     if not force:
         query = query.is_("embedding", "null")
     
@@ -227,6 +218,8 @@ CREATE INDEX IF NOT EXISTS idx_recipes_embedding ON recipes
 
 async def main(table: str, batch_size: int, force: bool) -> None:
     """Main entry point."""
+    import sys
+    sys.stdout.reconfigure(encoding='utf-8')
     print("🚀 Embedding Generation Script")
     print(f"   Model: {EMBEDDING_MODEL}")
     print(f"   Batch size: {batch_size}")

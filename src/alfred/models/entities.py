@@ -145,16 +145,33 @@ class ShoppingListItem(BaseModel):
 class Preferences(BaseModel):
     """
     User's dietary preferences and settings.
+    
+    Includes:
+    - Profile: allergies, dietary restrictions, household size
+    - Overall: cuisines, current vibes, planning rhythm
+    - Subdomain guidance: per-subdomain narrative preferences for context injection
     """
 
     id: UUID
     user_id: UUID
+    
+    # Profile (hard constraints)
     dietary_restrictions: list[str] = Field(default_factory=list)  # "vegetarian", "gluten-free"
     allergies: list[str] = Field(default_factory=list)  # "peanuts", "shellfish"
+    household_size: int = 1
+    cooking_skill_level: str = "intermediate"  # "beginner", "intermediate", "advanced"
+    
+    # Overall preferences (soft guidance)
     favorite_cuisines: list[str] = Field(default_factory=list)  # "italian", "thai"
     disliked_ingredients: list[str] = Field(default_factory=list)
-    cooking_skill_level: str = "intermediate"  # "beginner", "intermediate", "advanced"
-    household_size: int = 1
+    planning_rhythm: list[str] = Field(default_factory=list)  # "weekends only", "30min weeknights"
+    current_vibes: list[str] = Field(default_factory=list)  # "more vegetables", "comfort food"
+    
+    # Subdomain guidance (narrative modules for context injection)
+    # Keys: inventory, recipes, meal_plans, shopping, tasks
+    # Values: ~200 token narrative strings
+    subdomain_guidance: dict[str, str] = Field(default_factory=dict)
+    
     updated_at: datetime | None = None
 
 

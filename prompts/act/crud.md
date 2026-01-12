@@ -61,7 +61,7 @@ Use `or_filters` (top-level param, same level as `filters`):
 
 ### Array Contains
 ```json
-{"field": "tags", "op": "contains", "value": ["weeknight"]}
+{"field": "occasions", "op": "contains", "value": ["weeknight"]}
 ```
 
 ---

@@ -369,29 +369,39 @@ def _get_system_prompt(step_type: str = "read") -> str:
     Build the Act system prompt from layers.
     
     Layers:
-    1. base.md - Universal role, principles, exit contract (NO tools)
-    2. crud.md - Tools, filters, operators (only for read/write)
-    3. {step_type}.md - Mechanics for this step type
+    1. system.md - Who Alfred is (core identity, capabilities)
+    2. base.md - Act's role in Alfred (execution engine)
+    3. crud.md - Tools, filters, operators (only for read/write)
+    4. {step_type}.md - Mechanics for this step type
     
-    Subdomain content is added to user_prompt, not system_prompt.
+    Subdomain content (persona, user profile) is added to user_prompt.
     """
+    # Load Alfred's core identity
+    system_path = _PROMPTS_DIR.parent / "system.md"
+    if system_path.exists():
+        alfred_identity = system_path.read_text(encoding="utf-8")
+    else:
+        alfred_identity = ""
+    
     base = _load_prompt("base.md")
     step_type_content = _load_prompt(f"{step_type}.md")
+    
+    # Build layers: identity → base → (crud) → step_type
+    parts = []
+    if alfred_identity:
+        parts.append(alfred_identity)
+    parts.append(base)
     
     # CRUD steps need the tools reference
     if step_type in ("read", "write"):
         crud = _load_prompt("crud.md")
-        parts = [base]
         if crud:
             parts.append(crud)
+    
         if step_type_content:
             parts.append(step_type_content)
-        return "\n\n---\n\n".join(parts)
     
-    # Generate/analyze don't need CRUD tools
-    if step_type_content:
-        return f"{base}\n\n---\n\n{step_type_content}"
-    return base
+        return "\n\n---\n\n".join(parts)
 
 
 def _format_step_results(
@@ -524,13 +534,14 @@ def _format_step_results(
                 lines.append(json.dumps(result, indent=2, default=str)[:2000])
                 lines.append("```")
         elif metadata.get("step_type") == "analyze":
-            # Analyze steps produce conclusions - ALWAYS show these (crucial for next step)
+            # Analyze steps produce conclusions - ALWAYS show these IN FULL (crucial for next step)
+            # These contain clarifications, constraints, and recommendations that Generate needs
             step_desc = metadata.get("description", "Analysis")
             lines.append(f"**Step {step_num}** [analyze] — {step_desc}:")
             if isinstance(result, dict):
-                # Show the analysis result directly
+                # Show the analysis result directly - NO TRUNCATION for analyze outputs
                 lines.append("```json")
-                lines.append(json.dumps(result, indent=2, default=str)[:2000])
+                lines.append(json.dumps(result, indent=2, default=str))
                 lines.append("```")
             elif isinstance(result, str):
                 lines.append(f"  {result}")
@@ -956,14 +967,27 @@ async def act_node(state: AlfredState) -> dict:
     # V4 CONSOLIDATION: Format entity context for Act prompt
     working_set_section = session_registry.format_for_act_prompt(current_step_index)
 
-    # Fetch user profile for analyze/generate steps (async enrichment)
+    # Fetch user profile and subdomain guidance for analyze/generate/write steps
     profile_section = ""
-    if step_type in ("analyze", "generate"):
+    subdomain_guidance_section = ""
+    if step_type in ("analyze", "generate", "write"):
         try:
             user_id = state.get("user_id")
             if user_id:
                 profile = await get_cached_profile(user_id)
-                profile_section = format_profile_for_prompt(profile)
+                if step_type != "write":  # Profile only for analyze/generate
+                    profile_section = format_profile_for_prompt(profile)
+                # Subdomain guidance for all three step types
+                if profile.subdomain_guidance:
+                    guidance = profile.subdomain_guidance.get(current_step.subdomain, "")
+                    if guidance:
+                        subdomain_guidance_section = f"""## User Preferences ({current_step.subdomain})
+
+{guidance}
+
+---
+
+"""
         except Exception:
             pass  # Profile is optional, don't fail on errors
 
@@ -1010,7 +1034,7 @@ async def act_node(state: AlfredState) -> dict:
 
 {profile_section}
 
-## 1. Task
+{subdomain_guidance_section}## 1. Task
 
 **Your job this step:** {current_step.description}
 
@@ -1068,7 +1092,7 @@ Analyze the data above and complete the step:
 
 {profile_section}
 
-## 1. Task
+{subdomain_guidance_section}## 1. Task
 
 **Your job this step:** {current_step.description}
 
@@ -1185,7 +1209,10 @@ Generate the requested content and complete the step:
 
 """
 
-        user_prompt = f"""{dynamic_header}## STATUS
+        # Only include subdomain guidance for write steps (not read)
+        guidance_for_write = subdomain_guidance_section if step_type == "write" else ""
+        
+        user_prompt = f"""{dynamic_header}{guidance_for_write}## STATUS
 | Step | {current_step_index + 1} of {len(steps)} |
 | Goal | {current_step.description} |
 | Type | {step_type} |
@@ -1684,6 +1711,7 @@ class ActQuickParams(BaseModel):
     table: str = Field(description="Table name (inventory, shopping_list, etc.)")
     filters: list[dict[str, Any]] = Field(default_factory=list, description="Filter clauses for read/update/delete")
     data: dict[str, Any] | list[dict[str, Any]] | None = Field(default=None, description="Record data for create/update")
+    columns: list[str] | None = Field(default=None, description="Columns to select for read (include 'instructions' for full recipes)")
     limit: int | None = Field(default=None, description="Max rows to return for read")
 
 

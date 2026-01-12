@@ -58,11 +58,21 @@ When deleting:
 
 ---
 
-## Ingredient Names
+## Ingredient Names (for recipe_ingredients)
 
-Use **simple, canonical names**:
-- ✅ "chickpeas", "chicken thighs", "olive oil"
-- ❌ "crispy roasted chickpeas", "herby greens mix"
+Use **simple, canonical names** in the `name` field:
+- ✅ "chickpeas", "chicken thigh", "olive oil", "garlic", "basil"
+- ❌ "crispy roasted chickpeas", "Trader Joe's organic olive oil"
+
+**Why:** The system auto-links ingredients to a canonical database via `ingredient_id`. Simple names match better.
+
+**Qualifiers go in `notes`:**
+```json
+{"name": "garlic", "quantity": 2, "unit": "cloves", "notes": "minced"}
+{"name": "basil", "quantity": 1, "unit": "cup", "notes": "fresh, loosely packed"}
+```
+
+**Singular forms preferred:** "chicken thigh" not "chicken thighs" (quantity handles plural)
 
 ---
 

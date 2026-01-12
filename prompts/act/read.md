@@ -48,6 +48,8 @@ Fetch data from database to inform current or later steps.
 
 5. **Include names.** When selecting specific columns, always include `name` or `title`.
 
+6. **Match step intent for depth.** For recipes: only fetch `instructions` field if step explicitly needs it (e.g., "with instructions", "full recipe", "show the recipe"). Otherwise save tokens — summary is enough for browsing/planning.
+
 ---
 
 ## What NOT to do

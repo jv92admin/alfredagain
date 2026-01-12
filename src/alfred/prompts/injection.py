@@ -72,11 +72,11 @@ def build_act_prompt(
     if step_type == "read":
         sections.append(build_read_sections(subdomain, entities, schema))
     elif step_type == "analyze":
-        sections.append(build_analyze_sections(prev_group_results))
+        sections.append(build_analyze_sections(prev_group_results, subdomain, user_profile))
     elif step_type == "generate":
         sections.append(build_generate_sections(subdomain, mode, user_profile, prev_group_results))
     elif step_type == "write":
-        sections.append(build_write_sections(subdomain, entities, prev_group_results, schema))
+        sections.append(build_write_sections(subdomain, entities, prev_group_results, schema, user_profile))
     else:
         # Fallback: include schema
         sections.append(build_read_sections(subdomain, entities, schema))
@@ -134,12 +134,17 @@ Use these IDs for joins or filters when needed.""")
     return "\n\n".join(parts)
 
 
-def build_analyze_sections(prev_group_results: list[dict] | None = None) -> str:
+def build_analyze_sections(
+    prev_group_results: list[dict] | None = None,
+    subdomain: str | None = None,
+    user_profile: dict | None = None,
+) -> str:
     """
     Build sections for ANALYZE steps.
     
     Includes:
     - Previous results prominently
+    - User subdomain guidance (if available)
     - Critical warning about data sources
     
     Does NOT include:
@@ -147,6 +152,12 @@ def build_analyze_sections(prev_group_results: list[dict] | None = None) -> str:
     - Entity data (only results)
     """
     parts = []
+    
+    # User subdomain guidance (personalization)
+    if subdomain and user_profile:
+        guidance_section = format_subdomain_guidance_section(user_profile, subdomain)
+        if guidance_section:
+            parts.append(guidance_section)
     
     # Previous results (THE data source)
     if prev_group_results:
@@ -196,12 +207,18 @@ def build_generate_sections(
 
 {persona}""")
     
-    # User profile
+    # User profile (general)
     if user_profile:
         profile_text = _format_user_profile(user_profile, mode)
-        parts.append(f"""## User Preferences
+        parts.append(f"""## User Profile
 
 {profile_text}""")
+    
+    # Subdomain-specific guidance (personalization)
+    if user_profile:
+        guidance_section = format_subdomain_guidance_section(user_profile, subdomain)
+        if guidance_section:
+            parts.append(guidance_section)
     
     # Prior context (summary, not full data)
     if prev_group_results:
@@ -240,17 +257,25 @@ def build_write_sections(
     entities: list[dict] | None = None,  # V4 CONSOLIDATION
     prev_group_results: list[dict] | None = None,
     schema: str | None = None,
+    user_profile: dict | None = None,
 ) -> str:
     """
     Build sections for WRITE steps.
     
     Includes:
     - Schema for the subdomain
+    - User subdomain guidance (for naming, tagging preferences)
     - FK handling guidance
     - Entity IDs from prior steps
     - Entity tagging instructions
     """
     parts = []
+    
+    # User subdomain guidance (personalization for naming, tagging, etc.)
+    if user_profile:
+        guidance_section = format_subdomain_guidance_section(user_profile, subdomain)
+        if guidance_section:
+            parts.append(guidance_section)
     
     # Schema (passed in by caller)
     if schema:
@@ -405,8 +430,9 @@ _TABLE_FORMAT_PROTOCOLS = {
     },
     "recipes": {
         "primary": "name",
-        "details": ["cuisine", "total_time", "servings", "tags"],
+        "details": ["cuisine", "total_time", "servings", "occasions", "health_tags"],
         "show_id": True,  # Critical for FK references
+        "format": "recipe",  # Custom format with grouped ingredients
     },
     "recipe_ingredients": {
         "primary": "name",
@@ -457,6 +483,10 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
     if protocol.get("format") == "meal_plan":
         return _format_meal_plan_record(record, protocol)
     
+    # Special format: recipe (with grouped ingredients)
+    if protocol.get("format") == "recipe":
+        return _format_recipe_record(record, protocol)
+    
     # Get primary identifier
     primary_field = protocol.get("primary", "name")
     primary_value = record.get(primary_field) or record.get("name") or record.get("title") or "item"
@@ -487,7 +517,7 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
                     parts.append(f"recipe:{value}")
             elif field in ("total_time", "servings"):
                 parts.append(f"{field}:{value}")
-            elif field == "tags" and isinstance(value, list):
+            elif field in ("tags", "occasions", "health_tags", "flavor_tags", "equipment_tags") and isinstance(value, list):
                 parts.append(f"[{', '.join(value[:3])}{'...' if len(value) > 3 else ''}]")
             else:
                 parts.append(f"{field}:{value}")
@@ -545,6 +575,109 @@ def _format_meal_plan_record(record: dict, protocol: dict) -> str:
         parts.append(f"id:{meal_id}")
     
     return " ".join(parts)
+
+
+def _format_recipe_record(record: dict, protocol: dict) -> str:
+    """
+    Format a recipe record with grouped ingredients.
+    
+    Output format:
+    ```
+    recipe_1 (Chicken Tikka):
+      cuisine: indian | time: 45min | servings: 4
+      occasions: weeknight | health: high-protein
+      proteins: chicken
+      vegetables: onion, bell pepper
+      dairy: yogurt
+      spices: garam masala, turmeric
+      [instructions: 8 steps]  # only if present
+    ```
+    """
+    lines = []
+    
+    # Line 1: Name and ID
+    name = record.get("name", "Recipe")
+    recipe_id = record.get("id", "")
+    lines.append(f"  {recipe_id} ({name}):")
+    
+    # Line 2: Core metadata
+    meta_parts = []
+    if record.get("cuisine"):
+        meta_parts.append(f"cuisine: {record['cuisine']}")
+    
+    # Combine prep + cook time if available
+    prep = record.get("prep_time_minutes") or record.get("prep_time")
+    cook = record.get("cook_time_minutes") or record.get("cook_time")
+    total = record.get("total_time")
+    if total:
+        meta_parts.append(f"time: {total}")
+    elif prep or cook:
+        time_str = f"{prep or 0}+{cook or 0}min"
+        meta_parts.append(f"time: {time_str}")
+    
+    if record.get("servings"):
+        meta_parts.append(f"servings: {record['servings']}")
+    if record.get("difficulty"):
+        meta_parts.append(f"difficulty: {record['difficulty']}")
+    
+    if meta_parts:
+        lines.append(f"    {' | '.join(meta_parts)}")
+    
+    # Line 3: Tags (occasions, health)
+    tag_parts = []
+    if record.get("occasions"):
+        tag_parts.append(f"occasions: {', '.join(record['occasions'][:3])}")
+    if record.get("health_tags"):
+        tag_parts.append(f"health: {', '.join(record['health_tags'][:3])}")
+    if record.get("flavor_tags"):
+        tag_parts.append(f"flavor: {', '.join(record['flavor_tags'][:2])}")
+    if record.get("equipment_tags"):
+        tag_parts.append(f"equipment: {', '.join(record['equipment_tags'][:2])}")
+    
+    if tag_parts:
+        lines.append(f"    {' | '.join(tag_parts)}")
+    
+    # Ingredients grouped by category
+    ingredients = record.get("recipe_ingredients", [])
+    if ingredients:
+        # Group by category
+        from collections import defaultdict
+        by_category = defaultdict(list)
+        for ing in ingredients:
+            cat = ing.get("category") or "other"
+            name = ing.get("name", "?")
+            by_category[cat].append(name)
+        
+        # Display each category
+        # Priority order for display
+        category_order = ["proteins", "vegetables", "produce", "fruits", "dairy", "cheese", 
+                         "grains", "rice", "pasta", "pantry", "canned", "spices", 
+                         "cuisine_indian", "cuisine_thai", "cuisine_mexican", "other"]
+        
+        displayed_cats = set()
+        for cat in category_order:
+            if cat in by_category:
+                names = by_category[cat]
+                # Dedupe and join
+                unique_names = list(dict.fromkeys(names))  # preserve order, dedupe
+                lines.append(f"    {cat}: {', '.join(unique_names)}")
+                displayed_cats.add(cat)
+        
+        # Any remaining categories
+        for cat, names in by_category.items():
+            if cat not in displayed_cats:
+                unique_names = list(dict.fromkeys(names))
+                lines.append(f"    {cat}: {', '.join(unique_names)}")
+    
+    # Instructions (only if present)
+    instructions = record.get("instructions")
+    if instructions:
+        if isinstance(instructions, list):
+            lines.append(f"    [instructions: {len(instructions)} steps]")
+        else:
+            lines.append(f"    [instructions: included]")
+    
+    return "\n".join(lines)
 
 
 def _format_records_for_table(records: list[dict], table: str | None = None) -> list[str]:
@@ -651,6 +784,94 @@ def _format_user_profile(profile: dict, mode: Mode) -> str:
         # Everything
         import json
         return json.dumps(profile, indent=2)
+
+
+# =============================================================================
+# Subdomain Guidance (User Preference Modules)
+# =============================================================================
+
+# Max tokens per subdomain guidance (~200 tokens ≈ 800 chars)
+MAX_GUIDANCE_CHARS = 800
+
+
+def get_subdomain_guidance(
+    user_profile: dict | None,
+    subdomain: str,
+) -> str | None:
+    """
+    Extract subdomain-specific guidance from user profile.
+    
+    Returns narrative preference module for the given subdomain,
+    or None if not available.
+    
+    These are injected into Analyze and Generate steps to personalize
+    Alfred's reasoning and generation behavior.
+    """
+    if not user_profile:
+        return None
+    
+    guidance_dict = user_profile.get("subdomain_guidance", {})
+    if not guidance_dict or not isinstance(guidance_dict, dict):
+        return None
+    
+    guidance = guidance_dict.get(subdomain)
+    if not guidance or not isinstance(guidance, str):
+        return None
+    
+    # Truncate if too long (with note)
+    if len(guidance) > MAX_GUIDANCE_CHARS:
+        return guidance[:MAX_GUIDANCE_CHARS] + "..."
+    
+    return guidance
+
+
+def format_subdomain_guidance_section(
+    user_profile: dict | None,
+    subdomain: str,
+) -> str:
+    """
+    Format subdomain guidance as a prompt section.
+    
+    Returns empty string if no guidance available.
+    """
+    guidance = get_subdomain_guidance(user_profile, subdomain)
+    if not guidance:
+        return ""
+    
+    return f"""## User Preferences ({subdomain})
+
+{guidance}
+"""
+
+
+def format_all_subdomain_guidance(user_profile: dict | None) -> str:
+    """
+    Format ALL subdomain guidance for Think node.
+    
+    Think needs to see all guidance to make informed planning decisions
+    about which subdomains to use and how.
+    
+    Returns empty string if no guidance available.
+    """
+    if not user_profile:
+        return ""
+    
+    guidance_dict = user_profile.get("subdomain_guidance", {})
+    if not guidance_dict or not isinstance(guidance_dict, dict):
+        return ""
+    
+    parts = []
+    for subdomain, guidance in guidance_dict.items():
+        if guidance and isinstance(guidance, str):
+            # Truncate each if needed
+            if len(guidance) > MAX_GUIDANCE_CHARS:
+                guidance = guidance[:MAX_GUIDANCE_CHARS] + "..."
+            parts.append(f"**{subdomain}:** {guidance}")
+    
+    if not parts:
+        return ""
+    
+    return "## User Preferences (by domain)\n\n" + "\n\n".join(parts)
 
 
 # =============================================================================

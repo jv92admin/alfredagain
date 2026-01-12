@@ -34,7 +34,7 @@ SEMANTIC_SEARCH_TABLES = {"recipes"}
 
 # Default settings for semantic search
 SEMANTIC_DEFAULTS = {
-    "max_distance": 0.6,  # Cosine distance threshold (lower = stricter)
+    "max_distance": 0.7,  # Cosine distance threshold (lower = stricter, 0.7 = reasonable balance)
     "limit": 20,  # Max results from semantic search
 }
 
@@ -293,6 +293,12 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
 
     # Build SELECT clause
     select_clause = ",".join(params.columns) if params.columns else "*"
+    
+    # Auto-include recipe_ingredients for recipe reads (essential context for planning)
+    # This gives us ingredient names + categories for grouping, without needing prompts to specify nested syntax
+    if params.table == "recipes" and "recipe_ingredients" not in select_clause:
+        select_clause += ", recipe_ingredients(name, category)"
+    
     query = client.table(params.table).select(select_clause)
 
     # Auto-filter by user_id for user-owned tables
@@ -315,9 +321,40 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
                     value=f"%{f.value}%"
                 )
 
+    # Smart ingredient matching for inventory/shopping searches
+    # - op "=" → exact match (best single candidate)
+    # - op "similar" → multi match (top 5 candidates)
+    ingredient_ids_to_include: list[str] = []
+    if params.table in ("inventory", "shopping_list"):
+        from alfred.tools.ingredient_lookup import lookup_ingredient
+        
+        for f in filters_to_apply:
+            if f.field == "name" and f.op in ("=", "similar"):
+                search_term = str(f.value).strip("%").strip()
+                if search_term:
+                    # "=" = exact (limit 1), "similar" = multi (limit 5)
+                    limit = 1 if f.op == "=" else 5
+                    matches = await lookup_ingredient(search_term, limit=limit)
+                    
+                    # Handle single vs multi return
+                    if matches:
+                        if isinstance(matches, list):
+                            for match in matches:
+                                ingredient_ids_to_include.append(match.id)
+                                logger.info(f"Similar search '{search_term}' → '{match.name}'")
+                        else:
+                            ingredient_ids_to_include.append(matches.id)
+                            logger.info(f"Exact search '{search_term}' → '{matches.name}'")
+
     # Apply explicit AND filters
     for f in filters_to_apply:
         query = apply_filter(query, f)
+    
+    # For inventory with ingredient matches: add OR condition for ingredient_id
+    if ingredient_ids_to_include and params.table == "inventory":
+        # Combine name filter with ingredient_id match using OR
+        id_list = ",".join(ingredient_ids_to_include)
+        query = query.or_(f"ingredient_id.in.({id_list})")
 
     # Apply OR filters (combined with OR, then AND'd with other filters)
     if params.or_filters:
