@@ -21,6 +21,7 @@ from alfred.graph.state import (
     StepCompleteAction,
     UnderstandOutput,
 )
+from alfred.context.builders import build_reply_context
 from alfred.context.reasoning import get_reasoning_trace, format_reasoning
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
@@ -220,27 +221,26 @@ def _format_proposal_response(think_output) -> str:
     """
     Format a proposal response for user confirmation.
     
-    Takes Think's assumptions and presents them in a friendly,
-    confirmable format.
+    If Think provided a proposal_message, use it directly.
+    Otherwise build a simple presentation from assumptions.
     """
-    goal = getattr(think_output, "goal", "your request")
     message = getattr(think_output, "proposal_message", None)
-    assumptions = getattr(think_output, "assumptions", None)
     
     if message:
-        # Think provided a nice message - use it
-        response = message
-    else:
-        # Build from assumptions
-        response = f"Here's my plan for {goal}:"
-        
-        if assumptions:
-            response += "\n\n"
-            for assumption in assumptions:
-                response += f"• {assumption}\n"
+        # Think provided a message - use it as-is (it should include the ask)
+        return message
     
-    # Add confirmation prompt
-    response += "\n\nSound good? (You can confirm, adjust, or tell me more details.)"
+    # Fallback: build from goal/assumptions
+    goal = getattr(think_output, "goal", "your request")
+    assumptions = getattr(think_output, "assumptions", None)
+    
+    response = f"Here's my plan for {goal}:"
+    
+    if assumptions:
+        response += "\n\n"
+        for assumption in assumptions:
+            response += f"• {assumption}\n"
+        response += "\nLet me know if this works for you."
     
     return response
 
@@ -249,21 +249,21 @@ def _format_clarification_response(think_output) -> str:
     """
     Format clarification questions for the user.
     
-    Presents questions in a friendly, non-interrogative way.
+    If Think provided questions, present them directly.
     """
-    goal = getattr(think_output, "goal", "your request")
     questions = getattr(think_output, "clarification_questions", None)
     
     if not questions:
-        return f"I'd like to help with {goal}, but I need a bit more information. Could you tell me more about what you're looking for?"
+        # Fallback if no questions provided
+        goal = getattr(think_output, "goal", "your request")
+        return f"Before I proceed with {goal}, could you tell me a bit more?"
     
     if len(questions) == 1:
-        # Single question - keep it simple
+        # Single question - use it directly
         return questions[0]
     
-    # Multiple questions - format as a friendly list
-    response = f"I'd love to help with {goal}! A few quick questions:\n\n"
-    
+    # Multiple questions - simple list
+    response = "A few quick questions:\n\n"
     for i, question in enumerate(questions, 1):
         response += f"{i}. {question}\n"
     
@@ -735,6 +735,19 @@ If the user wanted an update but you only read, explain that the update didn't h
     # Get registry for ref enrichment
     registry_dict = state.get("id_registry")
     
+    # V7: Build entity context for Reply (shows saved vs generated distinction)
+    reply_context = build_reply_context(state)
+    entity_context_section = reply_context.entity
+    entity_section_formatted = ""
+    if entity_context_section.active or entity_context_section.generated:
+        from alfred.context.entity import format_entity_context
+        entity_section_formatted = f"""## Entity Context (Saved vs Generated)
+
+{format_entity_context(entity_context_section, mode="reply")}
+
+**Key:** `recipe_3` = already saved (don't offer to save). `gen_recipe_1` = generated, not saved (offer to save).
+"""
+    
     # V6: Build conversation flow section for continuity
     conversation_flow_section = _build_conversation_flow_section(conversation, state.get("current_turn", 0))
     
@@ -744,6 +757,7 @@ If the user wanted an update but you only read, explain that the update didn't h
 ## Goal
 {think_output.goal if think_output else "Complete the user's request"}
 {mismatch_warning}
+{entity_section_formatted}
 {_format_execution_summary(step_results, think_output, state.get("step_metadata", {}), registry_dict=registry_dict)}
 
 ## Conversation Context
@@ -754,7 +768,8 @@ If the user wanted an update but you only read, explain that the update didn't h
 ---
 
 Generate a natural, helpful response. Lead with the outcome, be specific, be concise.
-Speak as a WITNESS - report what actually happened, not what should have happened."""
+Speak as a WITNESS - report what actually happened, not what should have happened.
+**If recommending a saved recipe (recipe_X), present IT — don't invent a new one or offer to save.**"""
 
     try:
         result = await call_llm(

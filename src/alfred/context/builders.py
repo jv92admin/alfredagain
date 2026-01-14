@@ -156,10 +156,11 @@ class ReplyContext:
         """Format context for Reply prompt."""
         sections = []
         
-        # Labels only for natural language
-        entity_section = format_entity_context(self.entity, mode="labels_only")
+        # Entity context with saved/generated distinction
+        # Reply needs to know: recipe_3 = saved, gen_recipe_1 = not saved
+        entity_section = format_entity_context(self.entity, mode="reply")
         if entity_section and "No entities" not in entity_section:
-            sections.append(f"## Available Entities\n\n{entity_section}")
+            sections.append(f"## Entity Context\n\n{entity_section}")
         
         # Conversation with engagement summary
         conv_section = format_conversation(self.conversation, depth=2)
@@ -252,7 +253,7 @@ def build_reply_context(state: "AlfredState") -> ReplyContext:
     Build context for Reply's response generation.
     
     Includes:
-    - Entity labels only (for natural language)
+    - Entity refs + labels with saved/generated status (so Reply knows what to offer saving)
     - Conversation with engagement summary
     - Reasoning trace (phase, user expressed)
     - Execution outcome summary
@@ -267,7 +268,7 @@ def build_reply_context(state: "AlfredState") -> ReplyContext:
     outcome = _build_execution_outcome(step_results, think_output)
     
     return ReplyContext(
-        entity=get_entity_context(registry, current_turn, mode="labels_only"),
+        entity=get_entity_context(registry, current_turn, mode="reply"),
         conversation=get_conversation_history(conversation),
         reasoning=get_reasoning_trace(conversation),
         execution_outcome=outcome,

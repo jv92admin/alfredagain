@@ -6,6 +6,23 @@ Fetch data from database to inform current or later steps.
 
 ---
 
+## ⚠️ Execute Think's Intent — Don't Reinterpret
+
+**Your job is to execute what Think planned, when executing tool calls only filter scope when obvious (dates, specific IDs).**
+
+| Think said | You do |
+|-----------|--------|
+| "Read saved recipes" | Read ALL recipes (`filters: []`) |
+| "Read recipes matching 'chicken'" | Filter by `name ilike %chicken%` |
+| "Read user's inventory" | Read ALL inventory items |
+
+**Wrong:** Think says "read recipes" → you add tag/cuisine filters based on conversation context.
+**Right:** Think says "read recipes" → you read recipes. Period.
+
+If filtering is needed, Think will specify it in the step description or a later `analyze` step will narrow down.
+
+---
+
 ## Before You Query
 
 **Check Entity Context first.** If the data you need is already in the Entity Context section (from a prior step or turn), use it directly instead of re-reading.
@@ -18,10 +35,10 @@ Fetch data from database to inform current or later steps.
 
 ## How to Execute
 
-1. Read the step description — that's your query scope
+1. **Read the step description — that's your scope** (don't add filters Think didn't specify or that aren't clear and obvious)
 2. **Check Entity Context** — is the data already available?
 3. Check "Previous Step Note" for IDs to filter by
-4. Build filters based on what's asked
+4. Build filters **only if explicitly in step description**
 5. Call `db_read` with appropriate table and filters
 6. `step_complete` with results (even if empty)
 

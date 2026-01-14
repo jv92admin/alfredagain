@@ -27,7 +27,7 @@ Each filter: `{"field": "...", "op": "...", "value": "..."}`
 | `ilike` | Fuzzy text (case-insensitive) | `{"field": "name", "op": "ilike", "value": "%chicken%"}` |
 | `is_null` | Field is null | `{"field": "deleted_at", "op": "is_null", "value": true}` |
 | `is_not_null` | Field has value | `{"field": "instructions", "op": "is_not_null", "value": true}` |
-| `contains` | Array contains | `{"field": "tags", "op": "contains", "value": ["quick"]}` |
+| `contains` | Array contains | `{"field": "meal_types", "op": "contains", "value": ["lunch"]}` |
 | `similar` | Semantic search | `{"field": "_semantic", "op": "similar", "value": "light summer dinner"}` |
 
 ---
@@ -84,10 +84,12 @@ Use `or_filters` (top-level param, same level as `filters`):
 }
 ```
 
-### Array Contains
+### Array Contains (for known values only)
 ```json
 {"field": "occasions", "op": "contains", "value": ["weeknight"]}
 ```
+
+**⚠️ `tags` field is NOT queryable.** Tags are user-entered free-form strings with no standardized values. Don't filter by tags — use semantic search or read all and analyze instead.
 
 ---
 

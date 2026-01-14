@@ -165,7 +165,8 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
         mode: Detail level
             - "full": Full data with types and status
             - "refs_and_labels": Just refs and labels (for Think)
-            - "labels_only": Just labels (for Reply)
+            - "labels_only": Just labels (for Reply) - DEPRECATED
+            - "reply": Refs + labels + saved/generated status (for Reply)
             - "do_not_read": Format as "already in context" list for Think
     
     Returns:
@@ -175,7 +176,11 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
     
     # Generated content (user hasn't saved yet)
     if ctx.generated:
-        lines.append("### Generated Content")
+        if mode == "reply":
+            lines.append("### Generated (NOT YET SAVED)")
+            lines.append("*User has NOT saved these yet. Offer to save if appropriate.*")
+        else:
+            lines.append("### Generated Content")
         for e in ctx.generated:
             status = "[saved]" if e.status == "created" else "[unsaved]"
             lines.append(f"- `{e.ref}`: {e.label} {status}")
@@ -194,6 +199,11 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
             lines.append("### Recent Context")
             for e in ctx.active:
                 lines.append(f"- {e.label}")
+        elif mode == "reply":
+            lines.append("### Saved Entities (in database)")
+            lines.append("*These ALREADY EXIST. Don't offer to save them again.*")
+            for e in ctx.active:
+                lines.append(f"- `{e.ref}`: {e.label}")
         elif mode == "refs_and_labels":
             lines.append("### Recent Context")
             for e in ctx.active:
@@ -211,7 +221,7 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
             reason = f" — {e.retention_reason}" if e.retention_reason else ""
             if mode == "labels_only":
                 lines.append(f"- {e.label}")
-            elif mode in ("refs_and_labels", "do_not_read"):
+            elif mode in ("refs_and_labels", "do_not_read", "reply"):
                 lines.append(f"- `{e.ref}`: {e.label}{reason}")
             else:
                 lines.append(f"- `{e.ref}`: {e.label} ({e.entity_type}){reason}")

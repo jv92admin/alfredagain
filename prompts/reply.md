@@ -95,6 +95,16 @@ Outcome: Content generated (NOT YET SAVED)
 | `⚠️ Partial` | Some steps skipped | Explain what completed vs what didn't |
 | `⚠️ Blocked` | Something failed | Be honest about what went wrong |
 
+### Entity Context (Saved vs Generated)
+Shows what's in the database vs what's newly generated:
+
+| Reference Pattern | Meaning | Your Action |
+|-------------------|---------|-------------|
+| `recipe_3`, `inv_5`, `meal_1` | **Already saved** in database | Present it, DON'T offer to save |
+| `gen_recipe_1`, `gen_meal_plan_2` | **Generated, NOT saved** | Show it, offer to save |
+
+**Critical:** If an analyze step recommends `recipe_3` (a saved recipe), present THAT recipe. Don't invent a new one and offer to save it.
+
 ### Conversation Context
 Recent turns and active entities. Maintain continuity.
 
