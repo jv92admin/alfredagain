@@ -456,7 +456,7 @@ def _format_step_results(
             subdomain = metadata.get("subdomain", "recipes")
             lines.append(f"**Step {step_num}** [generate] — {step_desc}:")
             lines.append("")
-            lines.append("## Content to Save (from Step {})".format(step_num))
+            lines.append("## Data from Step {} (for db_create)".format(step_num))
             lines.append("")
             
             # V4: Use payload compiler to pre-normalize content for write
@@ -792,6 +792,50 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
     return "\n".join(lines)
 
 
+def _format_previous_turn_steps(conversation: dict) -> str:
+    """
+    V6: Format last 2 steps from previous turn for Act context.
+    
+    Provides continuity across turns without duplicating full data.
+    Shows what happened, not the full results.
+    """
+    turn_summaries = conversation.get("turn_summaries", [])
+    if not turn_summaries:
+        return ""
+    
+    # Get the most recent turn summary (last turn)
+    last_turn = turn_summaries[-1]
+    steps = last_turn.get("steps", [])
+    
+    if not steps:
+        return ""
+    
+    # Take last 2 steps from previous turn
+    recent_steps = steps[-2:]
+    turn_num = last_turn.get("turn_num", "?")
+    
+    lines = [f"### Previous Turn (Turn {turn_num}) - Last {len(recent_steps)} Steps"]
+    lines.append("*For reference — data is in entity context if still active*")
+    lines.append("")
+    
+    for step in recent_steps:
+        step_num = step.get("step_num", "?")
+        step_type = step.get("step_type", "")
+        subdomain = step.get("subdomain", "")
+        outcome = step.get("outcome", "")
+        entities = step.get("entities_involved", [])
+        note = step.get("note")
+        
+        lines.append(f"**Step {step_num + 1} ({step_type}):** {outcome}")
+        if entities:
+            lines.append(f"  Entities: {', '.join(entities[:10])}")
+        if note:
+            lines.append(f"  Note: {note}")
+    
+    lines.append("")
+    return "\n".join(lines)
+
+
 # Maximum tool calls allowed within a single step (circuit breaker)
 # 3 is enough for: read main → read related → complete (or retry once)
 MAX_TOOL_CALLS_PER_STEP = 3
@@ -914,6 +958,9 @@ async def act_node(state: AlfredState) -> dict:
         conversation, step_results, current_step_index, ACT_CONTEXT_THRESHOLD
     )
     
+    # V6: Previous turn steps (last 2 steps from prior turn for continuity)
+    prev_turn_section = _format_previous_turn_steps(conversation)
+    
     # Content archive (generated content from previous turns)
     content_archive = state.get("content_archive", {})
     archive_section = ""
@@ -935,19 +982,22 @@ async def act_node(state: AlfredState) -> dict:
         session_registry = SessionIdRegistry.from_dict(registry_data)
     session_registry.set_turn(state.get("current_turn", 1))
     
-    # V4: Inject pending artifacts from SessionIdRegistry for write steps
-    # This is the CRITICAL fix: generated content from prior turns is now available
+    # V4: Inject generated content from SessionIdRegistry for write steps
+    # Shows full JSON data for db_create calls (includes promoted artifacts for linked records)
     pending_artifacts_section = ""
     if step_type == "write":
         pending = session_registry.get_all_pending_artifacts()
         if pending:
             import json
-            pa_lines = ["### Pending Generated Content (from prior operations)"]
-            pa_lines.append("This content was generated but not yet saved. Use it for your db_create calls.")
+            pa_lines = ["### Generated Data"]
+            pa_lines.append("Full content for db_create. Use `recipe_id: \"gen_recipe_X\"` for linked records.")
             pa_lines.append("")
             for ref, content in pending.items():
                 label = content.get("name") or content.get("title") or ref
-                pa_lines.append(f"#### {ref}: {label}")
+                # Show status: whether main record exists
+                action = session_registry.ref_actions.get(ref, "generated")
+                status = "[main record saved]" if action == "created" else "[needs main record]"
+                pa_lines.append(f"#### {ref}: {label} {status}")
                 pa_lines.append("```json")
                 pa_lines.append(json.dumps(content, indent=2, default=str))
                 pa_lines.append("```")
@@ -1048,7 +1098,7 @@ async def act_node(state: AlfredState) -> dict:
 
 ## 2. Data Available
 
-{prev_step_section if prev_step_section else "*No previous step data.*"}
+{prev_turn_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
 
 {archive_section}---
 
@@ -1106,11 +1156,19 @@ Analyze the data above and complete the step:
 
 ## 2. Data Available
 
-{prev_step_section if prev_step_section else "*No previous step data.*"}
+{prev_turn_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
 
 {archive_section}---
 
-## 3. Context
+## 3. Entities in Context
+
+**Use these refs when your generated content references existing entities (e.g., recipe_id in meal plans).**
+
+{working_set_section}
+
+---
+
+## 4. Context
 
 {conversation_section if conversation_section else "*No additional context.*"}
 
@@ -1199,10 +1257,10 @@ Generate the requested content and complete the step:
         
         step_history_section = "\n".join(step_history)
         
-        # Pending artifacts - ONLY show for write steps with pending content
+        # Generated data - ONLY show for write steps
         artifacts_section = ""
         if pending_artifacts_section:
-            artifacts_section = f"""## 5. Pending Generated Content
+            artifacts_section = f"""## 5. Generated Data
 
 {pending_artifacts_section}
 ---
@@ -1514,6 +1572,14 @@ What's next?
             step_data = decision.data
         else:
             step_data = current_step_tool_results
+        
+        # V5 FIX: Touch refs mentioned in analyze/generate output
+        # This ensures they stay in "recent context" for subsequent turns
+        if step_type in ("analyze", "generate") and decision.data:
+            session_registry.touch_refs_from_step_data(
+                data=decision.data,
+                result_summary=decision.result_summary
+            )
         
         # Cache the combined result for this step
         new_step_results = step_results.copy()

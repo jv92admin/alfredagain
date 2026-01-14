@@ -502,6 +502,64 @@ class StepSummary(BaseModel):
     record_count: int = 0  # How many records were involved
 
 
+# =============================================================================
+# V6: Turn Execution Summary (Layer 3 - Reasoning Trace)
+# =============================================================================
+
+
+class StepExecutionSummary(BaseModel):
+    """
+    Summary of a single step execution for the reasoning trace.
+    
+    Built by Summarize from step_results and step_metadata.
+    """
+    
+    step_num: int
+    step_type: str  # "read" | "analyze" | "generate" | "write"
+    subdomain: str
+    description: str  # From the plan
+    outcome: str  # "Found 5 recipes" | "Generated 3 options"
+    entities_involved: list[str] = Field(default_factory=list)  # Refs touched
+    note: str | None = None  # Act's note_for_next_step
+
+
+class CurationSummary(BaseModel):
+    """
+    Summary of Understand's entity curation decisions for a turn.
+    """
+    
+    retained: list[str] = Field(default_factory=list)  # Refs explicitly kept
+    demoted: list[str] = Field(default_factory=list)  # Refs no longer active
+    reasons: dict[str, str] = Field(default_factory=dict)  # ref -> reason
+
+
+class TurnExecutionSummary(BaseModel):
+    """
+    V6: Complete summary of what happened in a turn.
+    
+    Built by Summarize at end of turn, stored in conversation["turn_summaries"].
+    Consumed by Think (to avoid re-planning), Reply (for continuity).
+    
+    This is the core of Layer 3 (Reasoning Trace).
+    """
+    
+    turn_num: int
+    
+    # What Think decided
+    think_decision: str = ""  # "plan_direct" | "propose" | "clarify"
+    think_goal: str = ""  # "Find vegetarian recipes"
+    
+    # What steps executed
+    steps: list[StepExecutionSummary] = Field(default_factory=list)
+    
+    # Understand's curation this turn
+    entity_curation: CurationSummary = Field(default_factory=CurationSummary)
+    
+    # Conversation flow metadata (for Reply continuity)
+    conversation_phase: str = ""  # "exploring" | "narrowing" | "confirming" | "executing"
+    user_expressed: str = ""  # "wants variety" | "prefers quick meals"
+
+
 class ConversationContext(TypedDict, total=False):
     """
     Conversation history and context tracking.
@@ -544,6 +602,13 @@ class ConversationContext(TypedDict, total=False):
     # When Think returns propose/clarify, this tracks what was asked
     # Next turn's Think can see user's response in context
     pending_clarification: dict[str, Any] | None  # {type, message, assumptions/questions}
+    
+    # V6: Turn execution summaries (Layer 3 - Reasoning Trace)
+    # Last 2 turns of TurnExecutionSummary for Think/Reply context
+    turn_summaries: list[dict]  # TurnExecutionSummary as dict
+    
+    # V6: Compressed older reasoning (when turn_summaries exceeds 2)
+    reasoning_summary: str  # "Earlier: explored recipes, narrowed to fish options..."
 
 
 # =============================================================================

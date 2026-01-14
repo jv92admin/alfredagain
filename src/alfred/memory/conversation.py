@@ -773,5 +773,8 @@ def initialize_conversation() -> ConversationContext:
         "all_entities": {},
         # V5: Understand context management - history for future Understand agents
         "understand_decision_log": [],
+        # V6: Turn execution summaries (Layer 3 - Reasoning Trace)
+        "turn_summaries": [],
+        "reasoning_summary": "",
     }
 

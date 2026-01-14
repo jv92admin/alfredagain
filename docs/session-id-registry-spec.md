@@ -202,9 +202,31 @@ _lazy_enrich_queue: dict[str, tuple]     # Transient: refs needing name enrichme
 - `format_for_act_prompt()` → Same delineation for Act
 - `get_active_entities(turns_window)` → Returns (recent, retained) tuple
 
+### V7: Artifact Promotion Tracking
+- `ref_turn_promoted` → Track which turn an artifact was promoted (gen_ref → UUID)
+- `get_just_promoted_artifacts()` → Artifacts promoted this turn (for linked tables)
+- `clear_turn_promoted_artifacts()` → Clear at turn end (called by Summarize)
+
 ### Serialization
 - `to_dict()` → Serialize for state storage
 - `from_dict(data)` → Deserialize from state
+
+---
+
+## Integration with Context API (V7)
+
+The registry is consumed by the **Context API** (`src/alfred/context/`):
+
+```python
+# Context API uses registry for Layer 1 (Entity Context)
+from alfred.context.entity import get_entity_context
+
+ctx = get_entity_context(registry, mode="refs_and_labels")
+# Returns: EntityContext with active, generated, retained lists
+```
+
+**Important:** The registry stores refs + labels, NOT full entity content.
+See `docs/context-engineering-architecture.md` for the "refs vs content" gap.
 
 ---
 
@@ -257,4 +279,4 @@ _lazy_enrich_queue: dict[str, tuple]     # Transient: refs needing name enrichme
 
 ---
 
-*Last updated: 2026-01-10*
+*Last updated: 2026-01-14* (V7: Artifact promotion tracking, Context API integration)

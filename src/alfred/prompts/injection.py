@@ -1076,10 +1076,10 @@ def build_write_context(
         if entity_section and "No entities" not in entity_section:
             sections.append(entity_section)
     
-    # 3. Content to Save (compiled payloads)
+    # 3. Compiled payloads (schema-ready for db_create)
     if compiled_payloads:
         import json
-        lines = ["## Content to Save (Pre-Compiled)", ""]
+        lines = ["## Compiled Data (schema-ready for db_create)", ""]
         for payload in compiled_payloads:
             if hasattr(payload, 'target_table'):
                 for record in payload.records:

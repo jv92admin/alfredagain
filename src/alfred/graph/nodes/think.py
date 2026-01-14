@@ -28,6 +28,12 @@ from alfred.background.profile_builder import (
     get_cached_profile,
 )
 from alfred.prompts.injection import format_all_subdomain_guidance
+from alfred.context.reasoning import (
+    get_reasoning_trace,
+    get_current_turn_curation,
+    format_reasoning,
+    format_curation_for_think,
+)
 from alfred.core.id_registry import SessionIdRegistry
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.state import AlfredState, ThinkStep, ThinkOutput
@@ -150,6 +156,18 @@ async def think_node(state: AlfredState) -> dict:
         if entity_counts:
             entity_counts_section = f"**Entity counts:** {entity_counts}"
 
+    # V6: Build reasoning trace section (Layer 3)
+    reasoning_trace_section = ""
+    reasoning_trace = get_reasoning_trace(conversation)
+    if reasoning_trace.recent_summaries or reasoning_trace.reasoning_summary:
+        reasoning_trace_section = format_reasoning(reasoning_trace, node="think")
+    
+    # V6: Get current turn's curation from Understand (same-turn context)
+    curation_section = ""
+    current_curation = get_current_turn_curation(state)
+    if current_curation:
+        curation_section = format_curation_for_think(current_curation)
+
     # Get mode context
     mode_data = state.get("mode_context", {})
     mode_context = ModeContext.from_dict(mode_data) if mode_data else ModeContext.default()
@@ -209,52 +227,67 @@ If they modify → adjust the plan.
 
 """
     
-    # Build the user prompt following: Task → Context → Instructions
+    # Build user prompt as XML sections to fill placeholders in system prompt
     today = date.today().isoformat()
     
-    # Build task section with ref resolution from Understand
+    # Build entities mentioned section
     understand_section = ""
     if referenced_entities:
         understand_section = f"\n**Entities mentioned**: {referenced_entities}"
     
-    # Extract just the mode name for compact display
+    # Extract mode info
     mode_name = mode.name  # QUICK, COOK, PLAN, or CREATE
     max_steps = {"QUICK": 2, "COOK": 4, "PLAN": 8, "CREATE": 4}.get(mode_name, 4)
     
-    user_prompt = f"""## Task
-
-**User said**: "{user_message}"{understand_section}
+    # Build three XML sections that fill the placeholders
+    
+    # 1. Session Context (profile, dashboard, entities, reasoning trace)
+    session_parts = []
+    if profile_section:
+        session_parts.append(profile_section)
+    if subdomain_guidance_section:
+        session_parts.append(subdomain_guidance_section)
+    if dashboard_section:
+        session_parts.append(dashboard_section)
+    if entity_context_section:
+        session_parts.append(entity_context_section)
+    # V6: Add reasoning trace (what happened last turn)
+    if reasoning_trace_section:
+        session_parts.append(f"## What Happened Last Turn\n\n{reasoning_trace_section}")
+    # V6: Add current turn's curation (Understand's decisions)
+    if curation_section:
+        session_parts.append(curation_section)
+    
+    session_context_content = "\n\n".join(session_parts) if session_parts else "*No session context available*"
+    
+    # 2. Conversation History (recent turns, pending clarification)
+    conversation_parts = []
+    if context_section:
+        conversation_parts.append(context_section)
+    if pending_section:
+        conversation_parts.append(pending_section)
+    
+    conversation_content = "\n\n".join(conversation_parts) if conversation_parts else "*No conversation history*"
+    
+    # 3. Immediate Task (user message, today, mode, entity counts)
+    immediate_task_content = f"""**User said**: "{user_message}"{understand_section}
 
 **Today**: {today} | **Mode**: {mode_name} (max {max_steps} steps)
 
-{entity_counts_section}
+{entity_counts_section}"""
+    
+    # Assemble user prompt with XML sections
+    user_prompt = f"""<session_context>
+{session_context_content}
+</session_context>
 
----
+<conversation_history>
+{conversation_content}
+</conversation_history>
 
-{profile_section}
-
-{subdomain_guidance_section}
-
-{dashboard_section}
-
-{entity_context_section}
-
----
-
-## Conversation Context
-
-{context_section}
-
-{pending_section}---
-
-## Your Output
-
-Return one of:
-- `plan_direct` with steps (for clear, unambiguous requests)
-- `propose` with proposal_message (for complex/exploratory requests)
-- `clarify` with questions (only if truly missing critical context)
-
-Each step needs: `description`, `step_type`, `subdomain`, `group`"""
+<immediate_task>
+{immediate_task_content}
+</immediate_task>"""
 
     # Call LLM for planning
     result = await call_llm(

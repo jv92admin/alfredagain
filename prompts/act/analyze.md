@@ -71,6 +71,35 @@ Output: which recipes to use, what gaps need new recipes
 
 ---
 
+## When You Need User Input
+
+If your analysis hits an ambiguity or requires a decision only the user can make, use `ask_user`. **Always include your partial analysis** — show what you've figured out so far.
+
+**When to ask:**
+- Multiple valid interpretations (which protein to prioritize?)
+- Missing critical info (dates, quantities, preferences)
+- Trade-offs that need human judgment (use all chicken now vs save some?)
+
+**Format:**
+
+```json
+{
+  "action": "ask_user",
+  "question": "I see 6 recipes that work with your inventory. Should I prioritize using the chicken (expires Jan 15) or the cod (expires Jan 17)?",
+  "data": {
+    "partial_analysis": {
+      "viable_recipes": 6,
+      "expiring_proteins": ["chicken (Jan 15)", "cod (Jan 17)"],
+      "decision_needed": "protein_priority"
+    }
+  }
+}
+```
+
+**Key:** Show your work. The user should see what you've analyzed, not just get a question out of context.
+
+---
+
 ## What NOT to do
 
 - Make `db_read`, `db_create`, `db_update`, or `db_delete` calls

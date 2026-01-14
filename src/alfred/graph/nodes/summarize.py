@@ -32,6 +32,9 @@ from alfred.graph.state import (
     ConversationContext,
     EntityRef,
     StepSummary,
+    TurnExecutionSummary,
+    StepExecutionSummary,
+    CurationSummary,
 )
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import (
@@ -200,8 +203,17 @@ async def summarize_node(state: AlfredState) -> dict:
     if id_registry is None:
         id_registry_data = None
     elif isinstance(id_registry, dict):
-        id_registry_data = id_registry  # Already a dict
+        # Reconstruct to call cleanup method
+        registry_obj = SessionIdRegistry.from_dict(id_registry)
+        cleared = registry_obj.clear_turn_promoted_artifacts()
+        if cleared > 0:
+            logger.info(f"Summarize: Cleared {cleared} promoted artifacts (turn end)")
+        id_registry_data = registry_obj.to_dict()
     else:
+        # V4.1: Clear promoted artifacts at turn end
+        cleared = id_registry.clear_turn_promoted_artifacts()
+        if cleared > 0:
+            logger.info(f"Summarize: Cleared {cleared} promoted artifacts (turn end)")
         id_registry_data = id_registry.to_dict()
     
     updated_conversation = {
@@ -261,6 +273,39 @@ async def summarize_node(state: AlfredState) -> dict:
         step_metadata=state.get("step_metadata", {}),
         think_output=think_output,
     )
+    
+    # ==========================================================================
+    # 4b. V6: Build TurnExecutionSummary (Layer 3 - Reasoning Trace)
+    # ==========================================================================
+    
+    turn_summary = _build_turn_execution_summary(
+        turn_num=current_turn_num + 1,
+        user_message=user_message,
+        think_output=think_output,
+        step_results=step_results,
+        step_metadata=state.get("step_metadata", {}),
+        understand_output=state.get("understand_output"),
+    )
+    
+    # Store in turn_summaries (keep last 2)
+    turn_summaries = list(conversation.get("turn_summaries", []))
+    turn_summaries.append(turn_summary.model_dump())
+    
+    # Compress older summaries if beyond threshold
+    reasoning_summary = conversation.get("reasoning_summary", "")
+    if len(turn_summaries) > 2:
+        summaries_to_compress = turn_summaries[:-2]
+        turn_summaries = turn_summaries[-2:]
+        
+        # Compress to reasoning_summary (simple concatenation for now, could be LLM)
+        reasoning_summary = _compress_turn_summaries(
+            existing_summary=reasoning_summary,
+            summaries_to_compress=summaries_to_compress,
+        )
+        logger.info(f"Summarize: Compressed {len(summaries_to_compress)} turn summaries")
+    
+    updated_conversation["turn_summaries"] = turn_summaries
+    updated_conversation["reasoning_summary"] = reasoning_summary
     
     # ==========================================================================
     # 5. V4 CONSOLIDATION: Update turn number only
@@ -844,3 +889,175 @@ def _extract_successful_query_patterns(
         patterns.append(pattern)
     
     return patterns
+
+
+# =============================================================================
+# V6: Turn Execution Summary Builder (Layer 3 - Reasoning Trace)
+# =============================================================================
+
+
+def _build_turn_execution_summary(
+    turn_num: int,
+    user_message: str,
+    think_output: Any,
+    step_results: dict[int, Any],
+    step_metadata: dict[int, dict],
+    understand_output: Any,
+) -> TurnExecutionSummary:
+    """
+    Build TurnExecutionSummary from turn data.
+    
+    This is the core of Layer 3 (Reasoning Trace).
+    Captures what happened and why, for Think/Reply context in next turn.
+    """
+    summary = TurnExecutionSummary(turn_num=turn_num)
+    
+    # Extract Think's decision
+    if think_output:
+        summary.think_decision = getattr(think_output, "decision", "")
+        summary.think_goal = getattr(think_output, "goal", "")
+    
+    # Build step summaries
+    steps = think_output.steps if think_output else []
+    for idx, result in step_results.items():
+        step_meta = step_metadata.get(idx, {})
+        step_desc = steps[idx].description if idx < len(steps) else f"Step {idx + 1}"
+        step_type = step_meta.get("step_type") or (steps[idx].step_type if idx < len(steps) else "read")
+        subdomain = step_meta.get("subdomain") or (steps[idx].subdomain if idx < len(steps) else "")
+        
+        # Build outcome from result
+        outcome = _summarize_step_result(result)
+        
+        # Extract entities involved
+        entities = _extract_entity_ids(result)
+        
+        # Get note from metadata (if stored)
+        note = step_meta.get("note_for_next_step")
+        
+        summary.steps.append(StepExecutionSummary(
+            step_num=idx,
+            step_type=step_type,
+            subdomain=subdomain,
+            description=step_desc,
+            outcome=outcome,
+            entities_involved=entities,
+            note=note,
+        ))
+    
+    # Extract Understand's curation
+    if understand_output and hasattr(understand_output, "entity_curation"):
+        curation = understand_output.entity_curation
+        if curation:
+            summary.entity_curation = CurationSummary(
+                retained=[r.ref for r in getattr(curation, "retain_active", [])],
+                demoted=getattr(curation, "demote", []),
+                reasons={r.ref: r.reason for r in getattr(curation, "retain_active", [])},
+            )
+    
+    # Infer conversation phase
+    summary.conversation_phase = _infer_conversation_phase(think_output, step_results)
+    
+    # Extract user expression (simple heuristic)
+    summary.user_expressed = _extract_user_expression(user_message)
+    
+    return summary
+
+
+def _infer_conversation_phase(think_output: Any, step_results: dict) -> str:
+    """
+    Infer conversation phase from Think decision and step types.
+    
+    Phases:
+    - exploring: Reading, browsing, clarifying
+    - narrowing: Analyzing, filtering, comparing
+    - confirming: Proposing, generating drafts
+    - executing: Writing, saving
+    """
+    if not think_output:
+        return "exploring"
+    
+    decision = getattr(think_output, "decision", "")
+    
+    # Proposals and clarifications are exploring/confirming
+    if decision in ("propose", "clarify"):
+        return "exploring"
+    
+    # Check step types
+    if not step_results:
+        return "exploring"
+    
+    steps = think_output.steps if hasattr(think_output, "steps") else []
+    step_types = [getattr(s, "step_type", "read") for s in steps]
+    
+    if "write" in step_types:
+        return "executing"
+    if "generate" in step_types:
+        return "confirming"
+    if "analyze" in step_types:
+        return "narrowing"
+    
+    return "exploring"
+
+
+def _extract_user_expression(user_message: str) -> str:
+    """
+    Extract what user expressed (simple heuristic).
+    
+    This is a lightweight extraction - could be enhanced with LLM.
+    """
+    msg_lower = user_message.lower()
+    
+    # Exclusion patterns
+    if "no " in msg_lower or "not " in msg_lower or "exclude" in msg_lower:
+        # Try to extract what they're excluding
+        for pattern in ["no ", "not ", "exclude "]:
+            if pattern in msg_lower:
+                idx = msg_lower.find(pattern)
+                rest = user_message[idx:idx + 50].split()[1:3]  # Next 1-2 words
+                if rest:
+                    return f"excluded: {' '.join(rest)}"
+    
+    # Preference patterns
+    if "want" in msg_lower or "prefer" in msg_lower:
+        return "expressed preference"
+    
+    if "quick" in msg_lower or "fast" in msg_lower:
+        return "wants quick options"
+    
+    if "?" in user_message:
+        return "asked question"
+    
+    # Confirmation patterns
+    if any(word in msg_lower for word in ["yes", "ok", "sure", "sounds good", "perfect"]):
+        return "confirmed"
+    
+    return ""
+
+
+def _compress_turn_summaries(
+    existing_summary: str,
+    summaries_to_compress: list[dict],
+) -> str:
+    """
+    Compress older turn summaries into reasoning_summary.
+    
+    Simple concatenation for now - could be LLM-enhanced later.
+    """
+    compressed_parts = []
+    
+    for ts in summaries_to_compress:
+        turn_num = ts.get("turn_num", "?")
+        goal = ts.get("think_goal", "")
+        phase = ts.get("conversation_phase", "")
+        
+        if goal:
+            compressed_parts.append(f"Turn {turn_num}: {goal}")
+        elif phase:
+            compressed_parts.append(f"Turn {turn_num}: {phase}")
+    
+    new_summary = "; ".join(compressed_parts)
+    
+    if existing_summary:
+        return f"{existing_summary}; {new_summary}"
+    
+    return new_summary

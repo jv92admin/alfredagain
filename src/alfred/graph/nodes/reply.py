@@ -21,6 +21,7 @@ from alfred.graph.state import (
     StepCompleteAction,
     UnderstandOutput,
 )
+from alfred.context.reasoning import get_reasoning_trace, format_reasoning
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_condensed_context
 
@@ -86,6 +87,44 @@ def _format_batch_status(batch_progress) -> str:
             parts.append(f"  ... and {len(failed_items) - 3} more failures")
     
     return "\n".join(parts)
+
+
+def _build_conversation_flow_section(conversation: dict, current_turn: int) -> str:
+    """
+    V6: Build conversation flow section for Reply continuity.
+    
+    Tells Reply:
+    - What turn we're on
+    - Conversation phase (from reasoning trace)
+    - What user expressed
+    - Guidance for natural continuation
+    """
+    lines = []
+    
+    # Get reasoning trace for phase info
+    reasoning_trace = get_reasoning_trace(conversation)
+    
+    # Turn counter
+    if current_turn > 1:
+        lines.append(f"## Conversation Flow")
+        lines.append(f"**Turn:** {current_turn}")
+        
+        # Phase from last turn summary
+        if reasoning_trace.recent_summaries:
+            last_summary = reasoning_trace.recent_summaries[-1]
+            if last_summary.conversation_phase:
+                lines.append(f"**Phase:** {last_summary.conversation_phase}")
+            if last_summary.user_expressed:
+                lines.append(f"**User expressed:** {last_summary.user_expressed}")
+        
+        # Continuity guidance
+        lines.append("")
+        lines.append("**Continuity guidance:**")
+        lines.append("- This is turn {}, not the start of a conversation".format(current_turn))
+        lines.append("- Acknowledge naturally (\"Got it\", \"Sure\", etc.) — no \"Hello!\" or \"I'd be happy to help\"")
+        lines.append("- Build on what was discussed, don't introduce yourself")
+    
+    return "\n".join(lines) if lines else ""
 
 
 def _format_representational_status(step_results: dict, step_metadata: dict) -> str:
@@ -618,7 +657,7 @@ async def reply_node(state: AlfredState) -> dict:
 ## Status: ⚠️ Blocked
 Reason: {pending_action.details}
 
-{_format_execution_summary(step_results, think_output, state.get("step_metadata", {}))}
+{_format_execution_summary(step_results, think_output, state.get("step_metadata", {}), registry_dict=state.get("id_registry"))}
 
 ## Conversation Context
 {conversation_section}
@@ -693,16 +732,24 @@ Do NOT claim you {wanted_action}d anything. Be honest that you only {actual_acti
 If the user wanted an update but you only read, explain that the update didn't happen.
 """
     
+    # Get registry for ref enrichment
+    registry_dict = state.get("id_registry")
+    
+    # V6: Build conversation flow section for continuity
+    conversation_flow_section = _build_conversation_flow_section(conversation, state.get("current_turn", 0))
+    
     user_prompt = f"""## Original Request
 {user_message}
 
 ## Goal
 {think_output.goal if think_output else "Complete the user's request"}
 {mismatch_warning}
-{_format_execution_summary(step_results, think_output, state.get("step_metadata", {}))}
+{_format_execution_summary(step_results, think_output, state.get("step_metadata", {}), registry_dict=registry_dict)}
 
 ## Conversation Context
 {conversation_section}
+
+{conversation_flow_section}
 
 ---
 
@@ -736,6 +783,7 @@ def _format_execution_summary(
     think_output: Any,
     step_metadata: dict[int, dict] | None = None,
     batch_progress: BatchProgress | None = None,
+    registry_dict: dict | None = None,
 ) -> str:
     """
     Format execution results as a structured handoff for Reply.
@@ -746,6 +794,9 @@ def _format_execution_summary(
     - Speaks as witness, not authority
     - Includes single next-step suggestion
     
+    V5 Change:
+    - Enriches entity refs (recipe_1, meal_1) with labels for better Reply context
+    
     Shows:
     - V4 status (batch, generated vs saved)
     - Plan overview (how many steps, completion status)
@@ -753,6 +804,10 @@ def _format_execution_summary(
     - Key data in human-readable format
     - Next-step suggestion
     """
+    # Build ref->label map from registry for enrichment
+    ref_labels = {}
+    if registry_dict:
+        ref_labels = registry_dict.get("ref_labels", {})
     if not step_results:
         return "No steps were executed."
     
@@ -786,8 +841,29 @@ def _format_execution_summary(
     lines.append(f"Plan: {total_steps} steps | Completed: {completed_steps} | Status: {'✅ Success' if completed_steps >= total_steps else '⚠️ Partial'}")
     lines.append("")
     
+    # V5: Promote last step as PRIMARY OUTPUT (this is what Reply should focus on)
+    if step_results and completed_steps > 0:
+        last_idx = max(step_results.keys())
+        last_result = step_results[last_idx]
+        last_step_type = getattr(steps[last_idx], "step_type", "read") if last_idx < len(steps) else "read"
+        last_desc = steps[last_idx].description if last_idx < len(steps) else "Final step"
+        
+        # Only promote analyze/generate as primary output (reads are supporting data)
+        if last_step_type in ("analyze", "generate"):
+            lines.append("## 🎯 PRIMARY OUTPUT (focus on this)")
+            lines.append(f"**{last_desc}** ({last_step_type})")
+            lines.append("")
+            if isinstance(last_result, dict):
+                lines.append(_format_dict_for_reply(last_result, last_step_type, ref_labels=ref_labels))
+            elif isinstance(last_result, str):
+                lines.append(last_result[:2000])
+            else:
+                lines.append(str(last_result)[:1000])
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+    
     # Show full plan if partial completion (so Reply knows what was skipped)
-    if completed_steps < total_steps and steps:
         lines.append("**Planned steps:**")
         for i, step in enumerate(steps):
             status = "✅" if i in step_results else "⏭️ skipped"
@@ -896,8 +972,8 @@ def _format_execution_summary(
                     lines.append(f"Outcome: Created/Updated '{result.get('name', 'record')}'")
                 else:
                     lines.append("Outcome: Completed")
-                # Format dict as human-readable, stripping IDs
-                lines.append(_format_dict_for_reply(result, step_type))
+                # Format dict as human-readable, stripping IDs, enriching refs
+                lines.append(_format_dict_for_reply(result, step_type, ref_labels=ref_labels))
         
         elif isinstance(result, int):
             lines.append(f"Outcome: Affected {result} records")
@@ -1129,6 +1205,16 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
             elif table_type == "meal_plans":
                 if clean.get("meal_type"):
                     parts.append(f"[{clean['meal_type']}]")
+                # Include recipe info - _recipe_id_label is added by CRUD enrichment
+                recipe_label = clean.get("_recipe_id_label")
+                if recipe_label:
+                    parts.append(f"→ {recipe_label}")
+                elif clean.get("recipe_id"):
+                    parts.append(f"→ recipe:{clean['recipe_id']}")
+                elif clean.get("notes"):
+                    # Use notes as fallback (often contains "Open slot" or recipe description)
+                    notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
+                    parts.append(f"- {notes_preview}")
                 if clean.get("servings"):
                     parts.append(f"({clean['servings']} servings)")
             else:
@@ -1156,17 +1242,33 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
     return "\n".join(lines)
 
 
-def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000) -> str:
+def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000, ref_labels: dict | None = None) -> str:
     """
     Format a dict result for Reply in human-readable format.
     
     For analyze/generate steps, preserves structure but strips IDs.
     For CRUD, extracts key human-readable fields.
+    
+    V5: Enriches entity refs (recipe_1, meal_1) with labels from registry.
     """
     import json
+    import re
+    
+    ref_labels = ref_labels or {}
+    
+    def _enrich_ref(value: str) -> str:
+        """Enrich a ref like 'recipe_1' with its label if available."""
+        if not isinstance(value, str):
+            return value
+        # Check if it looks like a ref (entity_N pattern)
+        if re.match(r'^[a-z]+_\d+$', value):
+            label = ref_labels.get(value)
+            if label and label != value:
+                return f"{value} ({label})"
+        return value
     
     def _clean_nested(obj):
-        """Recursively clean nested data structures."""
+        """Recursively clean nested data structures and enrich refs."""
         if isinstance(obj, dict):
             cleaned = {}
             for k, v in obj.items():
@@ -1175,10 +1277,12 @@ def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000) ->
             return cleaned
         elif isinstance(obj, list):
             return [_clean_nested(item) for item in obj]
+        elif isinstance(obj, str):
+            return _enrich_ref(obj)
         else:
             return obj
     
-    # Clean the data
+    # Clean the data and enrich refs
     clean_data = _clean_nested(data)
     
     # Format based on step type

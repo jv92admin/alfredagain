@@ -346,7 +346,15 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
                             ingredient_ids_to_include.append(matches.id)
                             logger.info(f"Exact search '{search_term}' → '{matches.name}'")
 
-    # Apply explicit AND filters
+    # For inventory/shopping: remove name filters that were processed by ingredient lookup
+    # These used "similar" or "=" ops which apply_filter doesn't handle
+    if params.table in ("inventory", "shopping_list"):
+        filters_to_apply = [
+            f for f in filters_to_apply 
+            if not (f.field == "name" and f.op in ("=", "similar"))
+        ]
+    
+    # Apply explicit AND filters (remaining filters after ingredient lookup removal)
     for f in filters_to_apply:
         query = apply_filter(query, f)
     

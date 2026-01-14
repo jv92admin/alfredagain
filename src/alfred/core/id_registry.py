@@ -76,6 +76,10 @@ class SessionIdRegistry:
     ref_turn_last_ref: dict[str, int] = field(default_factory=dict)  # When last referenced
     ref_source_step: dict[str, int] = field(default_factory=dict)    # Which step created it
     
+    # V4.1: Track when gen_* refs are promoted (saved to DB)
+    # Used to show "Just Saved" section and auto-clear at turn end
+    ref_turn_promoted: dict[str, int] = field(default_factory=dict)
+    
     # Current turn number (set by nodes at start of turn)
     current_turn: int = 0
     
@@ -287,11 +291,67 @@ class SessionIdRegistry:
     
     def get_all_pending_artifacts(self) -> dict[str, dict]:
         """
-        Get all unsaved generated artifacts.
+        Get all generated artifacts (including promoted ones).
         
-        Called by prompt formatting to show "Content to Save" section.
+        Called by Act prompt to show "Generated Data" section with full JSON.
+        Includes promoted artifacts so Act can access linked record data (e.g., ingredients).
         """
         return self.pending_artifacts.copy()
+    
+    def get_truly_pending_artifacts(self) -> dict[str, dict]:
+        """
+        Get artifacts that haven't had their main record created yet.
+        
+        Filters out artifacts where ref_actions shows 'created'.
+        Use this for "Needs Creating" section in prompts.
+        """
+        return {
+            ref: content
+            for ref, content in self.pending_artifacts.items()
+            if self.ref_actions.get(ref) != "created"
+        }
+    
+    def clear_pending_artifact(self, ref: str) -> bool:
+        """
+        Explicitly clear a pending artifact after ALL linked records are saved.
+        
+        Call this after creating both main record and linked records (e.g., recipe + ingredients).
+        Returns True if artifact was cleared, False if not found.
+        """
+        if ref in self.pending_artifacts:
+            del self.pending_artifacts[ref]
+            logger.info(f"SessionRegistry: Cleared pending artifact {ref}")
+            return True
+        return False
+    
+    def get_just_promoted_artifacts(self) -> dict[str, dict]:
+        """
+        Get artifacts that were promoted (saved) THIS turn.
+        
+        These have their main record in DB but content is retained for linked records.
+        Use for "Just Saved This Turn" section in prompts.
+        """
+        return {
+            ref: content
+            for ref, content in self.pending_artifacts.items()
+            if self.ref_turn_promoted.get(ref) == self.current_turn
+        }
+    
+    def clear_turn_promoted_artifacts(self) -> int:
+        """
+        Clear all artifacts that were promoted this turn.
+        
+        Call at END of turn (in Summarize) to clean up saved content.
+        Returns number of artifacts cleared.
+        """
+        to_clear = [
+            ref for ref in self.pending_artifacts
+            if self.ref_turn_promoted.get(ref) == self.current_turn
+        ]
+        for ref in to_clear:
+            del self.pending_artifacts[ref]
+            logger.info(f"SessionRegistry: Cleared promoted artifact {ref} (turn end)")
+        return len(to_clear)
     
     def register_created(
         self,
@@ -331,10 +391,13 @@ class SessionIdRegistry:
             # V4 CONSOLIDATION: Update last ref time
             self.ref_turn_last_ref[gen_ref] = self.current_turn
             
-            # Clear the pending artifact content - it's now saved in DB
+            # V4.1: Track when this ref was promoted (for "Just Saved" section)
+            self.ref_turn_promoted[gen_ref] = self.current_turn
+            
+            # NOTE: Do NOT clear pending_artifacts here!
+            # Content retained until turn end for linked records (recipe_ingredients)
             if gen_ref in self.pending_artifacts:
-                del self.pending_artifacts[gen_ref]
-                logger.info(f"SessionRegistry: PROMOTED {gen_ref} → {uuid[:8]}... (saved, pending cleared)")
+                logger.info(f"SessionRegistry: PROMOTED {gen_ref} → {uuid[:8]}... (saved this turn, content retained)")
             else:
                 logger.info(f"SessionRegistry: PROMOTED {gen_ref} → {uuid[:8]}... (saved)")
             return gen_ref
@@ -736,6 +799,48 @@ class SessionIdRegistry:
         if ref in self.ref_to_uuid:
             self.ref_turn_last_ref[ref] = self.current_turn
     
+    def touch_refs_from_step_data(self, data: dict | None, result_summary: str | None = None) -> int:
+        """
+        Extract and touch any entity refs mentioned in step data or summary.
+        
+        This ensures that refs mentioned in analyze/generate output stay in
+        recent context for subsequent turns.
+        
+        Returns the count of refs touched.
+        """
+        import re
+        touched = 0
+        ref_pattern = re.compile(r'\b(recipe_\d+|inv_\d+|task_\d+|meal_plan_\d+|gen_\w+_\d+)\b')
+        
+        # Extract from data dict (recursively)
+        def extract_refs_from_dict(d: dict | list | str) -> set[str]:
+            refs = set()
+            if isinstance(d, dict):
+                for v in d.values():
+                    refs.update(extract_refs_from_dict(v))
+            elif isinstance(d, list):
+                for item in d:
+                    refs.update(extract_refs_from_dict(item))
+            elif isinstance(d, str):
+                refs.update(ref_pattern.findall(d))
+            return refs
+        
+        all_refs = set()
+        if data:
+            all_refs.update(extract_refs_from_dict(data))
+        if result_summary:
+            all_refs.update(ref_pattern.findall(result_summary))
+        
+        for ref in all_refs:
+            if ref in self.ref_to_uuid:
+                self.touch_ref(ref)
+                touched += 1
+        
+        if touched:
+            logger.debug(f"SessionRegistry: Touched {touched} refs from step data: {all_refs}")
+        
+        return touched
+    
     def get_entities_this_turn(self) -> list[str]:
         """Get all refs created or referenced this turn."""
         return [
@@ -762,8 +867,9 @@ class SessionIdRegistry:
         for ref in self.ref_to_uuid.keys():
             last_ref_turn = self.ref_turn_last_ref.get(ref, 0)
             
-            # Automatic: entity referenced within turns_window
-            if self.current_turn - last_ref_turn < turns_window:
+            # Automatic: entity referenced within turns_window (inclusive)
+            # <= ensures "last 2 turns" includes entities from exactly 2 turns ago
+            if self.current_turn - last_ref_turn <= turns_window:
                 recent_refs.append(ref)
             # Understand-retained: has an active reason
             elif ref in self.ref_active_reason:
@@ -821,23 +927,38 @@ class SessionIdRegistry:
         # Get active entities split by source (same as Think)
         recent_refs, retained_refs = self.get_active_entities(turns_window=2)
         
-        # Section 1: Pending artifacts (highest priority for Act)
-        if self.pending_artifacts:
-            lines.append("## ⚠️ Content to Save")
+        # Section 1: Artifacts needing main record created
+        truly_pending = self.get_truly_pending_artifacts()
+        if truly_pending:
+            lines.append("## Needs Creating")
+            lines.append("These items need their main record saved:")
             lines.append("")
-            for ref, artifact in self.pending_artifacts.items():
+            for ref, artifact in truly_pending.items():
                 label = artifact.get("name") or artifact.get("label") or ref
                 entity_type = self.ref_types.get(ref, "unknown")
                 lines.append(f"- `{ref}`: {label} ({entity_type})")
             lines.append("")
         
+        # Section 1b: Just promoted this turn (saved, but data retained for linked records)
+        just_promoted = self.get_just_promoted_artifacts()
+        if just_promoted:
+            lines.append("## Just Saved This Turn")
+            lines.append("Main record created. For linked tables (recipe_ingredients), use the ref as FK:")
+            lines.append("")
+            for ref, artifact in just_promoted.items():
+                label = artifact.get("name") or artifact.get("label") or ref
+                entity_type = self.ref_types.get(ref, "unknown")
+                uuid = self.ref_to_uuid.get(ref, "?")[:8]
+                lines.append(f"- `{ref}`: {label} ({entity_type}) → saved as {uuid}...")
+            lines.append("")
+        
         # Section 2: This turn's entities (from current step results)
         this_turn_refs = self.get_entities_this_turn()
-        # Filter out pending (shown above), linked (shown inline with parents), and get unique from this turn
+        # Filter out pending/promoted (shown above), get unique from this turn
         this_turn_new = [r for r in this_turn_refs 
-                        if r not in self.pending_artifacts 
-                        and self.ref_turn_created.get(r) == self.current_turn
-                        and self.ref_actions.get(r) != "linked"]  # Linked entities shown inline, not as separate items
+                        if r not in truly_pending 
+                        and r not in just_promoted
+                        and self.ref_turn_created.get(r) == self.current_turn]
         if this_turn_new:
             lines.append("## This Turn")
             lines.append("")
@@ -849,12 +970,14 @@ class SessionIdRegistry:
             lines.append("")
         
         # Section 3: Recent Context (last 2 turns - matches Think)
+        # NOTE: Removed "linked" filter - linked entities ARE useful refs
         recent_not_this_turn = [r for r in recent_refs 
                                if r not in this_turn_new 
-                               and r not in self.pending_artifacts
-                               and self.ref_actions.get(r) != "linked"]  # Linked entities shown inline
+                               and r not in self.pending_artifacts]
         if recent_not_this_turn:
             lines.append("## Recent Context (last 2 turns)")
+            lines.append("**Already loaded — use IDs directly in filters instead of re-querying.**")
+            lines.append("Example: `{\"field\": \"id\", \"op\": \"in\", \"value\": [\"recipe_3\", \"recipe_4\"]}`")
             lines.append("")
             for ref in recent_not_this_turn:
                 label = self.ref_labels.get(ref, ref)
@@ -922,14 +1045,17 @@ class SessionIdRegistry:
         # Get active entities split by source
         recent_refs, retained_refs = self.get_active_entities(turns_window=2)
         
-        # Section 1: Pending artifacts (highest priority)
+        # Section 1: Generated content (user hasn't saved yet)
         if self.pending_artifacts:
-            lines.append("## ⚠️ Generated (NOT YET SAVED)")
+            lines.append("## Generated Content")
+            lines.append("User can save these or discard:")
             lines.append("")
             for ref, artifact in self.pending_artifacts.items():
                 label = artifact.get("name") or artifact.get("label") or ref
                 entity_type = self.ref_types.get(ref, "unknown")
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [needs save]")
+                action = self.ref_actions.get(ref, "generated")
+                status = "saved" if action == "created" else "unsaved"
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [{status}]")
             lines.append("")
         
         if not self.ref_to_uuid and not self.pending_artifacts:
@@ -940,12 +1066,14 @@ class SessionIdRegistry:
             return "\n".join(lines)
         
         # Section 2: Recent Context (last 2 turns - automatic)
-        # Filter out: pending (shown above), linked (shown inline with parent records)
+        # Filter out: pending artifacts (shown above)
+        # NOTE: Removed "linked" filter - linked entities ARE useful refs
         recent_display = [r for r in recent_refs 
-                         if not (r.startswith("gen_") and r in self.pending_artifacts)
-                         and self.ref_actions.get(r) != "linked"]
+                         if not (r.startswith("gen_") and r in self.pending_artifacts)]
         if recent_display:
             lines.append("## Recent Context (last 2 turns)")
+            lines.append("**These entities are already loaded. Do NOT re-read them.**")
+            lines.append("Reference by ID (e.g., `recipe_3`) in step descriptions. Act can use them directly.")
             lines.append("")
             for ref in recent_display:
                 label = self.ref_labels.get(ref, ref)
@@ -997,6 +1125,7 @@ class SessionIdRegistry:
             "ref_turn_created": self.ref_turn_created,
             "ref_turn_last_ref": self.ref_turn_last_ref,
             "ref_source_step": self.ref_source_step,
+            "ref_turn_promoted": self.ref_turn_promoted,
             "current_turn": self.current_turn,
             # V5: Understand context management
             "ref_active_reason": self.ref_active_reason,
@@ -1018,6 +1147,7 @@ class SessionIdRegistry:
         registry.ref_turn_created = data.get("ref_turn_created", {})
         registry.ref_turn_last_ref = data.get("ref_turn_last_ref", {})
         registry.ref_source_step = data.get("ref_source_step", {})
+        registry.ref_turn_promoted = data.get("ref_turn_promoted", {})
         registry.current_turn = data.get("current_turn", 0)
         # V5: Understand context management
         registry.ref_active_reason = data.get("ref_active_reason", {})

@@ -170,12 +170,33 @@ Both Think and Act see entities in delineated sections:
 - gen_recipe_1: Thai Curry (recipe) [needs save]
 
 ## Recent Context (last 2 turns)
+**These entities are already loaded. Do NOT re-read them.**
+Reference by ID (e.g., `recipe_3`) in step descriptions. Act can use them directly.
+
 - recipe_1: Butter Chicken (recipe) [read]
 - inv_1: Eggs (inv) [read]
 
 ## Long Term Memory (retained from earlier)
 - gen_meal_plan_1: Weekly Plan (meal, turn 2) — *User's ongoing goal*
 ```
+
+### V6: Recent Context Guidance
+
+**Key insight:** Entities in Recent Context are already in memory.
+
+| If Think sees... | Think should... |
+|------------------|-----------------|
+| `recipe_1` through `recipe_9` in Recent Context | Skip read step, plan analyze directly |
+| User says "exclude recipe_5, recipe_6" | Plan: "Analyze recipes excluding recipe_5, recipe_6" |
+
+**Act receives similar guidance:**
+```
+## Recent Context (last 2 turns)
+**Already loaded — use IDs directly in filters instead of re-querying.**
+Example: `{"field": "id", "op": "in", "value": ["recipe_3", "recipe_4"]}`
+```
+
+This prevents redundant database queries and ensures Act uses the correct filtering approach.
 
 ---
 
@@ -340,23 +361,160 @@ If needed, could add union mode:
 
 ---
 
+## 8. V6 Enhancements Summary
+
+| Feature | Implementation |
+|---------|----------------|
+| Think as conversation architect | Redesigned prompt with Kitchen UX principles, propose/clarify emphasis |
+| Recent Context guidance | Explicit "already loaded, don't re-read" instructions in prompts |
+| Smart inventory/shopping search | `name = "chicken"` uses `ingredient_lookup` for fuzzy matching |
+| Entity retention on analyze | `touch_refs_from_step_data()` keeps mentioned entities active |
+| Off-by-one fix | `<=` instead of `<` for 2-turn window (inclusive) |
+| Reply prompt redesign | Presentation agent with explicit formatting rules |
+
+---
+
+## 9. V7 Enhancements Summary (Context API)
+
+| Feature | Implementation |
+|---------|----------------|
+| **Three-layer Context API** | `src/alfred/context/` module with entity, conversation, reasoning builders |
+| **TurnExecutionSummary** | Pydantic model capturing Think decision, steps, phase, curation |
+| **Reasoning Trace** | Last 2 turn summaries passed to Think for continuity |
+| **Prior Turn Steps** | Act sees last 2 steps from previous turn |
+| **Conversation Continuity** | Reply sees phase/tone for natural flow |
+| **Generate entity context fix** | Generate steps now see entity refs (for meal plan recipe_ids) |
+| **Artifact promotion tracking** | `ref_turn_promoted` + `clear_turn_promoted_artifacts()` for linked tables |
+| **Recipe data levels guidance** | Think knows when to request "with instructions" |
+
+### Context API Files
+
+```
+src/alfred/context/
+├── __init__.py
+├── entity.py        # get_entity_context(), format_entity_context()
+├── conversation.py  # get_conversation_history(), format_conversation()
+├── reasoning.py     # get_reasoning_trace(), format_reasoning()
+└── builders.py      # build_think_context(), build_act_context(), build_reply_context()
+```
+
+### TurnExecutionSummary Structure
+
+```python
+class TurnExecutionSummary(BaseModel):
+    turn_num: int
+    think_goal: str
+    think_decision: str           # "plan_direct" | "propose" | "clarify"
+    conversation_phase: str       # "exploring" | "narrowing" | "confirming" | "executing"
+    user_expressed: str
+    steps: list[StepExecutionSummary]
+    curation: CurationSummary | None
+```
+
+### Known Gaps (Documented)
+
+1. **Recent Context ≠ Data Loaded**: Refs in "Recent Context" don't mean full data is available to Act
+2. **Solution path**: Consider storing condensed snapshots alongside refs
+
+### Smart Inventory/Shopping Search
+
+`db_read` for `inventory` and `shopping_list` tables now uses intelligent ingredient matching:
+
+```python
+# LLM requests
+{"field": "name", "op": "=", "value": "chicken"}
+
+# System does (behind the scenes)
+1. lookup_ingredient("chicken") → finds ingredient_id for chicken, chicken breasts, etc.
+2. Builds query: WHERE ingredient_id IN (...) OR name ILIKE '%chicken%'
+3. Returns all matching items
+```
+
+| Operator | Behavior |
+|----------|----------|
+| `op: "="` | Smart single match via ingredient lookup |
+| `op: "similar"` | Returns top N candidates (with `limit` param) |
+
+**LLMs don't need to know the mechanics.** Simple `name = "chicken"` works.
+
+### Entity Retention on Analyze/Generate
+
+When `step_complete` returns for analyze or generate steps:
+- System extracts all entity refs from `data` and `result_summary`
+- Calls `touch_ref()` on each to update `last_ref_turn`
+- Entities stay in Recent Context for subsequent steps
+
+This fixes the problem where recipes mentioned in Analyze output would "fall out" of context before Generate could use them.
+
+---
+
 ## Critical Insights
 
-### Refs vs Content
+### Three-Layer Context Model (V7)
+
+Alfred uses a Context API with three layers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CONTEXT API                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  LAYER 1: ENTITY         │  LAYER 2: CONVERSATION  │  LAYER 3: REASONING    │
+│  "What exists"           │  "What was said"        │  "What LLMs decided"   │
+│  Owner: SessionIdRegistry│  Owner: Summarize       │  Owner: Summarize      │
+│  + Understand curation   │                         │  (TurnExecutionSummary)│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+| Layer | Survives Turns | Contains |
+|-------|----------------|----------|
+| **Entity** | ✅ Yes | Refs, labels, types, turn numbers, retention reasons |
+| **Conversation** | ✅ Yes | User/assistant messages, compressed history |
+| **Reasoning** | ✅ Yes (last 2) | TurnExecutionSummary: decision, steps, phase, curation |
+
+**Node-specific builders:** `src/alfred/context/builders.py`
+- `build_think_context()` — Entity (refs+labels) + Conversation + Reasoning
+- `build_act_context()` — Entity (refs+labels) + Prior turn steps + Step results
+- `build_reply_context()` — Entity (labels only) + Conversation phase/tone
+
+### Refs vs Content (The Gap)
 
 **What SessionIdRegistry stores per entity:**
 - ✅ Ref → UUID mapping
 - ✅ Label (e.g., "Butter Chicken")
 - ✅ Type, last action, turn info
-- ❌ Full entity content (e.g., quantity, location, all fields)
+- ❌ Full entity content (metadata, ingredients, instructions)
+
+**What step_results stores:**
+- ✅ Full entity content from reads
+- ❌ Does NOT survive turns (wiped when Think creates new plan)
 
 **Implication for Think's planning:**
 
 | Step Type | What Act Needs | Refs Sufficient? |
 |-----------|----------------|------------------|
 | write/delete | Just the ref | ✅ Yes |
-| generate | Labels + general context | ✅ Yes |
+| generate (meal plan with IDs) | Refs to use as recipe_id | ✅ Yes |
+| generate (with diffs/substitutions) | **Full instructions** | ❌ No — read with instructions! |
 | analyze (compare/match) | **Full row data** | ❌ No — read first! |
+
+### ⚠️ The Recent Context Gap
+
+**The problem:**
+1. Think sees "Recent Context": `recipe_1: Chicken Tikka (recipe) [read]`
+2. Think assumes data is "loaded" and plans: `analyze recipes for inventory match`
+3. Act runs analyze step... but only has the REF, not the actual recipe data!
+4. If recipe was read in Turn N-1 (not this turn), step_results was already wiped.
+
+**Current behavior:**
+- "Recent Context" = refs we know about (labels available)
+- Does NOT mean full data is loaded
+
+**Think should plan reads when:**
+- Analyze needs actual data (ingredients, quantities)
+- Generate needs instructions (for diffs, variations)
+- Any step needs more than just the ref/label
+
+**Future consideration:** Store condensed snapshots (metadata + ingredients) alongside refs so "Recent Context" actually contains usable summary data.
 
 ### Dashboard ≠ Context
 
@@ -367,6 +525,20 @@ If an entity appears in Dashboard but NOT in "Entities in Context":
 - Think cannot use a ref for it (e.g., `recipe_1` doesn't exist)
 - Think must search by NAME, not by ref
 
+### Recent Context = Already Loaded (V6)
+
+**This is the most important optimization insight:**
+
+If Think sees `recipe_1` through `recipe_9` in "Recent Context (last 2 turns)":
+- ❌ DON'T: Plan a read step to "read all recipes"
+- ✅ DO: Plan an analyze step referencing those entities
+
+Act sees the same context with explicit guidance:
+- ❌ DON'T: Query `name not_ilike '%cod%'`  
+- ✅ DO: Filter `id in ['recipe_3', 'recipe_4', ...]`
+
+**Result:** Fewer database calls, correct entity filtering, better performance.
+
 ### Linked Entities
 
 Entities discovered via FK (e.g., recipe_id in meal_plans):
@@ -376,4 +548,4 @@ Entities discovered via FK (e.g., recipe_id in meal_plans):
 
 ---
 
-*Last updated: 2026-01-10* (Added semantic search section)
+*Last updated: 2026-01-14* (V7: Context API, TurnExecutionSummary, refs vs content gap documented)

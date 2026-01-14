@@ -1,7 +1,7 @@
 # Alfred Architecture Overview
 
-**Last Updated:** January 10, 2026  
-**Status:** V5 with context management, FK enrichment, improved display
+**Last Updated:** January 13, 2026  
+**Status:** V6 with conversation management, smart search, entity retention
 
 ---
 
@@ -11,7 +11,6 @@
 |-----|---------|
 | [context-engineering-architecture.md](context-engineering-architecture.md) | **How it works now** — entity management, ID translation, state vs context |
 | [session-id-registry-spec.md](session-id-registry-spec.md) | Session ID registry implementation details |
-| [understand-context-management-spec.md](understand-context-management-spec.md) | V5 Understand as "Memory Manager" |
 
 ---
 
@@ -53,9 +52,9 @@ Alfred is a **multi-agent conversational assistant** for kitchen management: inv
 | Node | Purpose | Key Output |
 |------|---------|------------|
 | **Understand** | Memory manager: entity resolution, context curation, quick mode | `referenced_entities`, `entity_curation` |
-| **Think** | Plan steps with types and groups | `steps[]`, `decision` |
-| **Act** | Execute via CRUD or generate | Tool calls, `step_complete` |
-| **Reply** | Synthesize user-facing response | Natural language |
+| **Think** | Conversation architect: plan steps, propose checkpoints, manage multi-turn flows | `steps[]`, `decision` (plan_direct/propose/clarify) |
+| **Act** | Execute via CRUD or generate, use Recent Context directly | Tool calls, `step_complete` |
+| **Reply** | Present execution results beautifully | Natural language, formatted output |
 | **Summarize** | Compress context, persist registry | Updated conversation |
 
 ---
@@ -131,6 +130,57 @@ Bypasses Think for simple **single-part** queries:
 
 ---
 
+## 6.1 Context Layers (V7)
+
+Alfred uses a **three-layer context model** managed by the Context API:
+
+| Layer | What | Owner | Survives Turns? |
+|-------|------|-------|-----------------|
+| **Entity** | Refs, labels, status | SessionIdRegistry | ✅ Yes |
+| **Conversation** | User/assistant messages | Summarize | ✅ Yes |
+| **Reasoning** | What LLMs decided, TurnExecutionSummary | Summarize | ✅ Yes (last 2) |
+
+### What Each Node Sees
+
+| Node | Entity | Conversation | Reasoning |
+|------|--------|--------------|-----------|
+| **Think** | Refs + labels | Full recent, compressed older | Last 2 turn summaries |
+| **Act** | Refs + labels + step results | Recent | Prior turn steps (last 2) |
+| **Reply** | Labels only | Recent | Current turn summary |
+
+### Recent Context vs Step Results
+
+| Section | What It Contains | When Available |
+|---------|------------------|----------------|
+| **Recent Context** | Refs + labels only: `recipe_1: Chicken Tikka (recipe) [read]` | Always (from registry) |
+| **Step Results** | Full data: metadata, ingredients, instructions | Only when read THIS turn |
+
+**⚠️ Known Gap:** Think sees refs in "Recent Context" and may plan an analyze step assuming Act has the data. But if the entity was read in a PRIOR turn (not this turn), Act only has the ref — NOT the full data (ingredients, metadata). 
+
+**Current guidance:** Think should plan a read step when Act needs actual entity data for analysis/generation. "Recent Context" means "we know about it" not "data is loaded."
+
+**Future consideration:** Store condensed snapshots (metadata + ingredients) alongside refs so "Recent Context" includes usable data, not just labels.
+
+---
+
+## 6.2 Smart Inventory/Shopping Search (V6)
+
+`db_read` for `inventory` and `shopping_list` now uses smart ingredient matching:
+
+| Filter Operator | Behavior |
+|-----------------|----------|
+| `op: "="` | Smart single match via `ingredient_lookup` |
+| `op: "similar"` | Returns top N candidates above threshold |
+
+**Example:** `{field: "name", op: "=", value: "chicken"}` 
+→ Looks up "chicken" in ingredients table
+→ Finds `chicken breasts`, `chicken thighs` by ingredient_id
+→ Returns all matching inventory items
+
+LLMs don't need to know the mechanics — just use `name = "chicken"`.
+
+---
+
 ## 7. File Structure
 
 ```
@@ -181,6 +231,8 @@ alfred/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| V7 | 2026-01-14 | Three-layer Context API, TurnExecutionSummary, conversation continuity, generate entity context fix |
+| V6 | 2026-01-13 | Think as conversation architect, Recent Context guidance, smart inventory search, entity retention fixes |
 | V5 | 2026-01-10 | Understand as Memory Manager, FK enrichment, improved display |
 | V4.1 | 2026-01-08 | Think prompt cleanup, deprecated unused fields |
 | V4 | 2026-01-06 | SessionIdRegistry, unified entity management |
