@@ -202,6 +202,7 @@ async def summarize_node(state: AlfredState) -> dict:
     # Handle both SessionIdRegistry objects and raw dicts (from prior sessions)
     if id_registry is None:
         id_registry_data = None
+        logger.warning("Summarize: id_registry is None in state! Entities will be lost.")
     elif isinstance(id_registry, dict):
         # Reconstruct to call cleanup method
         registry_obj = SessionIdRegistry.from_dict(id_registry)
@@ -279,7 +280,7 @@ async def summarize_node(state: AlfredState) -> dict:
     # ==========================================================================
     
     turn_summary = _build_turn_execution_summary(
-        turn_num=current_turn_num + 1,
+        turn_num=current_turn_num,  # workflow already incremented
         user_message=user_message,
         think_output=think_output,
         step_results=step_results,
@@ -308,16 +309,39 @@ async def summarize_node(state: AlfredState) -> dict:
     updated_conversation["reasoning_summary"] = reasoning_summary
     
     # ==========================================================================
-    # 5. V4 CONSOLIDATION: Update turn number only
+    # 5. V5: Persist step_results for cross-turn entity data access
+    # 
+    # This is the key to Act seeing full entity data from prior turns.
+    # - Active entities (last 2 turns) get FULL data from turn_step_results
+    # - Long-term memory (>2 turns) gets refs only
+    # - Token cost: ~20-40 lines per entity vs 300+ lines for re-read calls
+    # ==========================================================================
+    
+    turn_step_results = dict(conversation.get("turn_step_results", {}))
+    if step_results:
+        # Store this turn's step results keyed by turn number (workflow already incremented)
+        turn_step_results[str(current_turn_num)] = _serialize_step_results(step_results)
+        
+        # Prune to last 2 turns (matches active entity window)
+        turn_keys = sorted(turn_step_results.keys(), key=int, reverse=True)
+        for old_key in turn_keys[2:]:
+            del turn_step_results[old_key]
+            logger.info(f"Summarize: Pruned turn_step_results for turn {old_key}")
+    
+    updated_conversation["turn_step_results"] = turn_step_results
+    
+    # ==========================================================================
+    # 6. V4 CONSOLIDATION: Update turn number only
     # Entity tracking is handled by SessionIdRegistry in Act node
     # ==========================================================================
     
-    updated_conversation["current_turn"] = current_turn_num + 1
+    # Store current turn (workflow already incremented at turn start)
+    updated_conversation["current_turn"] = current_turn_num
     
     return {
         "conversation": updated_conversation,
         "summarize_output": summarize_output.model_dump(),
-        "current_turn": current_turn_num + 1,
+        "current_turn": current_turn_num,
     }
 
 
@@ -1032,6 +1056,53 @@ def _extract_user_expression(user_message: str) -> str:
         return "confirmed"
     
     return ""
+
+
+def _serialize_step_results(step_results: dict[int, Any]) -> dict[str, Any]:
+    """
+    Serialize step_results for JSON storage in conversation.
+    
+    Converts integer keys to strings (JSON requires string keys).
+    Extracts actual data from tool result tuples for cleaner storage.
+    
+    Storage format per step:
+    {
+        "0": {
+            "data": [...records...],
+            "table": "recipes",
+            "tool": "db_read"
+        }
+    }
+    """
+    serialized = {}
+    
+    for step_idx, result in step_results.items():
+        step_key = str(step_idx)
+        
+        # Handle tool result tuples: (tool, table, data) or (tool, data)
+        if isinstance(result, list) and result and isinstance(result[0], tuple):
+            # Multiple tool calls in this step - take the last one's data
+            last_call = result[-1]
+            if len(last_call) == 3:
+                tool, table, data = last_call
+                serialized[step_key] = {
+                    "data": data,
+                    "table": table,
+                    "tool": tool,
+                }
+            elif len(last_call) == 2:
+                tool, data = last_call
+                serialized[step_key] = {
+                    "data": data,
+                    "tool": tool,
+                }
+            else:
+                serialized[step_key] = {"data": result}
+        else:
+            # Raw data (analyze/generate results)
+            serialized[step_key] = {"data": result}
+    
+    return serialized
 
 
 def _compress_turn_summaries(

@@ -53,20 +53,27 @@ For each retention, provide a reason. Future Understand agents will read this:
 
 ### 3. Quick Mode Detection
 
-**Quick mode:** Simple single-domain READ operations.
+**Quick mode:** Simple, single-table, context-dependent DB reads.
+
+**Three criteria (ALL must be true):**
+1. **Single table** — one DB table, not joins (recipes + ingredients = NOT quick)
+2. **Read only** — no writes, no deletes
+3. **Data lookup** — answer is IN the database, not knowledge/reasoning across data in context
 
 | Request | Quick? | Why |
 |---------|--------|-----|
-| "show my inventory" | ✅ Yes | Single read, single domain |
-| "what recipes do I have?" | ✅ Yes | Single read, single domain |
+| "show my inventory" | ✅ Yes | Single table, read, data lookup |
+| "what recipes do I have?" | ✅ Yes | Single table, read, data lookup |
+| "show my shopping list" | ✅ Yes | Single table, read, data lookup |
 | "add milk to inventory" | ❌ No | Write operation |
 | "delete that recipe" | ❌ No | Write operation |
-| "show recipes and pantry" | ❌ No | Cross-domain (2 tables) |
-| "meal plan and recipes" | ❌ No | Cross-domain (2 tables) |
-| "X and also Y" | ❌ No | Multi-part = NOT quick |
-| "do X then Y" | ❌ No | Multi-step |
+| "show recipes and pantry" | ❌ No | Two tables |
+| "show recipe with ingredients" | ❌ No | Two tables (recipes + recipe_ingredients) |
+| "what can I substitute for X?" | ❌ No | **Knowledge question** — answer isn't in DB |
+| "how do I cook Y?" | ❌ No | **Knowledge question** — requires reasoning |
+| "X and also Y" | ❌ No | Multi-part = Think plans steps |
 
-**⚠️ "AND" / "ALSO" = NOT QUICK.** If user asks for two different things, Think needs to plan steps.
+**⚠️ Knowledge questions are NEVER quick.** Substitutions, techniques, cooking tips, recommendations — these require Think to reason, not DB lookups.
 
 **Rule:** When in doubt, `quick_mode: false`. Think can handle it.
 

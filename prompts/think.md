@@ -194,36 +194,46 @@ Act figures out the mechanics (filters, queries, tool calls). You communicate th
 - NOT actual data — just awareness of what the user has
 
 **Context Data** (in "Recent Context"):
-- Actual entity refs: `recipe_1`, `inv_5`, `shop_3`
-- Good for: Act to execute operations, analyze specifics, make decisions
-- Only data from last 2 turns is loaded
+- Entity refs + labels (and a last-known status): `recipe_1`, `inv_5`, `shop_3`
+- Good for: referencing *known entities* deterministically (no name guessing)
+- **Important:** Recent Context is NOT “loaded data”. It’s refs/labels only. Act can only analyze actual data that appears in Step Results for THIS turn.
 
 ### When to Read vs Analyze
 
-| You See | Meaning | Action |
-|---------|---------|--------|
-| "Inventory: 59 items" in Kitchen Snapshot | User has inventory | You know the domain is relevant |
-| `inv_1` through `inv_N` in Recent Context | Data is loaded | Use `analyze` directly |
-| Kitchen Snapshot shows items but NO refs in Recent Context | Data exists but not loaded | Must `read` first, then `analyze` |
+**Simple rule:** Act has full data for **Active Entities** (last 2 turns). Long-term memory is refs only.
 
-**The rule:** Act can only work with data that has refs in Recent Context. Kitchen Snapshot tells you what exists — Recent Context tells you what's loaded.
+| You See | Data Available? | Action |
+|---------|-----------------|--------|
+| Refs in **"Active Entities"** | ✅ Full data | Analyze directly — no re-read needed |
+| Refs in **"Long Term Memory"** | ❌ Refs only | Plan a `read` step first |
+| Kitchen Snapshot shows items, no refs | ❌ No refs yet | Plan a `read` (by name/semantic) |
 
-**Pattern when data isn't loaded:**
-```json
-{"steps": [
-  {"description": "Read inventory", "step_type": "read", "subdomain": "inventory", "group": 0},
-  {"description": "Analyze for substitutes", "step_type": "analyze", "subdomain": "inventory", "group": 1}
-]}
-```
+**Why this matters:** A re-read costs 2 LLM calls (read + step_complete). Persisted data costs ~20-40 lines. Huge token savings.
 
-**Pattern when data IS loaded (refs visible in Recent Context):**
+**Pattern when data IS in Active Entities:**
 ```json
 {"description": "Analyze inventory in context for substitutes", "step_type": "analyze", "subdomain": "inventory"}
 ```
 
+**Pattern when ref is in Long Term Memory (needs re-read):**
+```json
+{"steps": [
+  {"description": "Read recipe_1 (not in active context)", "step_type": "read", "subdomain": "recipes", "group": 0},
+  {"description": "Analyze recipe for modifications", "step_type": "analyze", "subdomain": "recipes", "group": 1}
+]}
+```
+
+**How to tell:** Look at the entity context section in your prompt:
+- `## Active Entities (Full Data)` → data available, no read needed
+- `## Long Term Memory (refs only)` → need a read step
+
 ### Recipe Data Levels (When to Request Instructions)
 
-**How Alfred handles recipes:** To save tokens, recipes are shown as summaries (metadata + ingredients) by default. Instructions are only included when explicitly needed.
+**Recipe-only nuance:** To save tokens, recipe reads are *summary-first* by default (metadata + ingredients). Instructions are only included when explicitly needed.
+
+**How you can tell (deterministic flags in Recent Context):**
+- `recipe_3 ... [read:summary]` = last read did NOT include `instructions`
+- `recipe_3 ... [read:full]` = last read DID include `instructions`
 
 | Task | What You Need | Step Description |
 |------|---------------|------------------|
@@ -237,6 +247,15 @@ Act figures out the mechanics (filters, queries, tool calls). You communicate th
 **When to be explicit:** If your step involves modifying, creating variations, or writing detailed diffs, say "with instructions" in the step description. Act will include full instructions.
 
 **When summary is fine:** Browsing, selecting, analyzing feasibility, drafting schedules — summary (metadata + ingredients) is enough.
+
+**Deterministic rule for "show me the recipe":**
+- If the user asks for **full details / instructions / how to cook it**, plan a **`read`** step for that recipe.
+- Use **"with instructions"** when you need the full instruction list.
+- Do **NOT** use `analyze` to "show details" unless the full recipe record data already appears in Step Results for this turn.
+
+**Common cases that usually need instructions:**
+- Answering “how do I cook recipe_X?” / “tell me more about this recipe”
+- Meal-planning steps that require substitutions/diffs/variations (not just scheduling)
 
 </system_structure>
 

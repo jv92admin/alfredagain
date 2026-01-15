@@ -120,10 +120,15 @@ When you need to exclude specific items (e.g., user said "no cod"):
 
 ## Column Selection
 
-If selecting specific columns, **always include `name` or `title`** for readability:
+If selecting specific columns:
+- **Always include `id`** — required for entity tracking
+- **Always include `name` or `title`** — for readability
+
 ```json
 {"columns": ["id", "name", "instructions"]}
 ```
+
+**Prefer omitting `columns` entirely** to get all fields (uses `*`).
 
 ---
 

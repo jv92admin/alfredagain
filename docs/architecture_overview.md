@@ -116,17 +116,25 @@ See [context-engineering-architecture.md](context-engineering-architecture.md) f
 
 ## 6. Quick Mode
 
-Bypasses Think for simple **single-part** queries:
+Bypasses Think for simple **single-table, read-only, data lookup** queries.
+
+**Three criteria (ALL must be true):**
+1. **Single table** — not joins (recipes + ingredients = NOT quick)
+2. **Read only** — no writes, no deletes
+3. **Data lookup** — answer is IN the database, not knowledge/reasoning
 
 | Subdomain | Read | Write |
 |-----------|------|-------|
-| inventory | ✅ | ✅ |
-| shopping | ✅ | ✅ |
-| tasks | ✅ | ✅ |
-| recipes | ✅ | ❌ (linked tables) |
-| meal_plans | ✅ | ❌ (FK logic) |
+| inventory | ✅ | ❌ |
+| shopping | ✅ | ❌ |
+| recipes | ✅ | ❌ |
+| meal_plans | ✅ | ❌ |
+| preferences | ✅ | ❌ |
 
-**V5:** Multi-part queries ("X and also Y") explicitly excluded from quick mode.
+**V7.1:** Tightened criteria:
+- Knowledge questions (substitutions, techniques) → NOT quick (requires reasoning)
+- Cross-table queries (recipe + ingredients) → NOT quick
+- Writes removed from quick mode entirely
 
 ---
 
@@ -155,11 +163,15 @@ Alfred uses a **three-layer context model** managed by the Context API:
 | **Recent Context** | Refs + labels only: `recipe_1: Chicken Tikka (recipe) [read]` | Always (from registry) |
 | **Step Results** | Full data: metadata, ingredients, instructions | Only when read THIS turn |
 
-**⚠️ Known Gap:** Think sees refs in "Recent Context" and may plan an analyze step assuming Act has the data. But if the entity was read in a PRIOR turn (not this turn), Act only has the ref — NOT the full data (ingredients, metadata). 
+**V7.1 Fix:** Step results now persist across turns in `conversation["turn_step_results"]`. Act sees full data for entities read in the last 2 turns.
 
-**Current guidance:** Think should plan a read step when Act needs actual entity data for analysis/generation. "Recent Context" means "we know about it" not "data is loaded."
+| Data Source | What Act Sees |
+|-------------|---------------|
+| Current turn step_results | Full data (always) |
+| Prior 2 turns (turn_step_results) | Full data (persisted) |
+| Older turns | Refs only (need re-read) |
 
-**Future consideration:** Store condensed snapshots (metadata + ingredients) alongside refs so "Recent Context" includes usable data, not just labels.
+**Current guidance:** Think should plan a read step when Act needs data from entities older than 2 turns.
 
 ---
 
@@ -231,6 +243,7 @@ alfred/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| V7.1 | 2026-01-15 | Turn counter fix (double-increment), step_results persistence (2 turns), Act sees full instructions, Act Quick criteria tightening, Act prompt refactor |
 | V7 | 2026-01-14 | Three-layer Context API, TurnExecutionSummary, conversation continuity, generate entity context fix |
 | V6 | 2026-01-13 | Think as conversation architect, Recent Context guidance, smart inventory search, entity retention fixes |
 | V5 | 2026-01-10 | Understand as Memory Manager, FK enrichment, improved display |

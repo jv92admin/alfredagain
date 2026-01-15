@@ -54,7 +54,7 @@ from alfred.graph.state import (
 from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
-from alfred.prompts.injection import build_act_prompt, build_act_quick_prompt
+from alfred.prompts.injection import build_act_prompt, build_act_user_prompt
 from alfred.tools.crud import execute_crud
 from alfred.tools.schema import get_schema_with_fallback
 from alfred.prompts.personas import get_full_subdomain_content
@@ -792,6 +792,225 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
     return "\n".join(lines)
 
 
+def _build_enhanced_entity_context(
+    session_registry: SessionIdRegistry,
+    current_step_index: int,
+    current_step_results: dict[int, Any],
+    turn_step_results: dict[str, dict],
+) -> str:
+    """
+    V5: Build enhanced entity context with FULL DATA for active entities.
+    
+    This is the key to Act seeing entity data without re-reading:
+    - Active entities (last 2 turns + current): Show full data
+    - Long-term memory (>2 turns): Show refs only
+    
+    Token cost: ~20-40 lines per entity vs 300+ lines for 2 LLM calls (read + step_complete)
+    
+    See docs/prompts/act-prompt-structure.md for the full specification.
+    
+    Args:
+        session_registry: SessionIdRegistry with entity refs
+        current_step_index: Current step being executed
+        current_step_results: This turn's step_results
+        turn_step_results: Prior turns' step_results from conversation
+        
+    Returns:
+        Formatted entity context string
+    """
+    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
+    import json
+    
+    lines = []
+    
+    # Get active entities split by source
+    recent_refs, retained_refs = session_registry.get_active_entities(turns_window=2)
+    
+    # Section 1: Artifacts needing main record created (same as before)
+    truly_pending = session_registry.get_truly_pending_artifacts()
+    if truly_pending:
+        lines.append("## Needs Creating")
+        lines.append("These items need their main record saved:")
+        lines.append("")
+        for ref, artifact in truly_pending.items():
+            label = artifact.get("name") or artifact.get("label") or ref
+            entity_type = session_registry.ref_types.get(ref, "unknown")
+            lines.append(f"- `{ref}`: {label} ({entity_type})")
+        lines.append("")
+    
+    # Section 1b: Just promoted this turn (same as before)
+    just_promoted = session_registry.get_just_promoted_artifacts()
+    if just_promoted:
+        lines.append("## Just Saved This Turn")
+        lines.append("Main record created. For linked tables (recipe_ingredients), use the ref as FK:")
+        lines.append("")
+        for ref, artifact in just_promoted.items():
+            label = artifact.get("name") or artifact.get("label") or ref
+            entity_type = session_registry.ref_types.get(ref, "unknown")
+            uuid = session_registry.ref_to_uuid.get(ref, "?")[:8]
+            lines.append(f"- `{ref}`: {label} ({entity_type}) → saved as {uuid}...")
+        lines.append("")
+    
+    # Section 2: Active Entity Data (FULL DATA from step_results)
+    # Collect entity data from current turn + prior 2 turns
+    entity_data_by_ref = {}  # {ref: {table, data}} - latest wins for dedup
+    
+    # First, collect from prior turns (oldest first so newer overwrites)
+    for turn_num in sorted(turn_step_results.keys(), key=int):
+        turn_data = turn_step_results[turn_num]
+        for step_key, step_data in turn_data.items():
+            data = step_data.get("data")
+            table = step_data.get("table")
+            if isinstance(data, list):
+                for record in data:
+                    if isinstance(record, dict) and record.get("id"):
+                        ref = str(record["id"])
+                        entity_data_by_ref[ref] = {"table": table, "data": record, "turn": turn_num}
+    
+    # Then from current turn (overwrites prior)
+    current_turn = str(session_registry.current_turn)
+    for step_idx, result in current_step_results.items():
+        # Handle tool result tuples
+        if isinstance(result, list) and result and isinstance(result[0], tuple):
+            for item in result:
+                if len(item) >= 3:
+                    tool, table, data = item[:3]
+                elif len(item) == 2:
+                    tool, data = item
+                    table = None
+                else:
+                    continue
+                    
+                if isinstance(data, list):
+                    if not table and data:
+                        table = _infer_table_from_record(data[0])
+                    for record in data:
+                        if isinstance(record, dict) and record.get("id"):
+                            ref = str(record["id"])
+                            entity_data_by_ref[ref] = {"table": table, "data": record, "turn": current_turn}
+        elif isinstance(result, list):
+            for record in result:
+                if isinstance(record, dict) and record.get("id"):
+                    ref = str(record["id"])
+                    entity_data_by_ref[ref] = {"table": None, "data": record, "turn": current_turn}
+    
+    # Now format the active entity data
+    if entity_data_by_ref:
+        lines.append("## Active Entities (Full Data)")
+        lines.append("Data from last 2 turns + current turn. Use for analyze/generate steps.")
+        lines.append("")
+        
+        for ref, info in entity_data_by_ref.items():
+            table = info.get("table")
+            data = info.get("data")
+            turn = info.get("turn")
+            
+            # Skip if not in recent refs (might be deleted or not tracked)
+            # But still show if it's in current turn's results
+            if ref not in recent_refs and turn != current_turn:
+                continue
+            
+            label = session_registry.ref_labels.get(ref, data.get("name") or data.get("title") or ref)
+            entity_type = session_registry.ref_types.get(ref, table or "unknown")
+            
+            # Format based on entity type
+            if table == "recipes" or entity_type == "recipe":
+                lines.extend(_format_recipe_data(ref, label, data))
+            else:
+                # Generic format
+                lines.append(f"### `{ref}`: {label} ({entity_type})")
+                # Show key fields inline
+                key_fields = ["quantity", "unit", "location", "category", "date", "meal_type", "status"]
+                field_parts = []
+                for field in key_fields:
+                    if field in data and data[field] is not None:
+                        field_parts.append(f"{field}: {data[field]}")
+                if field_parts:
+                    lines.append(f"  {' | '.join(field_parts)}")
+            lines.append("")
+    
+    # Section 3: Recent Context (refs only for entities NOT in entity_data)
+    recent_not_shown = [r for r in recent_refs 
+                       if r not in entity_data_by_ref 
+                       and r not in truly_pending
+                       and r not in just_promoted]
+    if recent_not_shown:
+        lines.append("## Recent Context (refs only)")
+        lines.append("**Refs from last 2 turns — data not loaded. Use db_read if full data needed.**")
+        lines.append("")
+        for ref in recent_not_shown:
+            label = session_registry.ref_labels.get(ref, ref)
+            entity_type = session_registry.ref_types.get(ref, "unknown")
+            action = session_registry.ref_actions.get(ref, "-")
+            lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
+        lines.append("")
+    
+    # Section 4: Long Term Memory (refs only - same as before)
+    if retained_refs:
+        lines.append("## Long Term Memory (refs only)")
+        lines.append("**Older entities retained by Understand — need db_read for data.**")
+        lines.append("")
+        for ref in retained_refs:
+            label = session_registry.ref_labels.get(ref, ref)
+            entity_type = session_registry.ref_types.get(ref, "unknown")
+            lines.append(f"- `{ref}`: {label} ({entity_type})")
+        lines.append("")
+    
+    if not lines:
+        lines.append("## Available Entities")
+        lines.append("")
+        lines.append("*No entities in context.*")
+    
+    return "\n".join(lines)
+
+
+def _format_recipe_data(ref: str, label: str, data: dict) -> list[str]:
+    """Format recipe data for Act context - includes key fields and instruction count."""
+    lines = [f"### `{ref}`: {label} (recipe)"]
+    
+    # Core metadata
+    meta = []
+    if data.get("cuisine"):
+        meta.append(f"cuisine: {data['cuisine']}")
+    if data.get("total_time"):
+        meta.append(f"time: {data['total_time']}")
+    if data.get("servings"):
+        meta.append(f"servings: {data['servings']}")
+    if data.get("difficulty"):
+        meta.append(f"difficulty: {data['difficulty']}")
+    if meta:
+        lines.append(f"  {' | '.join(meta)}")
+    
+    # Tags
+    tags = []
+    if data.get("occasions"):
+        tags.append(f"occasions: {', '.join(data['occasions'][:3])}")
+    if data.get("health_tags"):
+        tags.append(f"health: {', '.join(data['health_tags'][:3])}")
+    if tags:
+        lines.append(f"  {' | '.join(tags)}")
+    
+    # Ingredients summary
+    ingredients = data.get("recipe_ingredients", [])
+    if ingredients:
+        names = [i.get("name", "?") for i in ingredients[:5]]
+        lines.append(f"  ingredients: {', '.join(names)}{'...' if len(ingredients) > 5 else ''} ({len(ingredients)} total)")
+    
+    # Instructions - show full content when available (needed for WRITE/modify operations)
+    instructions = data.get("instructions")
+    if instructions:
+        if isinstance(instructions, list):
+            lines.append(f"  **instructions ({len(instructions)} steps):**")
+            for i, step in enumerate(instructions, 1):
+                lines.append(f"    {i}. {step}")
+        else:
+            lines.append(f"  **instructions:** {instructions}")
+    else:
+        lines.append("  instructions: not loaded (use db_read with columns: [\"instructions\"])")
+    
+    return lines
+
+
 def _format_previous_turn_steps(conversation: dict) -> str:
     """
     V6: Format last 2 steps from previous turn for Act context.
@@ -1014,8 +1233,16 @@ async def act_node(state: AlfredState) -> dict:
         for ref in referenced:
             session_registry.touch_ref(ref)  # Updates last_ref timestamp
     
-    # V4 CONSOLIDATION: Format entity context for Act prompt
-    working_set_section = session_registry.format_for_act_prompt(current_step_index)
+    # V5: Build enhanced entity context with FULL DATA for active entities
+    # Active = last 2 turns + current turn (matches token savings vs re-read cost)
+    # Long-term = refs only (need re-read if data required)
+    turn_step_results = conversation.get("turn_step_results", {})
+    working_set_section = _build_enhanced_entity_context(
+        session_registry=session_registry,
+        current_step_index=current_step_index,
+        current_step_results=step_results,
+        turn_step_results=turn_step_results,
+    )
 
     # Fetch user profile and subdomain guidance for analyze/generate/write steps
     profile_section = ""
@@ -1041,285 +1268,53 @@ async def act_node(state: AlfredState) -> dict:
         except Exception:
             pass  # Profile is optional, don't fail on errors
 
-    # Build prompt based on step type
-    # Unified prompt structure for all step types:
-    # 1. Task (orientation: step #, description, type)
-    # 2. This Step (current state: loop status, tool results)
-    # 3. Resources (toolkit: schema for CRUD, data for analyze/generate)
-    # 4. Context (background: previous steps, conversation)
-    # 5. Instructions (what to do next)
+    # Build prompt using centralized injection module
+    # See docs/prompts/act-prompt-structure.md for the full specification
     
-    today = date.today().isoformat()
-    
-    if step_type == "analyze":
-        # Get subdomain content and analysis guidance
-        subdomain_content = get_full_subdomain_content(current_step.subdomain, "analyze")
-        
-        prev_subdomain = None
-        if current_step_index > 0 and think_output and len(think_output.steps) > current_step_index - 1:
-            prev_subdomain = think_output.steps[current_step_index - 1].subdomain
-        
-        analyze_guidance = get_contextual_examples(
-            subdomain=current_step.subdomain,
-            step_description=current_step.description,
-            prev_subdomain=prev_subdomain,
-            step_type="analyze",
-        )
-        
-        subdomain_header = ""
-        if subdomain_content:
-            subdomain_header = f"""{subdomain_content}
-
----
-
-"""
-        
-        user_prompt = f"""{subdomain_header}## STATUS
-| Step | {current_step_index + 1} of {len(steps)} |
-| Goal | {current_step.description} |
-| Type | analyze (no db calls) |
-| Today | {today} |
-
----
-
-{profile_section}
-
-{subdomain_guidance_section}## 1. Task
-
-**Your job this step:** {current_step.description}
-
-*(User's full request: "{state.get("user_message", "")}" — other parts handled by later steps)*
-
----
-
-{analyze_guidance}
-
----
-
-## 2. Data Available
-
-{prev_turn_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
-
-{archive_section}---
-
-## 3. Context
-
-{conversation_section if conversation_section else "*No additional context.*"}
-
----
-
-## DECISION
-
-Analyze the data above and complete the step:
-`{{"action": "step_complete", "result_summary": "Analysis: ...", "data": {{"key": "value"}}}}`"""
-
-    elif step_type == "generate":
-        # Get subdomain content (intro + generate persona)
-        subdomain_content = get_full_subdomain_content(current_step.subdomain, "generate")
-        subdomain_header = ""
-        if subdomain_content:
-            subdomain_header = f"""{subdomain_content}
-
----
-
-"""
-        
-        # Get generation guidance based on subdomain
-        generate_guidance = get_contextual_examples(
-            subdomain=current_step.subdomain,
-            step_description=current_step.description,
-            prev_subdomain=None,  # Less relevant for generate
-            step_type="generate",
-        )
-        
-        user_prompt = f"""{subdomain_header}## STATUS
-| Step | {current_step_index + 1} of {len(steps)} |
-| Goal | {current_step.description} |
-| Type | generate (create content, no db calls) |
-| Today | {today} |
-
----
-
-{profile_section}
-
-{subdomain_guidance_section}## 1. Task
-
-**Your job this step:** {current_step.description}
-
-*(User's full request: "{state.get("user_message", "")}" — other parts handled by later steps)*
-
----
-
-{generate_guidance}
-
----
-
-## 2. Data Available
-
-{prev_turn_section}{prev_step_section if prev_step_section else "*No previous step data.*"}
-
-{archive_section}---
-
-## 3. Entities in Context
-
-**Use these refs when your generated content references existing entities (e.g., recipe_id in meal plans).**
-
-{working_set_section}
-
----
-
-## 4. Context
-
-{conversation_section if conversation_section else "*No additional context.*"}
-
----
-
-## DECISION
-
-Generate the requested content and complete the step:
-`{{"action": "step_complete", "result_summary": "Generated: ...", "data": {{"your_content": "here"}}}}`"""
-
-    else:
-        # Read/write step - needs schema as primary resource
+    # Get schema for read/write steps
+    subdomain_schema = None
+    if step_type in ("read", "write"):
         subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
-        
-        # Get combined subdomain content (intro + step-type persona)
-        subdomain_content = get_full_subdomain_content(current_step.subdomain, step_type)
-        
-        # Get previous step's subdomain for cross-domain pattern detection
-        prev_subdomain = None
-        if current_step_index > 0 and think_output and len(think_output.steps) > current_step_index - 1:
-            prev_subdomain = think_output.steps[current_step_index - 1].subdomain
-        
-        # Get contextual examples based on step verb and cross-domain patterns
-        contextual_examples = get_contextual_examples(
-            subdomain=current_step.subdomain,
-            step_description=current_step.description,
-            prev_subdomain=prev_subdomain,
-            step_type=step_type,
-        )
-        
-        # Build a quick status summary for the last tool call
-        last_tool_summary = ""
-        if current_step_tool_results:
-            last_item = current_step_tool_results[-1]
-            # Handle both (tool, table, result) and (tool, result) formats
-            if len(last_item) == 3:
-                last_tool, _table, last_result = last_item
-            else:
-                last_tool, last_result = last_item
-            if isinstance(last_result, list):
-                last_tool_summary = f" → Last: `{last_tool}` returned {len(last_result)} records"
-            elif isinstance(last_result, dict):
-                last_tool_summary = f" → Last: `{last_tool}` returned 1 record"
-            else:
-                last_tool_summary = f" → Last: `{last_tool}` completed"
-        
-        # Build prev step note section
-        prev_note_section = ""
-        if prev_step_note:
-            prev_note_section = f"""## Previous Step Note
-
-{prev_step_note}
-
----
-
-"""
-        
-        # Build subdomain header (intro + step-type persona)
-        dynamic_header = ""
-        if subdomain_content:
-            dynamic_header = f"""{subdomain_content}
-
----
-
-"""
-        
-        # V4: Build batch manifest section if present
-        batch_manifest_section = ""
-        batch_manifest_data = state.get("current_batch_manifest")
-        if batch_manifest_data:
-            batch_manifest = BatchManifest(**batch_manifest_data)
-            batch_manifest_section = batch_manifest.to_prompt_table() + "\n\n---\n\n"
-        
-        # Build step history: this step's progress + previous step data
-        step_history = []
-        
-        # This step's progress
-        if this_step_section:
-            step_history.append("**This Step:**\n" + this_step_section)
-        else:
-            step_history.append("**This Step:** No tool calls yet.")
-        
-        # Previous step data
-        if prev_step_section:
-            step_history.append("\n**Previous Steps:**\n" + prev_step_section)
-        
-        step_history_section = "\n".join(step_history)
-        
-        # Generated data - ONLY show for write steps
-        artifacts_section = ""
-        if pending_artifacts_section:
-            artifacts_section = f"""## 5. Generated Data
-
-{pending_artifacts_section}
----
-
-"""
-
-        # Only include subdomain guidance for write steps (not read)
-        guidance_for_write = subdomain_guidance_section if step_type == "write" else ""
-        
-        user_prompt = f"""{dynamic_header}{guidance_for_write}## STATUS
-| Step | {current_step_index + 1} of {len(steps)} |
-| Goal | {current_step.description} |
-| Type | {step_type} |
-| Progress | {tool_calls_made} tool calls{last_tool_summary} |
-| Today | {today} |
-
----
-
-{prev_note_section}## 1. Current Step
-
-**Your job this step:** {current_step.description}
-
-*(User's full request: "{state.get("user_message", "")}" — other parts handled by later steps)*
-
----
-
-{batch_manifest_section}## 2. Step History
-
-{step_history_section}
-
----
-
-## 3. Schema ({current_step.subdomain})
-
-{subdomain_schema}
-
----
-
-{contextual_examples if contextual_examples else ""}
-## 4. Entities in Context
-
-{working_set_section}
-
----
-
-{artifacts_section}## 6. Context
-
-{conversation_section if conversation_section else "*No additional context.*"}
-
----
-
-## DECISION
-
-What's next?
-- Step done? → `{{"action": "step_complete", "result_summary": "...", "data": {{...}}, "note_for_next_step": "..."}}`
-- Need data? → `{{"action": "tool_call", "tool": "db_read", "params": {{"table": "...", "filters": [...], "limit": N}}}}`
-- Need to create? → `{{"action": "tool_call", "tool": "db_create", "params": {{"table": "...", "data": {{...}}}}}}`
-
-**IMPORTANT:** When completing, include a brief note with IDs or key info the next step might need."""
+    
+    # Get previous step's subdomain for cross-domain pattern detection
+    prev_subdomain = None
+    if current_step_index > 0 and think_output and len(think_output.steps) > current_step_index - 1:
+        prev_subdomain = think_output.steps[current_step_index - 1].subdomain
+    
+    # Build batch manifest section if present
+    batch_manifest_section_text = ""
+    batch_manifest_data = state.get("current_batch_manifest")
+    if batch_manifest_data:
+        batch_manifest = BatchManifest(**batch_manifest_data)
+        batch_manifest_section_text = batch_manifest.to_prompt_table()
+    
+    # Build the user prompt via centralized function
+    user_prompt = build_act_user_prompt(
+        # Step info
+        step_type=step_type,
+        step_index=current_step_index,
+        total_steps=len(steps),
+        step_description=current_step.description,
+        subdomain=current_step.subdomain,
+        user_message=state.get("user_message", ""),
+        # Context data
+        entity_context=working_set_section,
+        conversation_context=conversation_section,
+        prev_turn_context=prev_turn_section,
+        prev_step_results=prev_step_section,
+        current_step_results=this_step_section,
+        # Step-type specific
+        schema=subdomain_schema,
+        profile_section=profile_section,
+        subdomain_guidance=subdomain_guidance_section,
+        batch_manifest_section=batch_manifest_section_text,
+        artifacts_section=pending_artifacts_section,
+        archive_section=archive_section,
+        prev_step_note=prev_step_note,
+        # Metadata
+        tool_calls_made=tool_calls_made,
+        prev_subdomain=prev_subdomain,
+    )
 
     # Call LLM for decision (step_results are already in the prompt)
     decision = await call_llm(
@@ -1844,28 +1839,48 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
     conversation = state.get("conversation", {})
     engagement_summary = conversation.get("engagement_summary", "")
     
-    # Get user preferences for safety (allergies, restrictions)
-    user_preferences = None
-    if user_id:
-        try:
-            profile = await get_cached_profile(user_id)
-            user_preferences = {
-                "allergies": profile.allergies,
-                "dietary_restrictions": profile.dietary_restrictions,
-            }
-        except Exception:
-            pass  # Preferences are optional
+    # V4 CONSOLIDATION: Load SESSION ID registry FIRST - needed for entity context
+    registry_data = state.get("id_registry")
+    if registry_data is None:
+        session_registry = SessionIdRegistry(session_id=state.get("conversation_id", ""))
+    elif isinstance(registry_data, SessionIdRegistry):
+        session_registry = registry_data
+    else:
+        session_registry = SessionIdRegistry.from_dict(registry_data)
+    session_registry.set_turn(state.get("current_turn", 1))
     
-    # Build prompt using shared injection module
-    system_prompt, user_prompt = build_act_quick_prompt(
-        intent=quick_intent,
-        subdomain=quick_subdomain,
-        schema=subdomain_schema,
-        today=today,
-        user_message=user_message,
-        engagement_summary=engagement_summary,
-        user_preferences=user_preferences,
+    # Build entity context - SAME as regular Act
+    turn_step_results = conversation.get("turn_step_results", {})
+    entity_context = _build_enhanced_entity_context(
+        session_registry=session_registry,
+        current_step_index=0,
+        current_step_results={},
+        turn_step_results=turn_step_results,
     )
+    
+    # Build conversation context - SAME as regular Act
+    conversation_section = format_full_context(
+        conversation, {}, 0, ACT_CONTEXT_THRESHOLD
+    )
+    
+    # Build user prompt using SAME builder as Act
+    user_prompt = build_act_user_prompt(
+        step_type="read",
+        step_index=0,
+        total_steps=1,
+        step_description=quick_intent,
+        subdomain=quick_subdomain,
+        user_message=user_message,
+        entity_context=entity_context,
+        conversation_context=conversation_section,
+        prev_turn_context="",
+        prev_step_results="",
+        current_step_results="",
+        schema=subdomain_schema,
+    )
+    
+    # Use same system prompt as Act read steps
+    system_prompt = _get_system_prompt("read")
 
     try:
         # Single LLM call
@@ -1908,16 +1923,6 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
                 "step_results": {},
             }
         
-        # V4 CONSOLIDATION: Load SESSION ID registry - single source of truth
-        registry_data = state.get("id_registry")
-        if registry_data is None:
-            session_registry = SessionIdRegistry(session_id=state.get("conversation_id", ""))
-        elif isinstance(registry_data, SessionIdRegistry):
-            session_registry = registry_data
-        else:
-            session_registry = SessionIdRegistry.from_dict(registry_data)
-        session_registry.set_turn(state.get("current_turn", 1))
-        
         # Execute the tool with registry - handles all ID translation
         result = await execute_crud(
             tool=decision.tool,
@@ -1933,11 +1938,14 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
             0: [(decision.tool, quick_subdomain, result)]  # Format like normal act results
         }
         
+        registry_dict = session_registry.to_dict()
+        logger.info(f"Act Quick: Registry has {len(session_registry.ref_to_uuid)} entities")
+        
         return {
             "step_results": step_results,
             "current_step_index": 1,  # Mark as complete
             "quick_result": result,  # Direct result for Reply Quick
-            "id_registry": session_registry.to_dict(),  # V4 CONSOLIDATION: Single source
+            "id_registry": registry_dict,  # V4 CONSOLIDATION: Single source
         }
         
     except Exception as e:

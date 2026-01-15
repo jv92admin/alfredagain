@@ -21,11 +21,14 @@ Flow:
 Summarize maintains conversation memory and entity lifecycle after each exchange.
 """
 
+import logging
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
 from alfred.core.id_registry import SessionIdRegistry
+
+logger = logging.getLogger(__name__)
 from alfred.core.modes import Mode, ModeContext
 from alfred.graph.nodes import (
     act_node,
@@ -350,6 +353,9 @@ async def run_alfred(
     # This contains pending_artifacts (generated content waiting to be saved)
     # CRITICAL: Deserialize from dict (stored as JSON in web sessions)
     id_registry_data = conv_context.get("id_registry", None)
+    if id_registry_data:
+        entity_count = len(id_registry_data.get("ref_to_uuid", {})) if isinstance(id_registry_data, dict) else "?"
+        logger.info(f"Workflow: Loaded registry with {entity_count} entities from prior turn")
     if id_registry_data is None:
         id_registry = None
     elif isinstance(id_registry_data, SessionIdRegistry):
@@ -399,6 +405,14 @@ async def run_alfred(
     # Extract response and updated conversation
     response = final_state.get("final_response", "I'm sorry, I couldn't process that request.")
     updated_conversation = final_state.get("conversation", conv_context)
+    
+    # Debug: Check if registry was properly persisted
+    registry_data = updated_conversation.get("id_registry")
+    if registry_data:
+        entity_count = len(registry_data.get("ref_to_uuid", {}))
+        logger.info(f"Workflow: Returning conversation with {entity_count} entities in registry")
+    else:
+        logger.warning("Workflow: Returning conversation with NO registry - entities will be lost!")
     
     return response, updated_conversation
 

@@ -497,24 +497,27 @@ Alfred uses a Context API with three layers:
 | generate (with diffs/substitutions) | **Full instructions** | ❌ No — read with instructions! |
 | analyze (compare/match) | **Full row data** | ❌ No — read first! |
 
-### ⚠️ The Recent Context Gap
+### ✅ The Recent Context Gap (FIXED in V7.1)
 
-**The problem:**
+**The problem (was):**
 1. Think sees "Recent Context": `recipe_1: Chicken Tikka (recipe) [read]`
 2. Think assumes data is "loaded" and plans: `analyze recipes for inventory match`
 3. Act runs analyze step... but only has the REF, not the actual recipe data!
 4. If recipe was read in Turn N-1 (not this turn), step_results was already wiped.
 
+**V7.1 Fix:**
+- `Summarize` now persists `step_results` → `conversation["turn_step_results"]`
+- Keeps last 2 turns of data
+- `Act` merges prior turn data with current step_results
+- Full entity data (including instructions) now visible for active entities
+
 **Current behavior:**
-- "Recent Context" = refs we know about (labels available)
-- Does NOT mean full data is loaded
+- "Recent Context (last 2 turns)" = refs + labels + **full data available**
+- "Long Term Memory" = refs only (need re-read)
 
 **Think should plan reads when:**
-- Analyze needs actual data (ingredients, quantities)
-- Generate needs instructions (for diffs, variations)
-- Any step needs more than just the ref/label
-
-**Future consideration:** Store condensed snapshots (metadata + ingredients) alongside refs so "Recent Context" actually contains usable summary data.
+- Entity is in Long Term Memory (>2 turns old)
+- Entity was never read (only linked via FK)
 
 ### Dashboard ≠ Context
 
@@ -548,4 +551,34 @@ Entities discovered via FK (e.g., recipe_id in meal_plans):
 
 ---
 
-*Last updated: 2026-01-14* (V7: Context API, TurnExecutionSummary, refs vs content gap documented)
+## 10. V7.1 Enhancements Summary (2026-01-15)
+
+| Feature | Implementation |
+|---------|----------------|
+| **Turn counter fix** | Fixed double-increment bug in summarize.py (was adding +1 when workflow already did) |
+| **step_results persistence** | Summarize saves to `conversation["turn_step_results"]`, prunes to last 2 turns |
+| **Full instructions in Act** | `_format_recipe_data()` now shows actual instruction text, not just count |
+| **Act prompt refactor** | Centralized in `injection.py` via `build_act_user_prompt()` (~280 lines removed from act.py) |
+| **Act Quick criteria** | Tightened: single-table, read-only, data-lookup (no knowledge questions) |
+| **Entity context consolidation** | `_build_enhanced_entity_context()` merges current + prior turn data |
+
+### Key Bug Fixes
+
+| Bug | Impact | Fix |
+|-----|--------|-----|
+| Turn counter double-increment | Entity recency miscalculated, cross-turn data misaligned | Remove extra `+1` in summarize.py |
+| Instructions hidden | Act saw "7 steps [FULL DATA AVAILABLE]" but not actual text | Show full instruction content |
+| Act Quick subdomain hallucination | Unknown subdomains crashed | Tighten Understand criteria (knowledge questions NOT quick) |
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `src/alfred/graph/nodes/summarize.py` | Persist step_results, fix turn counter |
+| `src/alfred/graph/nodes/act.py` | `_build_enhanced_entity_context()`, `_format_recipe_data()` shows instructions |
+| `src/alfred/prompts/injection.py` | `build_act_user_prompt()` main entry point |
+| `prompts/understand.md` | Tightened quick mode criteria |
+
+---
+
+*Last updated: 2026-01-15* (V7.1: Turn counter fix, step_results persistence, Act sees full data)

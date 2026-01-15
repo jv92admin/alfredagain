@@ -70,6 +70,13 @@ class SessionIdRegistry:
     
     # V4: Entity type per ref
     ref_types: dict[str, str] = field(default_factory=dict)
+
+    # V7: Deterministic recipe detail tracking (what was actually returned by CRUD)
+    # This helps Think/Act know whether a recipe was last read with instructions or not.
+    # NOTE: This is NOT a guarantee that full data is currently "loaded" for Act; it is only
+    # a record of what the last read returned.
+    ref_recipe_last_read_level: dict[str, str] = field(default_factory=dict)  # "summary" | "full"
+    ref_recipe_last_full_turn: dict[str, int] = field(default_factory=dict)   # turn when instructions were last included
     
     # V4 CONSOLIDATION: Temporal tracking (replaces EntityContextModel/WorkingSet)
     ref_turn_created: dict[str, int] = field(default_factory=dict)   # When first seen
@@ -189,6 +196,15 @@ class SessionIdRegistry:
                 # V4: Track action, label, type DETERMINISTICALLY
                 self.ref_actions[ref] = "read"
                 self.ref_types[ref] = entity_type
+
+                # V7: Recipe detail level tracking (summary vs full instructions)
+                # Determined purely from the returned DB record shape.
+                if entity_type == "recipe":
+                    if "instructions" in record:
+                        self.ref_recipe_last_read_level[ref] = "full"
+                        self.ref_recipe_last_full_turn[ref] = self.current_turn
+                    else:
+                        self.ref_recipe_last_read_level[ref] = "summary"
                 
                 # Compute label based on entity type
                 label = self._compute_entity_label(record, entity_type, ref)
@@ -976,13 +992,17 @@ class SessionIdRegistry:
                                and r not in self.pending_artifacts]
         if recent_not_this_turn:
             lines.append("## Recent Context (last 2 turns)")
-            lines.append("**Already loaded — use IDs directly in filters instead of re-querying.**")
+            lines.append("**Known refs and labels — do NOT assume full record data is available unless it appears in Step Results for this turn.**")
             lines.append("Example: `{\"field\": \"id\", \"op\": \"in\", \"value\": [\"recipe_3\", \"recipe_4\"]}`")
             lines.append("")
             for ref in recent_not_this_turn:
                 label = self.ref_labels.get(ref, ref)
                 entity_type = self.ref_types.get(ref, "unknown")
                 action = self.ref_actions.get(ref, "-")
+                if entity_type == "recipe":
+                    level = self.ref_recipe_last_read_level.get(ref)
+                    if level:
+                        action = f"{action}:{level}"
                 lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
             lines.append("")
         
@@ -1072,13 +1092,21 @@ class SessionIdRegistry:
                          if not (r.startswith("gen_") and r in self.pending_artifacts)]
         if recent_display:
             lines.append("## Recent Context (last 2 turns)")
-            lines.append("**These entities are already loaded. Do NOT re-read them.**")
-            lines.append("Reference by ID (e.g., `recipe_3`) in step descriptions. Act can use them directly.")
+            lines.append("**Known refs and labels only. Do NOT assume full record data is loaded for Act in this turn.**")
+            lines.append("If you need actual record data (ingredients, instructions), plan a `read` step.")
             lines.append("")
             for ref in recent_display:
                 label = self.ref_labels.get(ref, ref)
                 entity_type = self.ref_types.get(ref, "unknown")
                 action = self.ref_actions.get(ref, "-")
+                if entity_type == "recipe":
+                    level = self.ref_recipe_last_read_level.get(ref)
+                    if level:
+                        action = f"{action}:{level}"
+                        if level != "full":
+                            last_full_turn = self.ref_recipe_last_full_turn.get(ref)
+                            if last_full_turn:
+                                action = f"{action} (last_full:T{last_full_turn})"
                 lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
             lines.append("")
         
@@ -1121,6 +1149,9 @@ class SessionIdRegistry:
             "ref_actions": self.ref_actions,
             "ref_labels": self.ref_labels,
             "ref_types": self.ref_types,
+            # V7: Recipe detail tracking
+            "ref_recipe_last_read_level": self.ref_recipe_last_read_level,
+            "ref_recipe_last_full_turn": self.ref_recipe_last_full_turn,
             # V4 CONSOLIDATION: Temporal tracking
             "ref_turn_created": self.ref_turn_created,
             "ref_turn_last_ref": self.ref_turn_last_ref,
@@ -1143,6 +1174,8 @@ class SessionIdRegistry:
         registry.ref_actions = data.get("ref_actions", {})
         registry.ref_labels = data.get("ref_labels", {})
         registry.ref_types = data.get("ref_types", {})
+        registry.ref_recipe_last_read_level = data.get("ref_recipe_last_read_level", {})
+        registry.ref_recipe_last_full_turn = data.get("ref_recipe_last_full_turn", {})
         # V4 CONSOLIDATION: Temporal tracking
         registry.ref_turn_created = data.get("ref_turn_created", {})
         registry.ref_turn_last_ref = data.get("ref_turn_last_ref", {})
