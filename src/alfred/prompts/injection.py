@@ -148,9 +148,12 @@ def build_act_user_prompt(
         parts.append(specific["subdomain_header"])
         parts.append("---")
     
-    # 2. Subdomain guidance (user preferences - before status for write)
-    if step_type == "write" and subdomain_guidance:
-        parts.append(subdomain_guidance)
+    # 2. User preferences for write steps (profile + subdomain guidance)
+    if step_type == "write":
+        if profile_section:
+            parts.append(profile_section)
+        if subdomain_guidance:
+            parts.append(subdomain_guidance)
     
     # 3. STATUS table
     parts.append(common["status"])
@@ -1416,162 +1419,19 @@ Return: `{"tool": "...", "params": {"table": "...", ...}}`""")
 
 
 # =============================================================================
-# V4 Context Building Functions
+# V4 Context Building Functions - REMOVED
 # =============================================================================
-
-
-def build_v4_context_sections(
-    step_type: str,
-    registry: "SessionIdRegistry | None" = None,
-    batch_manifest: "BatchManifest | None" = None,
-) -> str:
-    """
-    V4 CONSOLIDATION: Build context sections for Act prompts.
-    
-    Uses SessionIdRegistry as single source of truth.
-    
-    Args:
-        step_type: Current step type
-        registry: SessionIdRegistry instance
-        batch_manifest: BatchManifest instance (if batch operation)
-    """
-    sections = []
-    
-    # 1. Entity context from registry
-    if registry:
-        entity_section = registry.format_for_act_prompt()
-        if entity_section and "No entities" not in entity_section:
-            sections.append(entity_section)
-    
-    # 2. Batch Manifest (if multi-item operation)
-    if batch_manifest and batch_manifest.total > 1:
-        sections.append(batch_manifest.to_prompt_table())
-    
-    if not sections:
-        return ""
-    
-    return "\n\n---\n\n".join(sections)
-
-
-def build_write_context(
-    registry: "SessionIdRegistry | None" = None,
-    batch_manifest: "BatchManifest | None" = None,
-    compiled_payloads: list | None = None,
-) -> str:
-    """
-    V4 CONSOLIDATION: Build context specifically for WRITE steps.
-    
-    Write steps need:
-    1. What to save (from registry)
-    2. Batch progress (if multi-item)
-    
-    Returns a focused context section.
-    """
-    sections = []
-    
-    # 1. Batch Manifest (what we're saving)
-    if batch_manifest and batch_manifest.total > 0:
-        sections.append(batch_manifest.to_prompt_table())
-    
-    # 2. Entity context from registry
-    if registry:
-        entity_section = registry.format_for_act_prompt()
-        if entity_section and "No entities" not in entity_section:
-            sections.append(entity_section)
-    
-    # 3. Compiled payloads (schema-ready for db_create)
-    if compiled_payloads:
-        import json
-        lines = ["## Compiled Data (schema-ready for db_create)", ""]
-        for payload in compiled_payloads:
-            if hasattr(payload, 'target_table'):
-                for record in payload.records:
-                    lines.append(f"**{record.ref}** → `{payload.target_table}`:")
-                    lines.append("```json")
-                    lines.append(json.dumps(record.data, indent=2, default=str))
-                    lines.append("```")
-                    if record.linked_records:
-                        for linked in record.linked_records:
-                            lines.append(f"  └─ `{linked.table}`: {len(linked.records)} records")
-                    lines.append("")
-        sections.append("\n".join(lines))
-    
-    if not sections:
-        return "*No content to save.*"
-    
-    return "\n\n---\n\n".join(sections)
-
-
-def build_entity_context_for_understand(
-    registry: "SessionIdRegistry | None" = None,
-) -> str:
-    """
-    V4 CONSOLIDATION: Build entity context for Understand node.
-    
-    Uses SessionIdRegistry to show all tracked entities.
-    """
-    if registry:
-        return registry.format_for_understand_prompt()
-    return "*No entities tracked.*"
-
-
-# V4 CONSOLIDATION: build_constraints_context removed - constraints not needed with simplified system
-
-
+# 
+# The following V4 functions were removed as dead code (2026-01-16):
+# - build_v4_context_sections() 
+# - build_write_context()
+# - build_entity_context_for_understand()
+# - build_summarize_context()
+#
+# These used SessionIdRegistry.format_for_act_prompt() which only provided refs+labels.
+# V5/V6 replaced this with _build_enhanced_entity_context() in act.py which provides
+# full entity data, saving the cost of re-reading (~300 tokens vs ~40 tokens per entity).
+#
+# See: act.py:_build_enhanced_entity_context()
 # =============================================================================
-# V4 Summarize Context Building
-# =============================================================================
-
-
-def build_summarize_context(
-    step_results: dict[int, Any],
-    step_metadata: dict[int, dict],
-    registry: "SessionIdRegistry | None" = None,
-    batch_manifest: "BatchManifest | None" = None,
-) -> str:
-    """
-    V4 CONSOLIDATION: Build context for Summarize node.
-    
-    Uses SessionIdRegistry for entity information.
-    """
-    sections = []
-    
-    # 1. Entity Summary from registry
-    if registry:
-        entity_section = registry.format_for_act_prompt()
-        if entity_section and "No entities" not in entity_section:
-            sections.append(entity_section)
-    
-    # 2. Step Results Summary
-    if step_metadata:
-        lines = ["### Steps Executed", ""]
-        for idx, meta in sorted(step_metadata.items()):
-            step_type = meta.get("step_type", "unknown")
-            desc = meta.get("description", "")[:50]
-            artifacts = meta.get("artifacts", [])
-            artifact_count = len(artifacts) if artifacts else 0
-            
-            status = "✅"
-            if step_type == "generate" and artifact_count > 0:
-                status = f"📝 ({artifact_count} items)"
-            elif step_type == "write":
-                status = "💾"
-            
-            lines.append(f"- Step {idx + 1} [{step_type}]: {desc} {status}")
-        sections.append("\n".join(lines))
-    
-    # 3. Batch Progress (if applicable)
-    if batch_manifest and batch_manifest.total > 0:
-        lines = [
-            "### Batch Progress",
-            f"- Total: {batch_manifest.total}",
-            f"- Completed: {batch_manifest.completed_count}",
-            f"- Failed: {batch_manifest.failed_count}",
-        ]
-        sections.append("\n".join(lines))
-    
-    if not sections:
-        return "No turn activity to summarize."
-    
-    return "\n\n".join(sections)
 

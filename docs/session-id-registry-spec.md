@@ -199,8 +199,10 @@ _lazy_enrich_queue: dict[str, tuple]     # Transient: refs needing name enrichme
 
 ### View Methods
 - `format_for_think_prompt()` → Delineated: Pending → Recent → Long Term
-- `format_for_act_prompt()` → Same delineation for Act
+- `format_for_understand_prompt()` → Full context with turn annotations
 - `get_active_entities(turns_window)` → Returns (recent, retained) tuple
+
+**Note:** Act's entity context is built by `_build_enhanced_entity_context()` in `act.py`, not by the registry.
 
 ### V7: Artifact Promotion Tracking
 - `ref_turn_promoted` → Track which turn an artifact was promoted (gen_ref → UUID)

@@ -23,6 +23,7 @@ Each iteration emits a structured action.
 
 import asyncio
 import logging
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
@@ -368,29 +369,18 @@ def _get_system_prompt(step_type: str = "read") -> str:
     """
     Build the Act system prompt from layers.
     
-    Layers:
-    1. system.md - Who Alfred is (core identity, capabilities)
-    2. base.md - Act's role in Alfred (execution engine)
-    3. crud.md - Tools, filters, operators (only for read/write)
-    4. {step_type}.md - Mechanics for this step type
+    Layers (Act is execution, not user-facing — no system.md):
+    1. base.md - Act's role in Alfred (execution engine)
+    2. crud.md - Tools, filters, operators (only for read/write)
+    3. {step_type}.md - Mechanics for this step type
     
-    Subdomain content (persona, user profile) is added to user_prompt.
+    Subdomain content (persona, user profile, schema) is added to user_prompt.
     """
-    # Load Alfred's core identity
-    system_path = _PROMPTS_DIR.parent / "system.md"
-    if system_path.exists():
-        alfred_identity = system_path.read_text(encoding="utf-8")
-    else:
-        alfred_identity = ""
-    
     base = _load_prompt("base.md")
     step_type_content = _load_prompt(f"{step_type}.md")
     
-    # Build layers: identity → base → (crud) → step_type
-    parts = []
-    if alfred_identity:
-        parts.append(alfred_identity)
-    parts.append(base)
+    # Build layers: base → (crud) → step_type
+    parts = [base]
     
     # CRUD steps need the tools reference
     if step_type in ("read", "write"):
@@ -398,10 +388,11 @@ def _get_system_prompt(step_type: str = "read") -> str:
         if crud:
             parts.append(crud)
     
-        if step_type_content:
-            parts.append(step_type_content)
+    # Add step-type-specific content (read.md, write.md, analyze.md, generate.md)
+    if step_type_content:
+        parts.append(step_type_content)
     
-        return "\n\n---\n\n".join(parts)
+    return "\n\n---\n\n".join(parts)
 
 
 def _format_step_results(
@@ -896,8 +887,8 @@ def _build_enhanced_entity_context(
     
     # Now format the active entity data
     if entity_data_by_ref:
-        lines.append("## Active Entities (Full Data)")
-        lines.append("Data from last 2 turns + current turn. Use for analyze/generate steps.")
+        lines.append("## Active Entities (Context Snapshot)")
+        lines.append("Data from recent turns. **For read steps, always call db_read — this is reference, not a substitute.**")
         lines.append("")
         
         for ref, info in entity_data_by_ref.items():
@@ -915,7 +906,7 @@ def _build_enhanced_entity_context(
             
             # Format based on entity type
             if table == "recipes" or entity_type == "recipe":
-                lines.extend(_format_recipe_data(ref, label, data))
+                lines.extend(_format_recipe_data(ref, label, data, session_registry))
             else:
                 # Generic format
                 lines.append(f"### `{ref}`: {label} ({entity_type})")
@@ -964,9 +955,38 @@ def _build_enhanced_entity_context(
     return "\n".join(lines)
 
 
-def _format_recipe_data(ref: str, label: str, data: dict) -> list[str]:
-    """Format recipe data for Act context - includes key fields and instruction count."""
-    lines = [f"### `{ref}`: {label} (recipe)"]
+def _format_recipe_data(ref: str, label: str, data: dict, registry: "SessionIdRegistry | None" = None) -> list[str]:
+    """Format recipe data for Act context - includes key fields and instruction count.
+    
+    Checks what data is available and labels appropriately:
+    - Full: has instructions AND full ingredients (with id, quantity)
+    - Snapshot: missing instructions OR only ingredient names
+    
+    When registry is provided, ingredient refs are looked up and displayed inline.
+    """
+    # Check what data we have
+    has_instructions = bool(data.get("instructions"))
+    ingredients = data.get("recipe_ingredients", [])
+    
+    # Check if ingredients have full data (not just name/category from auto-include)
+    has_full_ingredients = False
+    if ingredients and isinstance(ingredients[0], dict):
+        # Full ingredients have id, quantity, unit - auto-include only has name, category
+        has_full_ingredients = "id" in ingredients[0] or "quantity" in ingredients[0]
+    
+    # Determine what's missing
+    missing = []
+    if not has_instructions:
+        missing.append("instructions")
+    if not has_full_ingredients and ingredients:
+        missing.append("ingredient details")
+    
+    if missing:
+        snapshot_indicator = f" *(snapshot — missing: {', '.join(missing)})*"
+    else:
+        snapshot_indicator = ""
+    
+    lines = [f"### `{ref}`: {label} (recipe){snapshot_indicator}"]
     
     # Core metadata
     meta = []
@@ -990,23 +1010,47 @@ def _format_recipe_data(ref: str, label: str, data: dict) -> list[str]:
     if tags:
         lines.append(f"  {' | '.join(tags)}")
     
-    # Ingredients summary
-    ingredients = data.get("recipe_ingredients", [])
+    # Ingredients - format based on whether we have full data
     if ingredients:
-        names = [i.get("name", "?") for i in ingredients[:5]]
-        lines.append(f"  ingredients: {', '.join(names)}{'...' if len(ingredients) > 5 else ''} ({len(ingredients)} total)")
+        if has_full_ingredients:
+            # Full ingredients - show with quantities AND refs for updates
+            lines.append(f"  **ingredients ({len(ingredients)} items):**")
+            for ing in ingredients:
+                qty = ing.get("quantity", "")
+                unit = ing.get("unit", "")
+                name = ing.get("name", "?")
+                qty_str = f"{qty} {unit} " if qty else ""
+                
+                # Look up ingredient ref if registry available and ingredient has ID
+                ing_ref = None
+                if registry and ing.get("id"):
+                    ing_ref = registry.get_ref(str(ing["id"]))
+                
+                if ing_ref:
+                    lines.append(f"    - `{ing_ref}`: {qty_str}{name}")
+                else:
+                    lines.append(f"    - {qty_str}{name}")
+        else:
+            # Summary only (auto-include) - just names
+            names = [i.get("name", "?") for i in ingredients[:5]]
+            more = f"... ({len(ingredients)} total)" if len(ingredients) > 5 else f" ({len(ingredients)} total)"
+            lines.append(f"  ingredients (names only): {', '.join(names)}{more}")
     
-    # Instructions - show full content when available (needed for WRITE/modify operations)
+    # Instructions - show full content when available
     instructions = data.get("instructions")
     if instructions:
         if isinstance(instructions, list):
             lines.append(f"  **instructions ({len(instructions)} steps):**")
             for i, step in enumerate(instructions, 1):
-                lines.append(f"    {i}. {step}")
+                # Skip prefix if step already starts with a number (e.g., "1. Prep...")
+                if re.match(r'^\d+\.?\s', step):
+                    lines.append(f"    {step}")
+                else:
+                    lines.append(f"    {i}. {step}")
         else:
             lines.append(f"  **instructions:** {instructions}")
     else:
-        lines.append("  instructions: not loaded (use db_read with columns: [\"instructions\"])")
+        lines.append("  instructions: not loaded")
     
     return lines
 
@@ -1252,8 +1296,8 @@ async def act_node(state: AlfredState) -> dict:
             user_id = state.get("user_id")
             if user_id:
                 profile = await get_cached_profile(user_id)
-                if step_type != "write":  # Profile only for analyze/generate
-                    profile_section = format_profile_for_prompt(profile)
+                # Profile for analyze/generate/write steps (user constraints matter)
+                profile_section = format_profile_for_prompt(profile)
                 # Subdomain guidance for all three step types
                 if profile.subdomain_guidance:
                     guidance = profile.subdomain_guidance.get(current_step.subdomain, "")

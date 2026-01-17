@@ -252,6 +252,36 @@ class SessionIdRegistry:
                         
                         logger.info(f"SessionRegistry: Lazy-registered {fk_ref} → {fk_uuid[:8]}... (via {fk_field})")
             
+            # Handle nested relations (e.g., recipe_ingredients inside recipes)
+            # These need their IDs registered so Act can target them for updates
+            if "recipe_ingredients" in record and isinstance(record["recipe_ingredients"], list):
+                translated_ingredients = []
+                for ing in record["recipe_ingredients"]:
+                    if isinstance(ing, dict) and "id" in ing and ing["id"]:
+                        ing_copy = ing.copy()
+                        ing_uuid = str(ing["id"])
+                        
+                        if ing_uuid in self.uuid_to_ref:
+                            ing_ref = self.uuid_to_ref[ing_uuid]
+                        else:
+                            ing_ref = self._next_ref("ri")
+                            self.ref_to_uuid[ing_ref] = ing_uuid
+                            self.uuid_to_ref[ing_uuid] = ing_ref
+                            self.ref_actions[ing_ref] = "read"
+                            self.ref_types[ing_ref] = "ri"
+                            self.ref_labels[ing_ref] = ing.get("name", ing_ref)
+                            if ing_ref not in self.ref_turn_created:
+                                self.ref_turn_created[ing_ref] = self.current_turn
+                            self.ref_turn_last_ref[ing_ref] = self.current_turn
+                            logger.info(f"SessionRegistry: Registered nested {ing_ref} → {ing_uuid[:8]}...")
+                        
+                        ing_copy["id"] = ing_ref
+                        translated_ingredients.append(ing_copy)
+                    else:
+                        # Ingredient without ID (summary view) - keep as-is
+                        translated_ingredients.append(ing)
+                new_record["recipe_ingredients"] = translated_ingredients
+            
             translated.append(new_record)
         
         return translated
@@ -926,102 +956,9 @@ class SessionIdRegistry:
             if ref.startswith("gen_") and self.ref_actions.get(ref) == "generated"
         ]
     
-    def format_for_act_prompt(self, current_step: int | None = None) -> str:
-        """
-        V5: Format entities for Act prompt with delineated sections.
-        
-        MUST match Think's context window for consistency.
-        
-        Shows:
-        1. Pending artifacts (need to be saved)
-        2. This turn's step results (from current turn)
-        3. Recent Context (last 2 turns - same as Think)
-        4. Long Term Memory (Understand-retained - same as Think)
-        """
-        lines = []
-        
-        # Get active entities split by source (same as Think)
-        recent_refs, retained_refs = self.get_active_entities(turns_window=2)
-        
-        # Section 1: Artifacts needing main record created
-        truly_pending = self.get_truly_pending_artifacts()
-        if truly_pending:
-            lines.append("## Needs Creating")
-            lines.append("These items need their main record saved:")
-            lines.append("")
-            for ref, artifact in truly_pending.items():
-                label = artifact.get("name") or artifact.get("label") or ref
-                entity_type = self.ref_types.get(ref, "unknown")
-                lines.append(f"- `{ref}`: {label} ({entity_type})")
-            lines.append("")
-        
-        # Section 1b: Just promoted this turn (saved, but data retained for linked records)
-        just_promoted = self.get_just_promoted_artifacts()
-        if just_promoted:
-            lines.append("## Just Saved This Turn")
-            lines.append("Main record created. For linked tables (recipe_ingredients), use the ref as FK:")
-            lines.append("")
-            for ref, artifact in just_promoted.items():
-                label = artifact.get("name") or artifact.get("label") or ref
-                entity_type = self.ref_types.get(ref, "unknown")
-                uuid = self.ref_to_uuid.get(ref, "?")[:8]
-                lines.append(f"- `{ref}`: {label} ({entity_type}) → saved as {uuid}...")
-            lines.append("")
-        
-        # Section 2: This turn's entities (from current step results)
-        this_turn_refs = self.get_entities_this_turn()
-        # Filter out pending/promoted (shown above), get unique from this turn
-        this_turn_new = [r for r in this_turn_refs 
-                        if r not in truly_pending 
-                        and r not in just_promoted
-                        and self.ref_turn_created.get(r) == self.current_turn]
-        if this_turn_new:
-            lines.append("## This Turn")
-            lines.append("")
-            for ref in this_turn_new:
-                label = self.ref_labels.get(ref, ref)
-                entity_type = self.ref_types.get(ref, "unknown")
-                action = self.ref_actions.get(ref, "-")
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
-            lines.append("")
-        
-        # Section 3: Recent Context (last 2 turns - matches Think)
-        # NOTE: Removed "linked" filter - linked entities ARE useful refs
-        recent_not_this_turn = [r for r in recent_refs 
-                               if r not in this_turn_new 
-                               and r not in self.pending_artifacts]
-        if recent_not_this_turn:
-            lines.append("## Recent Context (last 2 turns)")
-            lines.append("**Known refs and labels — do NOT assume full record data is available unless it appears in Step Results for this turn.**")
-            lines.append("Example: `{\"field\": \"id\", \"op\": \"in\", \"value\": [\"recipe_3\", \"recipe_4\"]}`")
-            lines.append("")
-            for ref in recent_not_this_turn:
-                label = self.ref_labels.get(ref, ref)
-                entity_type = self.ref_types.get(ref, "unknown")
-                action = self.ref_actions.get(ref, "-")
-                if entity_type == "recipe":
-                    level = self.ref_recipe_last_read_level.get(ref)
-                    if level:
-                        action = f"{action}:{level}"
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
-            lines.append("")
-        
-        # Section 4: Long Term Memory (Understand-retained - matches Think)
-        if retained_refs:
-            lines.append("## Long Term Memory")
-            lines.append("")
-            for ref in retained_refs:
-                label = self.ref_labels.get(ref, ref)
-                entity_type = self.ref_types.get(ref, "unknown")
-                lines.append(f"- `{ref}`: {label} ({entity_type})")
-            lines.append("")
-        
-        if not lines:
-            lines.append("## Available Entities")
-            lines.append("")
-            lines.append("*No entities in context.*")
-        
-        return "\n".join(lines)
+    # format_for_act_prompt() REMOVED (2026-01-16)
+    # Was V5 approach showing refs+labels only. Replaced by V6 _build_enhanced_entity_context() 
+    # in act.py which includes full entity data, saving re-read costs.
     
     def format_for_understand_prompt(self) -> str:
         """

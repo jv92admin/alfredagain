@@ -38,6 +38,41 @@ Create, update, or delete database records.
 
 ---
 
+## Update
+
+Modify existing record by ID:
+```json
+{
+  "tool": "db_update",
+  "params": {
+    "table": "shopping_list",
+    "filters": [{"field": "id", "op": "=", "value": "shop_1"}],
+    "data": {"is_purchased": true}
+  }
+}
+```
+
+**Pattern:** `filters` targets the record(s), `data` contains fields to change.
+
+---
+
+## Delete
+
+Remove record by ID:
+```json
+{
+  "tool": "db_delete",
+  "params": {
+    "table": "inventory",
+    "filters": [{"field": "id", "op": "=", "value": "inv_5"}]
+  }
+}
+```
+
+**Note:** Subdomain-specific patterns (e.g., linked tables, cascades) are in the Schema section below.
+
+---
+
 ## Linked Tables (Parent → Children)
 
 When creating parent + children:

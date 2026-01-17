@@ -23,24 +23,23 @@ If filtering is needed, Think will specify it in the step description or a later
 
 ---
 
-## Before You Query
+## Entity Context is Reference, Not Data
 
-**Check Entity Context first.** If the data you need is already in the Entity Context section (from a prior step or turn), use it directly instead of re-reading.
+Entity Context shows what entities exist and their IDs. Use it to:
+- Know which IDs to filter by
+- Understand what was touched in prior steps
 
-- `recipe_1`, `recipe_2` already loaded? → Reference them, skip the read
-- Need a specific field not in context? → Read with `columns` for just that field
-- Need fresh data (e.g., checking for updates)? → Read is appropriate
+**Do NOT skip the read.** Entity Context is a snapshot — it may be stale or incomplete. Always call `db_read` for read steps.
 
 ---
 
 ## How to Execute
 
-1. **Read the step description — that's your scope** (don't add filters Think didn't specify or that aren't clear and obvious)
-2. **Check Entity Context** — is the data already available?
-3. Check "Previous Step Note" for IDs to filter by
-4. Build filters **only if explicitly in step description**
-5. Call `db_read` with appropriate table and filters
-6. `step_complete` with results (even if empty)
+1. **Read the step description — that's your scope** (don't add filters Think didn't specify)
+2. Check "Previous Step Note" for IDs to filter by
+3. Build filters **only if explicitly in step description**
+4. Call `db_read` with appropriate table and filters
+5. `step_complete` with results (even if empty)
 
 ---
 
@@ -87,6 +86,68 @@ When prior steps or turns have loaded entities, reference them by ID:
   ]
 }
 ```
+
+---
+
+## Advanced Patterns
+
+### Semantic Search (Recipes only)
+
+Find recipes by intent, not keywords:
+```json
+{
+  "table": "recipes",
+  "filters": [
+    {"field": "_semantic", "op": "similar", "value": "quick weeknight dinner"}
+  ]
+}
+```
+**Note:** Only works for `recipes` table. Uses embeddings for conceptual matching.
+
+### OR Logic
+
+Use `or_filters` (top-level param) for multiple keywords:
+```json
+{
+  "table": "recipes",
+  "or_filters": [
+    {"field": "name", "op": "ilike", "value": "%chicken%"},
+    {"field": "name", "op": "ilike", "value": "%rice%"}
+  ]
+}
+```
+
+### Date Range
+
+```json
+{
+  "table": "meal_plans",
+  "filters": [
+    {"field": "date", "op": ">=", "value": "2026-01-01"},
+    {"field": "date", "op": "<=", "value": "2026-01-07"}
+  ]
+}
+```
+
+### Array Contains
+
+```json
+{"field": "occasions", "op": "contains", "value": ["weeknight"]}
+```
+
+**Note:** `tags` field is NOT reliably queryable — use semantic search or read all and analyze instead.
+
+### Column Selection
+
+If selecting specific columns:
+- **Always include `id`** — required for entity tracking
+- **Always include `name` or `title`** — for readability
+
+```json
+{"columns": ["id", "name", "instructions"]}
+```
+
+**Prefer omitting `columns` entirely** to get all fields.
 
 ---
 

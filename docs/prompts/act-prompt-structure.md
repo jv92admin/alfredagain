@@ -85,13 +85,20 @@ Act receives a **system prompt** assembled from files in `prompts/act/`:
 │ SYSTEM PROMPT = base.md + [crud.md] + {step_type}.md                │
 │ ─────────────────────────────────────────────────────────────────── │
 │   base.md     — Always included (core principles, actions)          │
-│   crud.md     — For read/write steps (tools, filters, operators)    │
-│   read.md     — Read-specific mechanics                             │
-│   write.md    — Write-specific mechanics                            │
+│   crud.md     — For read/write steps (common: tools, operators)     │
+│   read.md     — Read-specific (advanced patterns, semantic search)  │
+│   write.md    — Write-specific (update/delete examples, linked)     │
 │   analyze.md  — Analyze-specific mechanics                          │
 │   generate.md — Generate-specific mechanics                         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**Note:** Act does NOT use `system.md` (Alfred's personality). Act is an execution layer, not user-facing. Only **Reply** uses `system.md`.
+
+**CRUD file split (V7.1):**
+- `crud.md` — Common only: tools table, filter syntax, operators, schema reminder
+- `read.md` — All read patterns: semantic search, OR logic, date ranges, array contains, column selection
+- `write.md` — Update/delete examples (ID-based), subdomain-specific patterns in personas
 
 **Built by:** `_get_system_prompt(step_type)` in `act.py`
 
@@ -101,7 +108,7 @@ Act receives a **system prompt** assembled from files in `prompts/act/`:
 
 | Section | Source Function/Object |
 |---------|------------------------|
-| **entity_context** | `SessionIdRegistry.format_for_act_prompt()` |
+| **entity_context** | `_build_enhanced_entity_context()` in `act.py` |
 | **conversation_context** | `format_full_context()` from `memory/conversation.py` |
 | **prev_turn_context** | `_format_previous_turn_steps()` in `act.py` |
 | **prev_step_results** | `_format_step_results()` in `act.py` |
@@ -109,8 +116,13 @@ Act receives a **system prompt** assembled from files in `prompts/act/`:
 | **schema** | `get_schema_with_fallback(subdomain)` |
 | **profile_section** | `format_profile_for_prompt()` from `profile_builder.py` |
 | **subdomain_guidance** | `profile.subdomain_guidance[subdomain]` |
-| **subdomain_header** | `get_full_subdomain_content()` from `personas.py` |
+| **subdomain_header** | `get_full_subdomain_content()` from `personas.py` — includes CRUD guidance |
 | **step-type guidance** | `get_contextual_examples()` from `examples.py` |
+
+**Subdomain Personas (V7.1):** Each subdomain in `personas.py` has step-type-specific guidance:
+- `read`: Query patterns, what columns to include (e.g., "with instructions", "with ingredients")
+- `write`: CRUD patterns, field references, linked table operations
+- `analyze`/`generate`: Domain-specific reasoning guidance
 
 ---
 
@@ -216,23 +228,27 @@ def build_act_user_prompt(
 Act now sees **full data** for entities from the last 2 turns + current turn:
 
 ```markdown
-## Active Entities (Full Data)
-Data from last 2 turns + current turn. Use for analyze/generate steps.
+## Active Entities (Context Snapshot)
+Data from recent turns. **For read steps, always call db_read — this is reference, not a substitute.**
 
 ### `recipe_3`: Malaysian Sambal (recipe)
   cuisine: malaysian | time: 45min | servings: 4
   occasions: weeknight, spicy | health: high-protein
-  ingredients: cod, noodles, sambal, vegetables... (8 total)
+  **ingredients (8 items):**
+    - `ri_1`: 1 lb cod
+    - `ri_2`: 8 oz noodles
+    - `ri_3`: 2 tbsp sambal
+    ...
   **instructions (6 steps):**
     1. Prep noodles and vegetables...
     2. Marinate cod with sambal...
-    3. Heat wok over high heat...
-    4. Stir-fry vegetables until tender...
-    5. Add cod and noodles, toss...
-    6. Season and serve hot.
+    ...
 ```
 
-**Note:** Full instruction text is now shown (not just count). This enables Act to modify instructions for WRITE steps.
+**Key features:**
+- Full instruction text shown (enables Act to modify for WRITE steps)
+- Ingredient refs (`ri_X`) shown inline when full ingredient data is available
+- Snapshot warning reminds Act to always call `db_read` for read steps
 
 **Implementation:**
 1. `summarize.py`: Persists `step_results` → `conversation["turn_step_results"][turn_num]`
@@ -263,7 +279,7 @@ When changing Act's prompt structure:
 | `src/alfred/prompts/injection.py` | `build_act_user_prompt()` and helpers |
 | `src/alfred/graph/nodes/act.py` | Context gathering, system prompt |
 | `prompts/act/*.md` | System prompt templates |
-| `src/alfred/core/id_registry.py` | `format_for_act_prompt()` |
+| `src/alfred/core/id_registry.py` | `translate_read_output()` (nested ingredient IDs) |
 | `src/alfred/graph/nodes/summarize.py` | Persist `turn_step_results` |
 
 ---
@@ -300,4 +316,4 @@ user_prompt = build_act_user_prompt(
 
 ---
 
-*Last updated: 2026-01-15*
+*Last updated: 2026-01-16*

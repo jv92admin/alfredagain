@@ -894,13 +894,26 @@ def _format_execution_summary(
         step_type = getattr(steps[idx], "step_type", "read") if idx < len(steps) else "read"
         step_subdomain = getattr(steps[idx], "subdomain", None) if idx < len(steps) else None
         
-        # Use clear labels for generate vs write
-        type_label = {
-            "generate": "generate (NOT YET SAVED)",
-            "write": "write (SAVED TO DATABASE)",
-            "read": "read",
-            "analyze": "analyze",
-        }.get(step_type, step_type)
+        # V7.1: Determine actual CRUD operation from step results
+        # step_results format: [(tool, table, data), ...]
+        actual_tool = None
+        if isinstance(result, list) and result and isinstance(result[0], tuple) and len(result[0]) >= 1:
+            actual_tool = result[0][0]  # e.g., "db_create", "db_update", "db_delete", "db_read"
+        
+        # Use clear labels - prefer actual tool for write steps
+        if step_type == "write" and actual_tool:
+            type_label = {
+                "db_create": "db_create (SAVED)",
+                "db_update": "db_update (SAVED)",
+                "db_delete": "db_delete (SAVED)",
+            }.get(actual_tool, "write (SAVED)")
+        else:
+            type_label = {
+                "generate": "generate (NOT YET SAVED)",
+                "write": "write (SAVED)",
+                "read": "read",
+                "analyze": "analyze",
+            }.get(step_type, step_type)
         
         lines.append(f"### Step {idx + 1}: {step_desc}")
         subdomain_str = f" | Subdomain: {step_subdomain}" if step_subdomain else ""
@@ -983,8 +996,12 @@ def _format_execution_summary(
                         saved_items.append(name)
                     else:
                         lines.append("Outcome: ✅ SAVED")
-                elif "name" in result:
-                    lines.append(f"Outcome: Created/Updated '{result.get('name', 'record')}'")
+                elif step_type == "read":
+                    # Read step returned a single record
+                    if "name" in result:
+                        lines.append(f"Outcome: Found '{result.get('name')}'")
+                    else:
+                        lines.append("Outcome: Found 1 record")
                 else:
                     lines.append("Outcome: Completed")
                 # Format dict as human-readable, stripping IDs, enriching refs
@@ -1217,6 +1234,45 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
                     tags = clean["tags"][:3] if isinstance(clean["tags"], list) else []
                     if tags:
                         parts.append(f"[{', '.join(tags)}]")
+                
+                # V7.1: Include full recipe data when present (for "show full recipe" reads)
+                # If instructions were fetched, include them - this is what user asked for
+                if clean.get("instructions"):
+                    lines.append(" ".join(parts))  # Add the header line first
+                    parts = []  # Clear parts, we'll build full recipe below
+                    
+                    # Description if present
+                    if clean.get("description"):
+                        lines.append(f"{prefix}  *{clean['description']}*")
+                    
+                    # Ingredients
+                    ingredients = clean.get("recipe_ingredients", [])
+                    if ingredients:
+                        lines.append(f"{prefix}  **Ingredients:**")
+                        for ing in ingredients[:20]:  # Cap at 20
+                            if isinstance(ing, dict):
+                                ing_name = ing.get("name", "")
+                                qty = ing.get("quantity", "")
+                                unit = ing.get("unit", "")
+                                notes = ing.get("notes", "")
+                                ing_str = f"{prefix}    - {ing_name}"
+                                if qty:
+                                    ing_str += f" ({qty}"
+                                    if unit:
+                                        ing_str += f" {unit}"
+                                    ing_str += ")"
+                                if notes:
+                                    ing_str += f", {notes}"
+                                lines.append(ing_str)
+                    
+                    # Instructions
+                    instructions = clean.get("instructions", [])
+                    if instructions:
+                        lines.append(f"{prefix}  **Instructions:**")
+                        for i, step in enumerate(instructions[:15], 1):  # Cap at 15
+                            lines.append(f"{prefix}    {i}. {step}")
+                    
+                    continue  # Skip the normal line append since we handled it
             elif table_type == "meal_plans":
                 if clean.get("meal_type"):
                     parts.append(f"[{clean['meal_type']}]")
@@ -1313,9 +1369,14 @@ def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000, re
     else:
         # For CRUD results, format as human-readable
         if "name" in clean_data or "title" in clean_data:
-            # Single record
+            # Single record - label based on step type
             name = clean_data.get("name") or clean_data.get("title", "record")
-            parts = [f"  Created/Updated: {name}"]
+            if step_type == "read":
+                parts = [f"  {name}"]  # Just the name for reads
+            elif step_type == "write":
+                parts = [f"  Saved: {name}"]
+            else:
+                parts = [f"  {name}"]
             for field in _PRIORITY_FIELDS:
                 if field in clean_data and field not in ("name", "title"):
                     val = clean_data[field]

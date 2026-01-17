@@ -76,11 +76,12 @@ Previous step read meal plan. Read recipes for those recipe_ids (ingredients aut
         # Linked table update
         if any(verb in desc_lower for verb in ["update", "modify", "change", "edit"]):
             examples.append("""**Update Recipe Pattern:**
-- **Metadata only** (name, tags, description): Just `db_update` on recipes
-- **Replace ingredients**: 
-  1. `db_delete` on `recipe_ingredients` WHERE recipe_id = X
-  2. `db_create` new ingredients with same recipe_id
-- **Add ingredient**: Just `db_create` on recipe_ingredients""")
+- **Recipe metadata** (name, tags, instructions): `db_update` on `recipes`
+- **Change ingredient** (name, qty, unit): `db_update` on `recipe_ingredients` by row ID
+- **Add ingredient**: `db_create` on `recipe_ingredients` with `recipe_id`
+- **Remove ingredient**: `db_delete` on `recipe_ingredients` by row ID
+
+**Key:** Ingredient rows have their own IDs. Update them directly, don't delete+recreate.""")
         
         # Linked table delete - CASCADE!
         if any(verb in desc_lower for verb in ["delete", "remove", "clear"]):

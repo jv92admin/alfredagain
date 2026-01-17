@@ -90,11 +90,12 @@ Instead of separate data structures, `SessionIdRegistry` provides views:
 
 | Method | Purpose |
 |--------|---------|
-| `format_for_act_prompt()` | Entities for current step (delineated: pending, recent, long-term) |
 | `format_for_understand_prompt()` | Full context with turn annotations |
 | `format_for_think_prompt()` | Entity summary for planning (delineated sections) |
 | `get_entities_this_turn()` | Filter by current turn |
 | `get_active_entities(turns_window)` | Returns (recent_refs, retained_refs) tuple |
+
+**Note:** Act's entity context is built by `_build_enhanced_entity_context()` in `act.py`, which merges registry data with step results from the last 2 turns.
 
 ---
 
@@ -581,4 +582,34 @@ Entities discovered via FK (e.g., recipe_id in meal_plans):
 
 ---
 
-*Last updated: 2026-01-15* (V7.1: Turn counter fix, step_results persistence, Act sees full data)
+## 11. V7.2 Enhancements Summary (2026-01-16)
+
+| Feature | Implementation |
+|---------|----------------|
+| **Profile for write steps** | Act now receives full user profile (skill, equipment, household) for write steps, not just analyze/generate |
+| **Recipe ingredient refs** | `_format_recipe_data()` includes `ri_X` refs inline with ingredients for targeted updates |
+| **Nested ID registration** | `translate_read_output()` registers nested `recipe_ingredients` IDs when recipes read with full details |
+| **Meal plans clarification** | Subdomain guidance clarifies meal_plans stores recipe_id refs, NOT ingredient data |
+| **Recipe creation guidance** | Act guidance for input normalization when creating recipes from varied formats |
+
+### Bug Fixes
+
+| Bug | Impact | Fix |
+|-----|--------|-----|
+| Summary duplication | Conversation summary doubled on each compression | Don't prepend existing_summary (LLM already incorporates it) |
+| Double instruction numbering | Recipe steps showed "3. 3. Do something" | Check if instruction already starts with number |
+| Reply hallucination | Reply invented recipe details not in execution data | Witness Principle in prompt + data injection fix |
+| Act skipping reads | Act was told to skip db_read if data "in context" | Removed skip guidance, context is reference only |
+| Wrong update pattern | examples.py said delete+create for ingredient updates | Changed to db_update by row ID |
+
+### Dead Code Removed
+
+| File | Removed |
+|------|---------|
+| `injection.py` | `build_v4_context_sections()`, `build_write_context()`, `build_entity_context_for_understand()`, `build_summarize_context()` |
+| `id_registry.py` | `format_for_act_prompt()` (replaced by `_build_enhanced_entity_context()` in act.py) |
+| `schema.py` | Duplicate `get_contextual_examples()` |
+
+---
+
+*Last updated: 2026-01-16* (V7.2: Profile for writes, nested IDs, dead code cleanup, bug fixes)

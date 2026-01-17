@@ -1,12 +1,30 @@
 # Recipe Update Findings
 
 **Date:** 2026-01-15  
-**Status:** Investigation needed  
+**Status:** ✅ RESOLVED (2026-01-15)  
 **Priority:** Medium
 
 ---
 
-## Summary
+## Resolution Summary
+
+Fixed via comprehensive CRUD guidance updates:
+
+| Area | Fix |
+|------|-----|
+| **crud.md** | Cleaned up — common parts only (tools, operators) |
+| **read.md** | Added advanced patterns (semantic, OR, arrays, columns) |
+| **write.md** | Added `db_update`/`db_delete` examples (ID-based) |
+| **think.md** | Added "with ingredients" pattern (mirrors "with instructions") |
+| **personas.py (recipes read)** | Added full `recipe_ingredients(id, name, qty, unit, ...)` column syntax |
+| **personas.py (recipes write)** | Complete rewrite — all fields, correct update patterns |
+| **personas.py (other subdomains)** | Added CRUD guidance with bulk deletion rules |
+
+**The key insight:** Ingredient swap = `db_update` on `recipe_ingredients` row (not delete+create). Think must request "with ingredients" to get row IDs.
+
+---
+
+## Original Problem
 
 When user asked to update a recipe to swap ingredients (gai lan → frozen broccoli), the system:
 1. ✅ Updated recipe metadata (description, maybe instructions text)
@@ -141,22 +159,17 @@ update_recipe(
 
 ---
 
-## Proposed Fixes (Not Implementing Now)
+## Fixes Applied
 
-### Short-term
-1. Add linked table guidance to Think prompt
-2. Add ingredient swap examples to Think
-3. Reply validation: check if step_type matches expected outcome
+### ✅ Short-term (Implemented 2026-01-15)
+1. ✅ Added "with ingredients" pattern to Think (mirrors "with instructions")
+2. ✅ Added ingredient update examples to recipes write persona
+3. ⏳ Reply validation — not yet implemented (lower priority now)
 
-### Medium-term
-1. Create `update_recipe()` high-level function
-2. Declarative change format (before/after)
-3. System handles delete/create deterministically
-
-### Long-term
-1. Schema-aware mutation planning
-2. Think sees table relationships explicitly
-3. Automatic step decomposition for linked operations
+### Future Consideration
+1. Create `update_recipe()` high-level function (declarative changes)
+2. Schema-aware mutation planning
+3. Nested write abstraction (LLM sees `recipe.ingredients`, backend handles `recipe_ingredients` table)
 
 ---
 

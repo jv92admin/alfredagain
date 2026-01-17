@@ -179,6 +179,25 @@ class ThinkStep(BaseModel):
 
 ---
 
+## Subdomain Knowledge Sources
+
+Think learns about subdomains from TWO sources:
+
+| Source | What it provides | Where |
+|--------|------------------|-------|
+| **`prompts/think.md`** (`<system_structure>`) | Linked tables, step types, data relationships | Static in system prompt |
+| **`profile.subdomain_guidance`** | User-specific preferences per domain | Dynamic in `<session_context>` |
+
+**Note:** Think does NOT see `personas.py` or `schema.py` directly. Those files are for **Act**:
+- `schema.py` → Database structure (tables, columns, CRUD examples)
+- `personas.py` → Step-type-specific guidance (read/write/analyze/generate personas)
+
+Think's subdomain knowledge is baked into `think.md` — it knows things like:
+- "meal_plans has recipe_id FK but NOT ingredients"
+- "To get ingredients for meals: read meal_plans → read recipes"
+
+---
+
 ## Key Design Decisions
 
 1. **Refs only for Think** — Full data goes to Act, not Think (reduces cognitive load)
@@ -186,6 +205,7 @@ class ThinkStep(BaseModel):
 3. **Understand curation** — Extends retention beyond 2 turns with reasons
 4. **Recipe data levels** — Think knows if instructions were loaded (`[read:summary]` vs `[read:full]`)
 5. **Mode-aware step limits** — QUICK: 2, COOK: 4, PLAN: 8, CREATE: 4
+6. **Subdomain guidance split** — System-level in `think.md`, user-level in profile
 
 ---
 
@@ -195,12 +215,18 @@ When changing Think's context:
 
 | File | What to change |
 |------|----------------|
-| `prompts/think.md` | System prompt template |
+| `prompts/think.md` | System prompt — subdomain structure, linked tables, step types |
 | `src/alfred/graph/nodes/think.py` | User prompt assembly |
 | `src/alfred/core/id_registry.py` | `format_for_think_prompt()` |
 | `src/alfred/context/reasoning.py` | Reasoning trace formatting |
-| `src/alfred/context/builders.py` | `build_think_context()` (if using Context API) |
+
+**NOT for Think** (these are for Act):
+
+| File | Purpose |
+|------|---------|
+| `src/alfred/tools/schema.py` | DB structure, CRUD examples, SEMANTIC_NOTES |
+| `src/alfred/prompts/personas.py` | Step-type personas (read/write/analyze/generate) |
 
 ---
 
-*Last updated: 2026-01-15*
+*Last updated: 2026-01-17*

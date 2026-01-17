@@ -1,7 +1,7 @@
 # Alfred Architecture Overview
 
-**Last Updated:** January 13, 2026  
-**Status:** V6 with conversation management, smart search, entity retention
+**Last Updated:** January 16, 2026  
+**Status:** V7.2 with profile for writes, nested IDs, dead code cleanup
 
 ---
 
@@ -243,6 +243,7 @@ alfred/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| V7.2 | 2026-01-16 | Profile for write steps, nested ingredient ID registration, dead code cleanup, Reply witness principle, summary duplication fix |
 | V7.1 | 2026-01-15 | Turn counter fix (double-increment), step_results persistence (2 turns), Act sees full instructions, Act Quick criteria tightening, Act prompt refactor |
 | V7 | 2026-01-14 | Three-layer Context API, TurnExecutionSummary, conversation continuity, generate entity context fix |
 | V6 | 2026-01-13 | Think as conversation architect, Recent Context guidance, smart inventory search, entity retention fixes |

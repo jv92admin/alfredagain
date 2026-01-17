@@ -608,32 +608,33 @@ async def _compress_turns_to_narrative(
     try:
         result = await call_llm(
             response_model=TurnSummary,
-            system_prompt="""Summarize this conversation in 2-3 sentences.
-            
+            system_prompt="""Combine conversation history into ONE brief summary (2-3 sentences max).
+
+If there's an existing summary, MERGE it with the new turns — don't repeat or duplicate.
+
 Focus on:
 - What the user wanted to accomplish
-- Key actions taken or decisions made
+- Key actions taken or decisions made  
 - Overall conversation arc
 
 Do NOT include:
 - Entity IDs or UUIDs
 - Technical details
-- Step-by-step breakdowns
+- Repetitive phrases
 
-Write as a narrative: "User explored meal planning options, decided on 3 fish recipes..."
+Write as a single narrative: "User explored meal planning options, decided on 3 fish recipes..."
 """,
-            user_prompt=f"""Existing summary: {existing_summary or 'None'}
+            user_prompt=f"""{"Existing summary to merge: " + existing_summary if existing_summary else "No existing summary."}
 
-New turns to incorporate:
+New turns to add:
 {turns_text}
 
-Write a brief narrative summary:""",
+Write ONE combined summary (don't repeat the existing summary verbatim):""",
             complexity="low",
         )
         
-        # Combine with existing
-        if existing_summary:
-            return f"{existing_summary} {result.summary}"
+        # LLM was asked to incorporate existing_summary, so just return its output
+        # (Don't append existing_summary again — that causes duplication!)
         return result.summary
         
     except Exception as e:

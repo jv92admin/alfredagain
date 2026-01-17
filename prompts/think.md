@@ -227,35 +227,47 @@ Act figures out the mechanics (filters, queries, tool calls). You communicate th
 - `## Active Entities (Full Data)` → data available, no read needed
 - `## Long Term Memory (refs only)` → need a read step
 
-### Recipe Data Levels (When to Request Instructions)
+### Recipe Data Levels (Instructions & Ingredients)
 
-**Recipe-only nuance:** To save tokens, recipe reads are *summary-first* by default (metadata + ingredients). Instructions are only included when explicitly needed.
+**Recipe reads are summary-first by default:** metadata + ingredient names. Full data is opt-in.
 
-**How you can tell (deterministic flags in Recent Context):**
-- `recipe_3 ... [read:summary]` = last read did NOT include `instructions`
-- `recipe_3 ... [read:full]` = last read DID include `instructions`
+| Task | Steps |
+|------|-------|
+| Browse/select recipes | `read` |
+| Show user the recipe | `read` with instructions |
+| Inventory analysis | `read` → `analyze` |
+| Draft meal plan | `read` → `analyze` → `generate` |
+| Create recipe variation | `read` → `generate` → (confirm) → `write` |
+| **Update recipe** | `read` → `write` |
 
-| Task | What You Need | Step Description |
-|------|---------------|------------------|
-| Browse/select recipes | Summary (metadata + ingredients) | "Read recipes" |
-| Inventory analysis | Summary (just need ingredients) | "Analyze which recipes work with inventory" |
-| Draft meal plan | Summary (for scheduling) | "Generate meal plan draft" |
-| **Write meal plan with diffs** | **Full (need instructions for adjustments)** | "Read recipe_1, recipe_4 **with instructions** for substitution planning" |
-| **Create recipe variation** | **Full (need instructions to modify)** | "Read recipe_3 **with instructions** to create a variation" |
-| **Update existing recipe** | **Full (need instructions to edit)** | "Read recipe_5 **with instructions** for editing" |
+### Updates Need Two Steps
 
-**When to be explicit:** If your step involves modifying, creating variations, or writing detailed diffs, say "with instructions" in the step description. Act will include full instructions.
+To update something, you need:
+1. **Read** — get current data
+2. **Write** — persist the change
 
-**When summary is fine:** Browsing, selecting, analyzing feasibility, drafting schedules — summary (metadata + ingredients) is enough.
+```
+Step 1 (read): "Read recipe_5 with instructions and ingredients"
+Step 2 (write): "Update recipe_5: change gai lan to broccoli, update chef's note"
+```
+
+Act handles the actual CRUD operation (db_update, db_delete + db_create, etc.).
+
+### What to Include in the Read
+
+| Update Type | Include |
+|-------------|---------|
+| Text changes (name, description, instructions) | `with instructions` |
+| Ingredient changes (qty, unit, swap) | `with ingredients` |
+| Full edit | `with instructions and ingredients` |
+
+**Pattern:** Say "with instructions" and/or "with ingredients" in the read step.
+
+**When summary is fine:** Browsing, selecting, analyzing feasibility, drafting schedules.
 
 **Deterministic rule for "show me the recipe":**
-- If the user asks for **full details / instructions / how to cook it**, plan a **`read`** step for that recipe.
-- Use **"with instructions"** when you need the full instruction list.
-- Do **NOT** use `analyze` to "show details" unless the full recipe record data already appears in Step Results for this turn.
-
-**Common cases that usually need instructions:**
-- Answering “how do I cook recipe_X?” / “tell me more about this recipe”
-- Meal-planning steps that require substitutions/diffs/variations (not just scheduling)
+- If user asks for **full details / instructions / how to cook it** → read **with instructions**
+- Do **NOT** use `analyze` to "show details" unless full recipe data already appears in Step Results
 
 </system_structure>
 
