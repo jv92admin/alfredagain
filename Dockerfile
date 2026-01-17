@@ -6,6 +6,10 @@
 # =============================================================================
 FROM node:20-slim AS frontend-builder
 
+# Build arguments for Vite (must be available at build time)
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+
 WORKDIR /frontend
 
 # Copy package files
@@ -16,6 +20,11 @@ RUN npm ci
 
 # Copy source and build
 COPY frontend/ ./
+
+# Set env vars for Vite build
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+
 RUN npm run build
 
 # =============================================================================
