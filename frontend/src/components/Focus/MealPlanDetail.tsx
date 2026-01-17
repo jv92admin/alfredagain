@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface MealPlan {
   id: string
@@ -37,13 +38,10 @@ export function MealPlanDetail({ id, onOpenFocus }: MealPlanDetailProps) {
   const fetchData = async () => {
     try {
       // Fetch meal plans and recipes in parallel
-      const [mealRes, recipeRes] = await Promise.all([
-        fetch('/api/tables/meal_plans', { credentials: 'include' }),
-        fetch('/api/tables/recipes', { credentials: 'include' }),
+      const [mealData, recipeData] = await Promise.all([
+        apiRequest('/api/tables/meal_plans'),
+        apiRequest('/api/tables/recipes'),
       ])
-      
-      const mealData = await mealRes.json()
-      const recipeData = await recipeRes.json()
       
       const found = mealData.data?.find((m: MealPlan) => m.id === id)
       setMealPlan(found || null)
@@ -69,11 +67,9 @@ export function MealPlanDetail({ id, onOpenFocus }: MealPlanDetailProps) {
     setShowRecipeSelector(false)
     
     try {
-      await fetch(`/api/tables/meal_plans/${mealPlan.id}`, {
+      await apiRequest(`/api/tables/meal_plans/${mealPlan.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipe_id: recipe?.id || null }),
-        credentials: 'include',
       })
       
       // Update local state

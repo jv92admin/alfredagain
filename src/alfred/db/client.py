@@ -2,32 +2,77 @@
 Alfred V2 - Supabase Client.
 
 Low-level database access. All queries go through here.
+
+Two client types:
+- Service client: Uses service role key, bypasses RLS (for background tasks)
+- Authenticated client: Uses anon key + JWT, respects RLS (for user requests)
+
+The get_request_client() function automatically uses the authenticated client
+when an access token is available in the request context.
 """
 
 from supabase import Client, create_client
 
 from alfred.config import settings
+from alfred.db.request_context import get_access_token
 
-# Singleton client instance
-_client: Client | None = None
+# Singleton service client instance (bypasses RLS)
+_service_client: Client | None = None
 
 
-def get_client() -> Client:
+def get_service_client() -> Client:
     """
-    Get the Supabase client.
+    Get the service role Supabase client.
 
     Uses singleton pattern to reuse connection.
-    Uses service role key to bypass RLS (we handle user_id filtering in code).
+    Uses service role key to bypass RLS - use for background/admin operations only.
     """
-    global _client
+    global _service_client
 
-    if _client is None:
-        _client = create_client(
+    if _service_client is None:
+        _service_client = create_client(
             settings.supabase_url,
-            settings.supabase_service_role_key,  # Bypass RLS, we filter by user_id in CRUD
+            settings.supabase_service_role_key,
         )
 
-    return _client
+    return _service_client
+
+
+# Alias for backwards compatibility
+def get_client() -> Client:
+    """
+    Get the appropriate Supabase client for the current context.
+    
+    If an access token is available in the request context, returns an
+    authenticated client that respects RLS. Otherwise falls back to
+    service client (for background operations).
+    """
+    access_token = get_access_token()
+    if access_token:
+        return get_authenticated_client(access_token)
+    return get_service_client()
+
+
+def get_authenticated_client(access_token: str) -> Client:
+    """
+    Get a Supabase client authenticated as a specific user.
+    
+    Uses anon key + JWT token, respects RLS policies.
+    Use this for all user-facing operations.
+    
+    Args:
+        access_token: JWT access token from Supabase Auth
+        
+    Returns:
+        Supabase client that will respect RLS policies for the authenticated user
+    """
+    client = create_client(
+        settings.supabase_url,
+        settings.supabase_anon_key,
+    )
+    # Set the JWT token for PostgREST requests (RLS enforcement)
+    client.postgrest.auth(access_token)
+    return client
 
 
 # =============================================================================

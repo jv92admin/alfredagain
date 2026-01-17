@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface ShoppingItem {
   id: string
@@ -21,8 +22,7 @@ export function ShoppingView() {
 
   const fetchShopping = async () => {
     try {
-      const res = await fetch('/api/tables/shopping', { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest('/api/tables/shopping')
       setItems(data.data || [])
     } catch (err) {
       console.error('Failed to fetch shopping list:', err)
@@ -43,11 +43,9 @@ export function ShoppingView() {
 
     // Persist to backend
     try {
-      await fetch(`/api/tables/shopping_list/${item.id}`, {
+      await apiRequest(`/api/tables/shopping_list/${item.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_purchased: newValue }),
-        credentials: 'include',
       })
     } catch (err) {
       // Revert on error
@@ -70,9 +68,8 @@ export function ShoppingView() {
     setItems(prev => prev.filter(i => i.id !== item.id))
 
     try {
-      await fetch(`/api/tables/shopping_list/${item.id}`, {
+      await apiRequest(`/api/tables/shopping_list/${item.id}`, {
         method: 'DELETE',
-        credentials: 'include',
       })
     } catch (err) {
       // Revert on error
@@ -92,9 +89,8 @@ export function ShoppingView() {
     try {
       await Promise.all(
         purchasedItems.map(item =>
-          fetch(`/api/tables/shopping_list/${item.id}`, {
+          apiRequest(`/api/tables/shopping_list/${item.id}`, {
             method: 'DELETE',
-            credentials: 'include',
           })
         )
       )

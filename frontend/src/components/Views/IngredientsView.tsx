@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { apiRequest } from '../../lib/api'
 
 interface Ingredient {
   id: string
@@ -43,8 +44,7 @@ export function IngredientsView() {
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch('/api/ingredients/categories', { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest('/api/ingredients/categories')
       setCategories(data.data || [])
       setTotalCount(data.total || 0)
     } catch (err) {
@@ -59,8 +59,7 @@ export function IngredientsView() {
     
     setLoadingCategory(category)
     try {
-      const res = await fetch(`/api/ingredients/by-category/${encodeURIComponent(category)}`, { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest(`/api/ingredients/by-category/${encodeURIComponent(category)}`)
       setCategoryIngredients(prev => ({ ...prev, [category]: data.data || [] }))
     } catch (err) {
       console.error('Failed to fetch ingredients for category:', err)
@@ -72,8 +71,7 @@ export function IngredientsView() {
   const searchIngredients = async (query: string) => {
     setSearching(true)
     try {
-      const res = await fetch(`/api/ingredients/search?q=${encodeURIComponent(query)}`, { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest(`/api/ingredients/search?q=${encodeURIComponent(query)}`)
       setSearchResults(data.data || [])
     } catch (err) {
       console.error('Failed to search ingredients:', err)

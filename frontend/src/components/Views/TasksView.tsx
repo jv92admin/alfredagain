@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface Task {
   id: string
@@ -18,8 +19,7 @@ export function TasksView() {
 
   const fetchTasks = async () => {
     try {
-      const res = await fetch('/api/tables/tasks', { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest('/api/tables/tasks')
       setTasks(data.data || [])
     } catch (err) {
       console.error('Failed to fetch tasks:', err)
@@ -40,11 +40,9 @@ export function TasksView() {
 
     // Persist to backend
     try {
-      await fetch(`/api/tables/tasks/${task.id}`, {
+      await apiRequest(`/api/tables/tasks/${task.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed: newValue }),
-        credentials: 'include',
       })
     } catch (err) {
       // Revert on error
@@ -64,9 +62,8 @@ export function TasksView() {
     setTasks(prev => prev.filter(t => t.id !== task.id))
 
     try {
-      await fetch(`/api/tables/tasks/${task.id}`, {
+      await apiRequest(`/api/tables/tasks/${task.id}`, {
         method: 'DELETE',
-        credentials: 'include',
       })
     } catch (err) {
       // Revert on error

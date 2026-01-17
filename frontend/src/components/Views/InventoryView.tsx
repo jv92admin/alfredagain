@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface InventoryItem {
   id: string
@@ -29,8 +30,7 @@ export function InventoryView() {
 
   const fetchInventory = async () => {
     try {
-      const res = await fetch('/api/tables/inventory', { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest('/api/tables/inventory')
       setItems(data.data || [])
     } catch (err) {
       console.error('Failed to fetch inventory:', err)
@@ -54,11 +54,9 @@ export function InventoryView() {
     setEditingId(null)
 
     try {
-      await fetch(`/api/tables/inventory/${item.id}`, {
+      await apiRequest(`/api/tables/inventory/${item.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quantity: newQuantity }),
-        credentials: 'include',
       })
     } catch (err) {
       // Revert on error
@@ -76,9 +74,8 @@ export function InventoryView() {
     setItems(prev => prev.filter(i => i.id !== item.id))
 
     try {
-      await fetch(`/api/tables/inventory/${item.id}`, {
+      await apiRequest(`/api/tables/inventory/${item.id}`, {
         method: 'DELETE',
-        credentials: 'include',
       })
     } catch (err) {
       // Revert on error

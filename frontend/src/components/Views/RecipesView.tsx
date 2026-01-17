@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface Recipe {
   id: string
@@ -26,8 +27,7 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
 
   const fetchRecipes = async () => {
     try {
-      const res = await fetch('/api/tables/recipes', { credentials: 'include' })
-      const data = await res.json()
+      const data = await apiRequest('/api/tables/recipes')
       setRecipes(data.data || [])
     } catch (err) {
       console.error('Failed to fetch recipes:', err)

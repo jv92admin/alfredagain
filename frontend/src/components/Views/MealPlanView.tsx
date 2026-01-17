@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface MealPlan {
   id: string
@@ -30,13 +31,10 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
   const fetchData = async () => {
     try {
       // Fetch meal plans and recipes in parallel
-      const [mealRes, recipeRes] = await Promise.all([
-        fetch('/api/tables/meal_plans', { credentials: 'include' }),
-        fetch('/api/tables/recipes', { credentials: 'include' }),
+      const [mealData, recipeData] = await Promise.all([
+        apiRequest('/api/tables/meal_plans'),
+        apiRequest('/api/tables/recipes'),
       ])
-      
-      const mealData = await mealRes.json()
-      const recipeData = await recipeRes.json()
       
       setMealPlans(mealData.data || [])
       

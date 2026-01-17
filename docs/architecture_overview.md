@@ -1,7 +1,7 @@
 # Alfred Architecture Overview
 
-**Last Updated:** January 16, 2026  
-**Status:** V7.2 with profile for writes, nested IDs, dead code cleanup
+**Last Updated:** January 17, 2026  
+**Status:** V8 with Google OAuth, Supabase Auth, database-enforced RLS
 
 ---
 
@@ -239,10 +239,77 @@ alfred/
 
 ---
 
+## 9. Authentication & Row Level Security
+
+**V8 (2026-01-17):** Migrated to Google OAuth via Supabase Auth with database-enforced RLS.
+
+### Authentication Flow
+
+```
+User → Google OAuth → Supabase Auth → JWT Token → Backend validates → Authenticated client
+```
+
+| Component | Implementation |
+|-----------|----------------|
+| **Provider** | Google OAuth via Supabase Auth |
+| **Token** | JWT in `Authorization: Bearer <token>` header |
+| **Session** | Managed by Supabase Auth (not server-side) |
+| **User provisioning** | Auto-created via DB trigger on first sign-in |
+
+### Database Client Types
+
+| Client | When Used | RLS |
+|--------|-----------|-----|
+| `get_client()` | User requests (auto-detects token) | ✅ Enforced |
+| `get_service_client()` | Background tasks, admin ops | ❌ Bypassed |
+| `get_authenticated_client(token)` | Explicit token passing | ✅ Enforced |
+
+### Request Context Pattern
+
+Authentication token is passed via context variables (no threading through functions):
+
+```python
+# At request start
+set_request_context(access_token=token, user_id=user_id)
+
+# During request - get_client() auto-uses authenticated client
+client = get_client()
+
+# At request end
+clear_request_context()
+```
+
+### RLS Policies
+
+All user-owned tables have RLS policies using `(select auth.uid())`:
+
+```sql
+CREATE POLICY inventory_select_policy ON inventory
+    FOR SELECT USING (user_id = (select auth.uid()));
+```
+
+**Protected tables:** inventory, recipes, recipe_ingredients, meal_plans, shopping_list, preferences, flavor_preferences, conversation_memory, tasks, cooking_log, prompt_logs, users
+
+**Public tables:** ingredients (read by any authenticated user)
+
+### Related Files
+
+| File | Purpose |
+|------|---------|
+| `src/alfred/db/client.py` | Client factory with auto-auth detection |
+| `src/alfred/db/request_context.py` | Context variables for request-scoped auth |
+| `src/alfred/web/app.py` | JWT validation, request context setup |
+| `migrations/024_rls_with_auth.sql` | RLS policies, user provisioning trigger |
+| `migrations/025_rls_performance_fix.sql` | Performance-optimized policies |
+| `docs/google-oauth-migration-guide.md` | Full migration documentation |
+
+---
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| V8 | 2026-01-17 | Google OAuth via Supabase Auth, database-enforced RLS with auth.uid(), request context pattern for auth tokens |
 | V7.2 | 2026-01-16 | Profile for write steps, nested ingredient ID registration, dead code cleanup, Reply witness principle, summary duplication fix |
 | V7.1 | 2026-01-15 | Turn counter fix (double-increment), step_results persistence (2 turns), Act sees full instructions, Act Quick criteria tightening, Act prompt refactor |
 | V7 | 2026-01-14 | Three-layer Context API, TurnExecutionSummary, conversation continuity, generate entity context fix |

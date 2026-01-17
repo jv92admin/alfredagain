@@ -1,35 +1,37 @@
 """
 Alfred Web UI - FastAPI application.
 
-Quick alpha testing UI for sharing with friends.
+Uses Supabase Auth with Google OAuth for authentication.
 """
 
 import asyncio
 import json
-import secrets
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import bcrypt
-from fastapi import FastAPI, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, HTTPException, Request, Response, Depends, Header
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from supabase import Client
 
 from sse_starlette.sse import EventSourceResponse
 
-from alfred.db.client import get_client
+from alfred.db.client import get_service_client, get_authenticated_client
+from alfred.db.request_context import set_request_context, clear_request_context
 from alfred.graph.workflow import run_alfred, run_alfred_streaming
 from alfred.memory.conversation import initialize_conversation
 from alfred.graph.state import ConversationContext
+from alfred.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory session store (good enough for alpha)
-sessions: dict[str, dict[str, Any]] = {}
+# In-memory conversation store (keyed by user_id)
+# Note: In production, consider using Redis or database for persistence
+conversations: dict[str, dict[str, Any]] = {}
 
 app = FastAPI(title="Alfred", version="2.0.0")
 
@@ -67,11 +69,6 @@ async def health_check():
 # Models
 # =============================================================================
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
 class ChatRequest(BaseModel):
     message: str
     log_prompts: bool = False
@@ -79,101 +76,79 @@ class ChatRequest(BaseModel):
 
 
 # =============================================================================
-# Session Management
+# Auth - Supabase JWT Validation
 # =============================================================================
 
-def get_session(request: Request) -> dict[str, Any] | None:
-    """Get session from cookie."""
-    session_id = request.cookies.get("alfred_session")
-    if not session_id:
-        return None
-    session = sessions.get(session_id)
-    if session and session.get("expires_at", datetime.min) > datetime.now():
-        return session
-    return None
+class AuthenticatedUser(BaseModel):
+    """Authenticated user info from Supabase JWT."""
+    id: str
+    email: str | None
+    access_token: str
 
 
-def require_session(request: Request) -> dict[str, Any]:
-    """Require valid session or raise 401."""
-    session = get_session(request)
-    if not session:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return session
+async def get_current_user(authorization: str = Header(None)) -> AuthenticatedUser:
+    """
+    Validate Supabase JWT and extract user info.
+    
+    Expects Authorization header: "Bearer <access_token>"
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+    
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization format")
+    
+    access_token = authorization[7:]  # Remove "Bearer " prefix
+    
+    try:
+        # Use service client to validate the token
+        client = get_service_client()
+        user_response = client.auth.get_user(access_token)
+        
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        user = user_response.user
+        return AuthenticatedUser(
+            id=user.id,
+            email=user.email,
+            access_token=access_token
+        )
+    except Exception as e:
+        logger.warning(f"Auth validation failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
-def create_session(user_id: str, email: str, display_name: str) -> str:
-    """Create a new session and return session ID."""
-    session_id = secrets.token_urlsafe(32)
-    sessions[session_id] = {
-        "user_id": user_id,
-        "email": email,
-        "display_name": display_name,
-        "conversation": initialize_conversation(),
-        "expires_at": datetime.now() + timedelta(days=7),
-    }
-    return session_id
+def get_user_conversation(user_id: str) -> dict[str, Any]:
+    """Get or create conversation state for a user."""
+    if user_id not in conversations:
+        conversations[user_id] = initialize_conversation()
+    return conversations[user_id]
 
 
 # =============================================================================
 # Auth Endpoints
 # =============================================================================
 
-@app.post("/api/login")
-async def login(req: LoginRequest, response: Response):
-    """Login with email and password."""
-    client = get_client()
-    
-    # Fetch user by email
-    result = client.table("users").select("id, email, password_hash, display_name").eq("email", req.email).execute()
-    
-    if not result.data:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    user = result.data[0]
-    password_hash = user.get("password_hash")
-    
-    if not password_hash:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Check password
-    if not bcrypt.checkpw(req.password.encode(), password_hash.encode()):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Create session
-    session_id = create_session(
-        user_id=user["id"],
-        email=user["email"],
-        display_name=user.get("display_name") or user["email"].split("@")[0],
-    )
-    
-    response.set_cookie(
-        key="alfred_session",
-        value=session_id,
-        httponly=True,
-        max_age=60 * 60 * 24 * 7,  # 7 days
-        samesite="lax",
-    )
-    
-    return {"success": True, "display_name": user.get("display_name") or user["email"]}
-
-
-@app.post("/api/logout")
-async def logout(request: Request, response: Response):
-    """Logout and clear session."""
-    session_id = request.cookies.get("alfred_session")
-    if session_id and session_id in sessions:
-        del sessions[session_id]
-    response.delete_cookie("alfred_session")
-    return {"success": True}
-
-
 @app.get("/api/me")
-async def get_me(session: dict = Depends(require_session)):
+async def get_me(user: AuthenticatedUser = Depends(get_current_user)):
     """Get current user info."""
+    # Fetch display name from public.users table
+    client = get_authenticated_client(user.access_token)
+    result = client.table("users").select("display_name").eq("id", user.id).maybe_single().execute()
+    
+    display_name = None
+    if result.data:
+        display_name = result.data.get("display_name")
+    
+    # Fallback to email prefix if no display name
+    if not display_name and user.email:
+        display_name = user.email.split("@")[0]
+    
     return {
-        "user_id": session["user_id"],
-        "email": session["email"],
-        "display_name": session["display_name"],
+        "user_id": user.id,
+        "email": user.email,
+        "display_name": display_name or "User",
     }
 
 
@@ -182,7 +157,7 @@ async def get_me(session: dict = Depends(require_session)):
 # =============================================================================
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest, request: Request, session: dict = Depends(require_session)):
+async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """Send a message to Alfred."""
     from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
     
@@ -191,21 +166,24 @@ async def chat(req: ChatRequest, request: Request, session: dict = Depends(requi
         enable_prompt_logging(req.log_prompts)
         
         # Set user ID for logging context
-        set_user_id(session["user_id"])
+        set_user_id(user.id)
         
-        # Get conversation from session
-        conversation = session.get("conversation") or initialize_conversation()
+        # Set request context for authenticated DB access
+        set_request_context(access_token=user.access_token, user_id=user.id)
         
-        # Run Alfred
+        # Get conversation from user's session
+        conversation = get_user_conversation(user.id)
+        
+        # Run Alfred (will use authenticated client via request context)
         response_text, updated_conversation = await run_alfred(
             user_message=req.message,
-            user_id=session["user_id"],
+            user_id=user.id,
             conversation=conversation,
-            mode=req.mode,  # V3: Pass mode
+            mode=req.mode,
         )
         
-        # Update session with new conversation state
-        session["conversation"] = updated_conversation
+        # Update conversation state
+        conversations[user.id] = updated_conversation
         
         # Get log directory
         log_dir = get_session_log_dir()
@@ -218,14 +196,17 @@ async def chat(req: ChatRequest, request: Request, session: dict = Depends(requi
     except Exception as e:
         logger.exception("Chat error")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clear request context
+        clear_request_context()
 
 
 @app.post("/api/chat/reset")
-async def reset_chat(session: dict = Depends(require_session)):
+async def reset_chat(user: AuthenticatedUser = Depends(get_current_user)):
     """Reset conversation history and prompt logging session."""
     from alfred.llm.prompt_logger import reset_session
     
-    session["conversation"] = initialize_conversation()
+    conversations[user.id] = initialize_conversation()
     reset_session()  # Start fresh prompt log session
     return {"success": True}
 
@@ -238,7 +219,7 @@ async def debug_logging():
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest, request: Request, session: dict = Depends(require_session)):
+async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """Send a message to Alfred with streaming progress updates."""
     from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
     
@@ -248,22 +229,24 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
             enable_prompt_logging(req.log_prompts)
             
             # Set user ID for logging context
-            set_user_id(session["user_id"])
+            set_user_id(user.id)
             
-            # Get conversation from session
-            conversation = session.get("conversation") or initialize_conversation()
+            # Set request context for authenticated DB access
+            set_request_context(access_token=user.access_token, user_id=user.id)
             
-            # Stream Alfred's progress
+            # Get conversation from user's session
+            conversation = get_user_conversation(user.id)
+            
+            # Stream Alfred's progress (will use authenticated client via request context)
             async for update in run_alfred_streaming(
                 user_message=req.message,
-                user_id=session["user_id"],
+                user_id=user.id,
                 conversation=conversation,
-                mode=req.mode,  # V3: Pass mode
+                mode=req.mode,
             ):
                 if update["type"] == "done":
-                    # Phase 1: Response is sent immediately after Reply
-                    # Session conversation is updated with initial context for now
-                    session["conversation"] = update["conversation"]
+                    # Update conversation state
+                    conversations[user.id] = update["conversation"]
                     # Get log directory
                     log_dir = get_session_log_dir()
                     yield {
@@ -274,9 +257,8 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
                         }),
                     }
                 elif update["type"] == "context_updated":
-                    # Phase 1: Summarize completed async, update session with final conversation
-                    session["conversation"] = update["conversation"]
-                    # Notify frontend that context is ready (for race condition handling)
+                    # Summarize completed async, update conversation
+                    conversations[user.id] = update["conversation"]
                     yield {
                         "event": "context_updated",
                         "data": json.dumps({"status": "ready"}),
@@ -292,6 +274,9 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
                 "event": "error",
                 "data": json.dumps({"error": str(e)}),
             }
+        finally:
+            # Clear request context
+            clear_request_context()
     
     return EventSourceResponse(event_generator())
 
@@ -301,44 +286,42 @@ async def chat_stream(req: ChatRequest, request: Request, session: dict = Depend
 # =============================================================================
 
 @app.get("/api/tables/inventory")
-async def get_inventory(session: dict = Depends(require_session)):
+async def get_inventory(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's inventory."""
-    client = get_client()
-    result = client.table("inventory").select("*").eq("user_id", session["user_id"]).order("name").execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("inventory").select("*").order("name").execute()
     return {"data": result.data}
 
 
 @app.get("/api/tables/recipes")
-async def get_recipes(session: dict = Depends(require_session)):
+async def get_recipes(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's recipes."""
-    client = get_client()
-    result = client.table("recipes").select("*").eq("user_id", session["user_id"]).order("created_at", desc=True).execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("recipes").select("*").order("created_at", desc=True).execute()
     return {"data": result.data}
 
 
 @app.get("/api/ingredients/categories")
-async def get_ingredient_categories(session: dict = Depends(require_session)):
+async def get_ingredient_categories(user: AuthenticatedUser = Depends(get_current_user)):
     """Get distinct ingredient categories."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     
     # Get total count
     count_result = client.table("ingredients").select("id", count="exact").execute()
     total = count_result.count or 0
     
-    # Get distinct categories using a simple query
-    # Supabase doesn't have DISTINCT, so we fetch category column and dedupe in Python
+    # Get distinct categories
     result = client.table("ingredients").select("category").execute()
     unique_cats = sorted(set(row.get("category") or "uncategorized" for row in result.data))
     
-    # Return categories without counts - frontend will get count from loaded items
     categories = [{"category": cat} for cat in unique_cats]
     return {"data": categories, "total": total}
 
 
 @app.get("/api/ingredients/by-category/{category}")
-async def get_ingredients_by_category(category: str, session: dict = Depends(require_session)):
+async def get_ingredients_by_category(category: str, user: AuthenticatedUser = Depends(get_current_user)):
     """Get ingredients for a specific category."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     if category.lower() == "uncategorized":
         result = client.table("ingredients").select("id, name, aliases, default_unit").is_("category", "null").order("name").execute()
     else:
@@ -347,19 +330,19 @@ async def get_ingredients_by_category(category: str, session: dict = Depends(req
 
 
 @app.get("/api/ingredients/search")
-async def search_ingredients(q: str, session: dict = Depends(require_session)):
+async def search_ingredients(q: str, user: AuthenticatedUser = Depends(get_current_user)):
     """Search ingredients by name (limited results)."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     result = client.table("ingredients").select("id, name, category, aliases, default_unit").ilike("name", f"%{q}%").limit(50).execute()
     return {"data": result.data}
 
 
 @app.get("/api/tables/recipes/{recipe_id}/ingredients")
-async def get_recipe_ingredients(recipe_id: str, session: dict = Depends(require_session)):
+async def get_recipe_ingredients(recipe_id: str, user: AuthenticatedUser = Depends(get_current_user)):
     """Get ingredients for a specific recipe."""
-    client = get_client()
-    # First verify the recipe belongs to user
-    recipe = client.table("recipes").select("id").eq("id", recipe_id).eq("user_id", session["user_id"]).execute()
+    client = get_authenticated_client(user.access_token)
+    # RLS will ensure user can only see their own recipes
+    recipe = client.table("recipes").select("id").eq("id", recipe_id).execute()
     if not recipe.data:
         raise HTTPException(status_code=404, detail="Recipe not found")
     
@@ -368,42 +351,42 @@ async def get_recipe_ingredients(recipe_id: str, session: dict = Depends(require
 
 
 @app.get("/api/tables/shopping")
-async def get_shopping_list(session: dict = Depends(require_session)):
+async def get_shopping_list(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's shopping list."""
-    client = get_client()
-    result = client.table("shopping_list").select("*").eq("user_id", session["user_id"]).order("name").execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("shopping_list").select("*").order("name").execute()
     return {"data": result.data}
 
 
 @app.get("/api/tables/meal_plans")
-async def get_meal_plans(session: dict = Depends(require_session)):
+async def get_meal_plans(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's meal plans."""
-    client = get_client()
-    result = client.table("meal_plans").select("*").eq("user_id", session["user_id"]).order("date", desc=True).execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("meal_plans").select("*").order("date", desc=True).execute()
     return {"data": result.data}
 
 
 @app.get("/api/tables/tasks")
-async def get_tasks(session: dict = Depends(require_session)):
+async def get_tasks(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's tasks."""
-    client = get_client()
-    result = client.table("tasks").select("*").eq("user_id", session["user_id"]).order("due_date").execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("tasks").select("*").order("due_date").execute()
     return {"data": result.data}
 
 
 @app.get("/api/tables/cooking_log")
-async def get_cooking_log(session: dict = Depends(require_session)):
+async def get_cooking_log(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's cooking history."""
-    client = get_client()
-    result = client.table("cooking_log").select("*").eq("user_id", session["user_id"]).order("cooked_at", desc=True).execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("cooking_log").select("*").order("cooked_at", desc=True).execute()
     return {"data": result.data}
 
 
 @app.get("/api/tables/preferences")
-async def get_preferences(session: dict = Depends(require_session)):
+async def get_preferences(user: AuthenticatedUser = Depends(get_current_user)):
     """Get user's preferences."""
-    client = get_client()
-    result = client.table("preferences").select("*").eq("user_id", session["user_id"]).execute()
+    client = get_authenticated_client(user.access_token)
+    result = client.table("preferences").select("*").execute()
     return {"data": result.data}
 
 
@@ -434,17 +417,16 @@ class MealPlanUpdate(BaseModel):
     meal_type: str | None = None
 
 @app.patch("/api/tables/shopping_list/{item_id}")
-async def update_shopping_item(item_id: str, update: ShoppingItemUpdate, session: dict = Depends(require_session)):
+async def update_shopping_item(item_id: str, update: ShoppingItemUpdate, user: AuthenticatedUser = Depends(get_current_user)):
     """Update a shopping list item."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     
-    # Build update dict with only provided fields
     update_data = {k: v for k, v in update.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
     
-    # Verify ownership and update
-    result = client.table("shopping_list").update(update_data).eq("id", item_id).eq("user_id", session["user_id"]).execute()
+    # RLS ensures user can only update their own items
+    result = client.table("shopping_list").update(update_data).eq("id", item_id).execute()
     
     if not result.data:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -452,15 +434,15 @@ async def update_shopping_item(item_id: str, update: ShoppingItemUpdate, session
     return {"data": result.data[0]}
 
 @app.patch("/api/tables/tasks/{task_id}")
-async def update_task(task_id: str, update: TaskUpdate, session: dict = Depends(require_session)):
+async def update_task(task_id: str, update: TaskUpdate, user: AuthenticatedUser = Depends(get_current_user)):
     """Update a task."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     
     update_data = {k: v for k, v in update.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
     
-    result = client.table("tasks").update(update_data).eq("id", task_id).eq("user_id", session["user_id"]).execute()
+    result = client.table("tasks").update(update_data).eq("id", task_id).execute()
     
     if not result.data:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -468,15 +450,15 @@ async def update_task(task_id: str, update: TaskUpdate, session: dict = Depends(
     return {"data": result.data[0]}
 
 @app.patch("/api/tables/inventory/{item_id}")
-async def update_inventory_item(item_id: str, update: InventoryUpdate, session: dict = Depends(require_session)):
+async def update_inventory_item(item_id: str, update: InventoryUpdate, user: AuthenticatedUser = Depends(get_current_user)):
     """Update an inventory item."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     
     update_data = {k: v for k, v in update.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
     
-    result = client.table("inventory").update(update_data).eq("id", item_id).eq("user_id", session["user_id"]).execute()
+    result = client.table("inventory").update(update_data).eq("id", item_id).execute()
     
     if not result.data:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -484,15 +466,13 @@ async def update_inventory_item(item_id: str, update: InventoryUpdate, session: 
     return {"data": result.data[0]}
 
 @app.patch("/api/tables/meal_plans/{meal_plan_id}")
-async def update_meal_plan(meal_plan_id: str, update: MealPlanUpdate, session: dict = Depends(require_session)):
+async def update_meal_plan(meal_plan_id: str, update: MealPlanUpdate, user: AuthenticatedUser = Depends(get_current_user)):
     """Update a meal plan."""
-    client = get_client()
+    client = get_authenticated_client(user.access_token)
     
-    # Handle recipe_id specially - allow explicit null to unassign
     update_data = {}
     for k, v in update.model_dump().items():
         if k == 'recipe_id':
-            # Always include recipe_id if it was in the request (even if null)
             if v is not None or 'recipe_id' in update.model_dump(exclude_unset=True):
                 update_data[k] = v
         elif v is not None:
@@ -501,7 +481,7 @@ async def update_meal_plan(meal_plan_id: str, update: MealPlanUpdate, session: d
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
     
-    result = client.table("meal_plans").update(update_data).eq("id", meal_plan_id).eq("user_id", session["user_id"]).execute()
+    result = client.table("meal_plans").update(update_data).eq("id", meal_plan_id).execute()
     
     if not result.data:
         raise HTTPException(status_code=404, detail="Meal plan not found")
@@ -509,15 +489,15 @@ async def update_meal_plan(meal_plan_id: str, update: MealPlanUpdate, session: d
     return {"data": result.data[0]}
 
 @app.delete("/api/tables/{table}/{item_id}")
-async def delete_item(table: str, item_id: str, session: dict = Depends(require_session)):
+async def delete_item(table: str, item_id: str, user: AuthenticatedUser = Depends(get_current_user)):
     """Delete an item from a table."""
-    # Whitelist allowed tables
     allowed_tables = {"inventory", "shopping_list", "tasks", "recipes", "meal_plans"}
     if table not in allowed_tables:
         raise HTTPException(status_code=400, detail=f"Table {table} not allowed")
     
-    client = get_client()
-    result = client.table(table).delete().eq("id", item_id).eq("user_id", session["user_id"]).execute()
+    client = get_authenticated_client(user.access_token)
+    # RLS ensures user can only delete their own items
+    result = client.table(table).delete().eq("id", item_id).execute()
     
     if not result.data:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -529,15 +509,11 @@ async def delete_item(table: str, item_id: str, session: dict = Depends(require_
 # Frontend - React SPA
 # =============================================================================
 
-# React build location - try multiple paths for dev vs Docker
 def find_frontend_dir() -> Path | None:
     """Find the React build directory in dev or Docker."""
     candidates = [
-        # Dev: relative to source file
         Path(__file__).parent.parent.parent.parent / "frontend" / "dist",
-        # Docker: /app/frontend/dist (pip install puts code in site-packages)
         Path("/app/frontend/dist"),
-        # Alt: current working directory
         Path.cwd() / "frontend" / "dist",
     ]
     for path in candidates:
@@ -547,28 +523,22 @@ def find_frontend_dir() -> Path | None:
 
 FRONTEND_DIR = find_frontend_dir()
 
-# Check if build exists
 if FRONTEND_DIR is not None:
-    # Mount static assets from React build
     if (FRONTEND_DIR / "assets").exists():
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="static")
     
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Serve React SPA - all routes return index.html, React Router handles routing."""
-        # API routes are already handled above, this catches everything else
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
         
-        # Serve static files if they exist
         file_path = FRONTEND_DIR / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         
-        # Otherwise serve index.html for SPA routing
         return FileResponse(FRONTEND_DIR / "index.html")
 else:
-    # No React build - show helpful message
     @app.get("/", response_class=HTMLResponse)
     async def no_frontend():
         """Show message when React build is missing."""
@@ -589,8 +559,6 @@ npm run build</pre>
         """
 
 
-
 def create_app() -> FastAPI:
     """Create and return the FastAPI application."""
     return app
-

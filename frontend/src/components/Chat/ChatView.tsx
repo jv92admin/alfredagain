@@ -3,6 +3,7 @@ import { MessageBubble, Message } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import { ProgressTrail, ProgressStep } from './ProgressTrail'
 import { Mode } from '../../App'
+import { apiStream } from '../../lib/api'
 
 interface ChatViewProps {
   messages: Message[]
@@ -52,18 +53,14 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
     setMessages((prev) => [...prev, userMsg])
 
     try {
-      const res = await fetch('/api/chat/stream', {
+      const res = await apiStream('/api/chat/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           message: userMessage, 
           log_prompts: true,
           mode: mode, // V3: Pass mode to backend
         }),
-        credentials: 'include',
       })
-
-      if (!res.ok) throw new Error('Chat failed')
 
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()

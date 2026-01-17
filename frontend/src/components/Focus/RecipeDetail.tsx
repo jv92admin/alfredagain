@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiRequest } from '../../lib/api'
 
 interface Recipe {
   id: string
@@ -38,15 +39,13 @@ export function RecipeDetail({ id, onClose }: RecipeDetailProps) {
   const fetchRecipe = async () => {
     try {
       // Fetch recipe
-      const recipeRes = await fetch('/api/tables/recipes', { credentials: 'include' })
-      const recipeData = await recipeRes.json()
+      const recipeData = await apiRequest('/api/tables/recipes')
       const foundRecipe = recipeData.data?.find((r: Recipe) => r.id === id)
       setRecipe(foundRecipe || null)
 
       // Fetch ingredients
       if (foundRecipe) {
-        const ingredientsRes = await fetch(`/api/tables/recipes/${id}/ingredients`, { credentials: 'include' })
-        const ingredientsData = await ingredientsRes.json()
+        const ingredientsData = await apiRequest(`/api/tables/recipes/${id}/ingredients`)
         setIngredients(ingredientsData.data || [])
       }
     } catch (err) {
@@ -62,9 +61,8 @@ export function RecipeDetail({ id, onClose }: RecipeDetailProps) {
     
     setDeleting(true)
     try {
-      await fetch(`/api/tables/recipes/${recipe.id}`, {
+      await apiRequest(`/api/tables/recipes/${recipe.id}`, {
         method: 'DELETE',
-        credentials: 'include',
       })
       // Close the focus overlay after delete
       onClose?.()
