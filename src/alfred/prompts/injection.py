@@ -140,7 +140,7 @@ def build_act_user_prompt(
     )
     
     # === Assemble final prompt ===
-    # Order: header → status → profile → task → guidance → data → entities → context → decision
+    # Order: header → schema → status → profile → task → guidance → data → entities → context → decision
     parts = []
     
     # 1. Subdomain header (step-type persona)
@@ -148,52 +148,52 @@ def build_act_user_prompt(
         parts.append(specific["subdomain_header"])
         parts.append("---")
     
-    # 2. User preferences for write steps (profile + subdomain guidance)
+    # 2. Schema (read/write only) — right after header so examples can reference it
+    if specific.get("schema"):
+        parts.append(specific["schema"])
+        parts.append("---")
+    
+    # 3. User preferences for write steps (profile + subdomain guidance)
     if step_type == "write":
         if profile_section:
             parts.append(profile_section)
         if subdomain_guidance:
             parts.append(subdomain_guidance)
     
-    # 3. STATUS table
+    # 4. STATUS table
     parts.append(common["status"])
     parts.append("---")
     
-    # 4. Previous step note (if any)
+    # 5. Previous step note (if any)
     if specific.get("prev_note"):
         parts.append(specific["prev_note"])
         parts.append("---")
     
-    # 5. User profile (analyze/generate only)
+    # 6. User profile (analyze/generate only)
     if profile_section and step_type in ("analyze", "generate"):
         parts.append(profile_section)
     
-    # 6. Subdomain guidance (user preferences - after profile for analyze/generate)
+    # 7. Subdomain guidance (user preferences - after profile for analyze/generate)
     if step_type in ("analyze", "generate") and subdomain_guidance:
         parts.append(subdomain_guidance)
     
-    # 7. Task section
+    # 8. Task section
     parts.append(common["task"])
     parts.append("---")
     
-    # 8. Batch manifest (write only)
+    # 9. Batch manifest (write only)
     if specific.get("batch_manifest"):
         parts.append(specific["batch_manifest"])
         parts.append("---")
     
-    # 9. Step-type guidance/examples
+    # 10. Step-type guidance/examples — now can reference schema above
     if specific.get("guidance"):
         parts.append(specific["guidance"])
         parts.append("---")
     
-    # 10. Data section (different label for analyze/generate vs read/write)
+    # 11. Data section (different label for analyze/generate vs read/write)
     parts.append(common["data_section"])
     parts.append("---")
-    
-    # 11. Schema (read/write only)
-    if specific.get("schema"):
-        parts.append(specific["schema"])
-        parts.append("---")
     
     # 12. Entities in Context (ALWAYS included)
     parts.append(common["entities"])

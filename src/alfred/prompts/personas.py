@@ -126,7 +126,7 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
 - `occasions`: weeknight, batch-prep, hosting, weekend, comfort
 - `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free
 - `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: air-fryer, instant-pot, one-pot, sheet-pan, grill, stovetop-only
+- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven).
 
 **When to use which filter:**
 
@@ -160,7 +160,7 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
 - `occasions`: weeknight, batch-prep, hosting, weekend, comfort
 - `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free
 - `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: air-fryer, instant-pot, one-pot, sheet-pan, grill, stovetop-only
+- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven).
 
 **Example** (updating multiple fields at once):
 ```json
@@ -221,6 +221,22 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
 
 **Steps:** `db_create` recipe → get ID → `db_create` ingredients with that `recipe_id`
 
+**Variations:** If this is a variant of an existing recipe (e.g., "egg version", "instant-pot version", "spicy version"):
+- Set `parent_recipe_id` to the original recipe's ID
+- This creates a linked family of recipes for tracking
+
+```json
+// Creating a variant of recipe_1
+{"tool": "db_create", "params": {
+  "table": "recipes",
+  "data": {
+    "name": "Spicy Chicken Tikka",
+    "parent_recipe_id": "recipe_1",
+    ...
+  }
+}}
+```
+
 **Input normalization:** Users paste recipes from websites, screenshots, or describe them verbally. Formats vary wildly. Your job is to translate into our schema:
 
 | Input | Normalize to |
@@ -253,7 +269,7 @@ Your job: parse intent and set direction before Generate creates.
 - `occasions`: weeknight, batch-prep, hosting, weekend, comfort
 - `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free  
 - `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: air-fryer, instant-pot, one-pot, sheet-pan, grill, stovetop-only
+- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven).
 
 **Ingredient categories** (inventory and recipe ingredients link to canonical database):
 - **Proteins**: chicken, beef, pork, fish, tofu, eggs
@@ -394,7 +410,7 @@ Don't just list ingredients. Design flavor profiles with intention.
   "occasions": ["weeknight", "batch-prep"],
   "health_tags": ["vegetarian"],
   "flavor_tags": ["umami", "savory"],
-  "equipment_tags": ["sheet-pan"]
+  "equipment_tags": []
 }
 ```
 
@@ -402,7 +418,7 @@ Don't just list ingredients. Design flavor profiles with intention.
 - `occasions`: weeknight, batch-prep, hosting, weekend, comfort
 - `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free
 - `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: air-fryer, instant-pot, one-pot, sheet-pan, grill, stovetop-only
+- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven). 
 
 ---
 
@@ -616,7 +632,7 @@ You reason. Generate compiles. But you give actual directions, not just abstract
 **Recipe tags** you may see:
 - `occasions`: weeknight, batch-prep, hosting, weekend, comfort — use to match recipes to days
 - `health_tags`: high-protein, low-carb, vegetarian, etc. — filter by user's dietary needs
-- `equipment_tags`: air-fryer, instant-pot, one-pot — match to user's available equipment
+- `equipment_tags`: major appliances (air-fryer, instant-pot, slow-cooker, grill, etc.) — match to user's equipment
 
 **Inventory structure:**
 - Items have `category` (proteins, produce, dairy, pantry, frozen) and `location` (fridge, freezer, pantry)

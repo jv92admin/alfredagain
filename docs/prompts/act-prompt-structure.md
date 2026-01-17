@@ -58,21 +58,23 @@ The user prompt is assembled in this order:
 
 ```
 1. Subdomain header      ← from get_full_subdomain_content()
-2. Subdomain guidance    ← user preferences (write only here, or after profile for analyze/generate)
-3. STATUS table          ← step #, goal, type, progress, today
-4. Previous step note    ← note from prior step (read/write only)
-5. User profile          ← constraints, equipment (analyze/generate only)
-6. Subdomain guidance    ← user preferences (analyze/generate only)
-7. Task section          ← "Your job this step: ..."
-8. Batch manifest        ← batch progress (write only)
-9. Step-type guidance    ← from get_contextual_examples()
-10. Data section         ← prev_turn + prev_steps + current_step
-11. Schema               ← database schema (read/write only)
+2. Schema                ← database schema (read/write only) — so examples can reference it
+3. User preferences      ← profile + subdomain guidance (write only here)
+4. STATUS table          ← step #, goal, type, progress, today
+5. Previous step note    ← note from prior step (read/write only)
+6. User profile          ← constraints, equipment (analyze/generate only)
+7. Subdomain guidance    ← user preferences (analyze/generate only)
+8. Task section          ← "Your job this step: ..."
+9. Batch manifest        ← batch progress (write only)
+10. Step-type guidance   ← from get_contextual_examples()
+11. Data section         ← prev_turn + prev_steps + current_step
 12. Entities in Context  ← ◀── ALWAYS INCLUDED
 13. Artifacts            ← generated content (write only)
 14. Conversation         ← ◀── ALWAYS INCLUDED
 15. DECISION             ← output instructions
 ```
+
+**Key insight:** Schema comes before examples/guidance so Act sees "what exists" before "how to use it".
 
 ---
 
