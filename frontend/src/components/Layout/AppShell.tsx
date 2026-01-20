@@ -17,6 +17,7 @@ const navItems = [
   { path: '/shopping', label: 'Shopping', icon: '🛒' },
   { path: '/tasks', label: 'Tasks', icon: '✅' },
   { path: '/ingredients', label: 'Ingredients DB', icon: '🧂' },
+  { path: '/preferences', label: 'Preferences', icon: '⚙️' },
 ]
 
 export function AppShell({ children, user, onNewChat }: AppShellProps) {

@@ -1165,7 +1165,7 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
         prefs_data = {
             "user_id": user.id,
             "dietary_restrictions": constraints.get("dietary_restrictions", []),
-            "allergies": constraints.get("allergens", []),
+            "allergies": constraints.get("allergies", []),
             "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
             "household_size": constraints.get("household_size", 1),
             "available_equipment": constraints.get("available_equipment", []),
@@ -1225,7 +1225,7 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
         "user_id": user.id,
         # Hard constraints
         "dietary_restrictions": constraints.get("dietary_restrictions", []),
-        "allergies": constraints.get("allergens", []),  # Note: onboarding uses "allergens"
+        "allergies": constraints.get("allergies", []),
         "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
         "household_size": constraints.get("household_size", 1),
         # Equipment (used by recipes/meal_plans)

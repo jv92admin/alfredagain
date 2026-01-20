@@ -38,17 +38,16 @@ def test_apply():
             "subdomain_guidance": state.get("payload_draft", {}).get("subdomain_guidance", {}),
         }
     
-    print(f"   Constraints: {list(payload.get('constraints', {}).keys())}")
+    constraints = payload.get("constraints", {})
+    print(f"   Constraints: {constraints}")
     print(f"   Cuisines: {payload.get('cuisine_preferences', [])}")
     print(f"   Subdomain guidance keys: {list(payload.get('subdomain_guidance', {}).keys())}")
-    
-    constraints = payload.get("constraints", {})
     
     # 3. Build preferences data
     prefs_data = {
         "user_id": USER_ID,
         "dietary_restrictions": constraints.get("dietary_restrictions", []),
-        "allergies": constraints.get("allergens", []),
+        "allergies": constraints.get("allergies", []),
         "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
         "household_size": constraints.get("household_size", 1),
         "available_equipment": constraints.get("available_equipment", []),

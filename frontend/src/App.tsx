@@ -10,6 +10,7 @@ import { InventoryView } from './components/Views/InventoryView'
 import { ShoppingView } from './components/Views/ShoppingView'
 import { TasksView } from './components/Views/TasksView'
 import { IngredientsView } from './components/Views/IngredientsView'
+import { PreferencesView } from './components/Views/PreferencesView'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
 import { useAuth } from './hooks/useAuth'
@@ -97,6 +98,7 @@ function App() {
           <Route path="/shopping" element={<ShoppingView />} />
           <Route path="/tasks" element={<TasksView />} />
           <Route path="/ingredients" element={<IngredientsView />} />
+          <Route path="/preferences" element={<PreferencesView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>

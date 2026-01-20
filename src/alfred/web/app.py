@@ -403,6 +403,15 @@ async def get_preferences(user: AuthenticatedUser = Depends(get_current_user)):
     return {"data": result.data}
 
 
+@app.get("/api/tables/flavor_preferences")
+async def get_flavor_preferences(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get user's ingredient likes/dislikes with ingredient names."""
+    client = get_authenticated_client(user.access_token)
+    # Join with ingredients table to get names
+    result = client.table("flavor_preferences").select("*, ingredients(name)").execute()
+    return {"data": result.data}
+
+
 # =============================================================================
 # Mutations (PATCH/DELETE) for inline editing
 # =============================================================================
