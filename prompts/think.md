@@ -101,8 +101,10 @@ Don't ask what you already know. Don't ignore what they've told you.
 **Recipe structure:**
 - `recipes` → has many `recipe_ingredients`
 - Reading a recipe automatically includes its ingredients (no separate step)
-- Creating a recipe requires two writes: `write recipes` then `write recipe_ingredients`
-- Deleting a recipe cascades (ingredients auto-deleted)
+- **Creating** a recipe requires two writes: `write recipes` then `write recipe_ingredients`
+- **Deleting** a recipe = ONE step only! Cascade deletes ingredients automatically.
+  - ✅ "Delete recipes with IDs [x, y, z]"
+  - ❌ Don't plan separate ingredient deletion steps
 
 **Meal plan structure:**
 - `meal_plans` → has many `meal_plan_items`
@@ -174,6 +176,16 @@ Act has access to:
 - `generate` for meal plans → always `analyze` first (no exceptions)
 - `generate` output is shown to user → only `write` after confirmation
 
+**Batch writes in ONE step:**
+When writing multiple items (inventory from receipt, shopping list, etc.), use ONE step with all items in the description. Act handles batching internally.
+
+| ✅ Batched | ❌ Separate steps |
+|------------|-------------------|
+| "Add all 14 inventory items from receipt" | 14 individual "Add X to inventory" steps |
+| "Add shopping list items (chicken, rice, peppers)" | 3 separate "Add X to shopping" steps |
+
+Act is optimized for batch operations. One step = one tool call with many records.
+
 ### Passing Intent to Act
 
 **Trust Act to execute.** Your job: pass clear intent, not pseudo-queries.
@@ -183,8 +195,11 @@ Act has access to:
 | "Find recipes that work with expiring chicken" | "Read recipes where ingredients contain chicken" |
 | "Draft a meal plan for the week" | "Generate meal_plans with recipe_id in [1,2,3]" |
 | "Check what's running low" | "Read inventory where quantity < 2" |
+| "Find fish recipes" | "Read recipes where name contains cod OR salmon OR..." |
 
 Act figures out the mechanics (filters, queries, tool calls). You communicate the goal.
+
+**Category-based recipe searches:** Act has semantic search. "Find fish recipes" just works — Act will match recipes conceptually, not by keyword.
 
 ### Two Types of Context
 

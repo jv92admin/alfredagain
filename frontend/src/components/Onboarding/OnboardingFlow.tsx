@@ -21,11 +21,10 @@ interface OnboardingState {
   ingredient_preferences: { likes: number; dislikes: number }
 }
 
+// Note: pantry + discovery steps hidden until ingredient DB improvements
 const STEPS: { id: Step; label: string }[] = [
   { id: 'constraints', label: 'Basics' },
-  { id: 'pantry', label: 'Favorites' },
   { id: 'cuisines', label: 'Cuisines' },
-  { id: 'discovery', label: 'Tastes' },
   { id: 'interview', label: 'Style' },
 ]
 
@@ -48,15 +47,14 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       if (phase === 'CONSTRAINTS') {
         setCurrentStep('constraints')
       } else if (phase === 'DISCOVERY') {
-        // Within discovery, check sub-progress
+        // Skipping pantry/discovery for now - go to cuisines or interview
         if (!data.constraints) {
           setCurrentStep('constraints')
-        } else if (data.initial_inventory.length === 0) {
-          setCurrentStep('pantry')
         } else if (data.cuisine_preferences.length === 0) {
           setCurrentStep('cuisines')
         } else {
-          setCurrentStep('discovery')
+          // Skip discovery, go straight to interview
+          setCurrentStep('interview')
         }
       } else if (phase === 'STYLE_RECIPES' || phase === 'STYLE_MEAL_PLANS' || phase === 'STYLE_TASKS' || phase === 'HABITS') {
         // All style-related phases go to interview step
@@ -78,7 +76,8 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   }
 
   const nextStep = async () => {
-    const stepOrder: Step[] = ['constraints', 'pantry', 'cuisines', 'discovery', 'interview', 'complete']
+    // Note: pantry + discovery steps hidden until ingredient DB improvements
+    const stepOrder: Step[] = ['constraints', 'cuisines', 'interview', 'complete']
     const idx = stepOrder.indexOf(currentStep)
     if (idx < stepOrder.length - 1) {
       const next = stepOrder[idx + 1]
@@ -98,7 +97,8 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   }
 
   const prevStep = () => {
-    const stepOrder: Step[] = ['constraints', 'pantry', 'cuisines', 'discovery', 'interview']
+    // Note: pantry + discovery steps hidden until ingredient DB improvements
+    const stepOrder: Step[] = ['constraints', 'cuisines', 'interview']
     const idx = stepOrder.indexOf(currentStep)
     if (idx > 0) {
       setCurrentStep(stepOrder[idx - 1])

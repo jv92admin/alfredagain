@@ -457,30 +457,30 @@ For each subdomain, write guidance that:
 ### Word Limits
 | Subdomain | Words | Focus |
 |-----------|-------|-------|
-| recipes | 50-100 | Instruction detail, timing, technique, substitutions |
-| meal_plans | 50-100 | Batch style, leftovers, scheduling, detail level |
-| tasks | 30-50 | Reminder timing, detail, meal linking |
-| shopping | 30-50 | Grouping, frequency, detail level |
-| inventory | 30-50 | Tracking strictness, staple assumptions |
+| recipes | 100-200 | Instruction detail, timing, technique, substitutions, weekday vs weekend |
+| meal_plans | 100-200 | Batch style, leftovers, scheduling, detail level, component reuse |
+| tasks | 50-75 | Reminder timing, detail, meal linking |
+| shopping | 50-75 | Grouping, frequency, detail level |
+| inventory | 50-75 | Tracking strictness, staple assumptions |
 
 ## Output Contract
 
 Return a JSON object with exactly these 5 keys:
-- recipes: string (50-100 words)
-- meal_plans: string (50-100 words)
-- tasks: string (30-50 words)
-- shopping: string (30-50 words)
-- inventory: string (30-50 words)
+- recipes: string (100-200 words)
+- meal_plans: string (100-200 words)
+- tasks: string (50-75 words)
+- shopping: string (50-75 words)
+- inventory: string (50-75 words)
 
 ### Example Output
 
 ```json
 {{
-  "recipes": "Concise steps with timing for proteins, visual cues for vegetables. Skip basic techniques - user is intermediate. Include chef tips and the 'why' behind key decisions. Substitutions welcome. Multi-component dishes OK for weekends, simple one-pot for weeknights.",
-  "meal_plans": "Batch cooking orientation - big cook Sunday, assembly weeknights. Show leftover transformations (roast chicken → tacos → soup). Max 30 min active time weeknights. Include prep task reminders day-before. Shopping list at end.",
-  "tasks": "Day-before reminders linked to specific meals. Include timing: 'Thaw chicken for Thursday stir-fry - move to fridge by Tuesday 6pm.'",
-  "shopping": "Group by store section. Weekly Costco + farmers market pattern. Note which items are flexible/substitutable.",
-  "inventory": "Loose tracking - proteins and produce only. Assume standard pantry staples always available."
+  "recipes": "Always provide clear, step-by-step instructions with precise temperatures for proteins and key steps. Include exact times as guidance but emphasize visual and texture cues for doneness. Break down complex steps into micro-steps, especially for sauces, curries, and multi-component dishes. Explain the 'why' behind each technique or step, especially for less familiar cuisines. Do not suggest ingredient substitutions unless specifically requested. Skip detailed instructions for basics like eggs or toast unless there's a nuance. Weeknight recipes should be air fryer or skillet-friendly and under 30 minutes; weekends can be more involved with oven, Instant Pot, or multi-step dishes.",
+  "meal_plans": "Structure meal plans around weekend batch cooking of 2-3 main components (sauces, proteins), with weekday assembly using fresh carbs and veggies. Emphasize transformable leftovers—reuse components in new dishes, not just reheating the same meal. Limit weeknight active cooking/cleanup to 20-30 minutes, favoring air fryer and skillet recipes. Include longer, more involved recipes for weekends using Instant Pot, rice cooker, or oven. Minimal use of freezer—mainly for sauces, not cooked proteins. Always link batch prep tasks to specific meals they enable.",
+  "tasks": "Provide detailed, beginner-style prep reminders linked to specific meals, including precise timing (e.g., when to thaw, soak, or marinate). Always connect tasks to the associated meal and specify when to start each prep step.",
+  "shopping": "Organize shopping lists by store section. Prepare for a single weekly trip with minimal midweek shopping. Include quantities, brief notes, and highlight which ingredients are fresh versus frozen.",
+  "inventory": "Track key proteins, sauces, and fresh/frozen produce with moderate detail. Assume common pantry staples are always available. Prioritize tracking items relevant to upcoming planned meals."
 }}
 ```
 """
