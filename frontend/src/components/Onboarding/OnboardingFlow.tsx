@@ -77,12 +77,19 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     }
   }
 
-  const nextStep = () => {
+  const nextStep = async () => {
     const stepOrder: Step[] = ['constraints', 'pantry', 'cuisines', 'discovery', 'interview', 'complete']
     const idx = stepOrder.indexOf(currentStep)
     if (idx < stepOrder.length - 1) {
       const next = stepOrder[idx + 1]
       if (next === 'complete') {
+        // Call backend to finalize and apply preferences
+        try {
+          await apiRequest('/api/onboarding/complete', { method: 'POST' })
+        } catch (error) {
+          console.error('Failed to complete onboarding:', error)
+          // Continue anyway - preferences might already be applied
+        }
         onComplete()
       } else {
         setCurrentStep(next)

@@ -139,9 +139,15 @@ class InterviewSynthesisRequest(BaseModel):
 class StateResponse(BaseModel):
     """Current onboarding state response."""
     user_id: str
-    current_phase: str
+    current_phase: str  # maps to frontend's `phase`
+    phase: str = ""  # alias for frontend compatibility
     phases_completed: list[str]
     payload_preview: dict
+    # Flattened fields for frontend resume logic
+    constraints: dict | None = None
+    initial_inventory: list = []
+    cuisine_preferences: list = []
+    ingredient_preferences: dict = {}
 
 
 class PhaseResponse(BaseModel):
@@ -240,13 +246,50 @@ def get_completed_phases(state: OnboardingState) -> list[str]:
 @router.get("/state", response_model=StateResponse)
 async def get_onboarding_state(user: AuthenticatedUser = Depends(get_current_user)) -> StateResponse:
     """Get current onboarding progress."""
+    from alfred.db.client import get_service_client
+    from .ingredient_discovery import get_user_preferences_summary
+    
+    client = get_service_client()
+    
+    # First check if user already completed onboarding
+    completed = client.table("onboarding_data").select("user_id").eq("user_id", user.id).limit(1).execute()
+    if completed.data:
+        # Already completed - don't create new session
+        return StateResponse(
+            user_id=user.id,
+            current_phase="complete",
+            phase="complete",
+            phases_completed=["constraints", "discovery", "style_recipes"],
+            payload_preview={},
+            constraints={},
+            initial_inventory=[],
+            cuisine_preferences=[],
+            ingredient_preferences={"likes": 0, "dislikes": 0},
+        )
+    
+    # Check for in-progress session or create new one
     state = await get_or_create_session(user.id)
+    
+    # Get ingredient preferences summary
+    try:
+        prefs_summary = await get_user_preferences_summary(user.id)
+    except Exception:
+        prefs_summary = {"likes": 0, "dislikes": 0, "total": 0}
     
     return StateResponse(
         user_id=state.user_id,
         current_phase=state.current_phase.value,
+        phase=state.current_phase.value,  # Frontend expects 'phase'
         phases_completed=get_completed_phases(state),
         payload_preview=state.payload_draft,
+        # Flattened fields for frontend resume logic
+        constraints=state.constraints if state.constraints else None,
+        initial_inventory=state.pantry_items,
+        cuisine_preferences=state.cuisine_selections,
+        ingredient_preferences={
+            "likes": prefs_summary.get("likes", 0),
+            "dislikes": prefs_summary.get("dislikes", 0),
+        },
     )
 
 
@@ -1090,9 +1133,12 @@ async def submit_preview_feedback(
 @router.post("/complete")
 async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user)):
     """
-    Finalize onboarding and store payload.
+    Finalize onboarding, store payload, and apply to Alfred preferences.
     
-    Does NOT apply to Alfred yet - just stores the complete payload.
+    1. Stores complete payload to onboarding_data table
+    2. Applies preferences to Alfred's preferences table (auto-apply)
+    3. Clears the onboarding session
+    
     If user skipped style discovery, subdomain_guidance may be empty - that's fine,
     Alfred works without personalization.
     """
@@ -1100,29 +1146,119 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
     
     # Build final payload
     payload = build_payload_from_state(state)
+    payload_dict = payload.to_dict()
     
-    # Store payload to onboarding_data table
     from alfred.db.client import get_service_client
-    
     client = get_service_client()
     
     try:
+        # 1. Store payload to onboarding_data table
         client.table("onboarding_data").upsert({
             "user_id": user.id,
-            "payload": payload.to_dict(),
+            "payload": payload_dict,
             "version": payload.onboarding_version,
             "completed_at": datetime.utcnow().isoformat(),
         }).execute()
         
-        # Clear session (onboarding complete)
+        # 2. Auto-apply to preferences table
+        constraints = payload_dict.get("constraints", {})
+        prefs_data = {
+            "user_id": user.id,
+            "dietary_restrictions": constraints.get("dietary_restrictions", []),
+            "allergies": constraints.get("allergens", []),
+            "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
+            "household_size": constraints.get("household_size", 1),
+            "available_equipment": constraints.get("available_equipment", []),
+            "favorite_cuisines": payload_dict.get("cuisine_preferences", []),
+            "subdomain_guidance": payload_dict.get("subdomain_guidance", {}),
+        }
+        
+        client.table("preferences").upsert(
+            prefs_data,
+            on_conflict="user_id"
+        ).execute()
+        
+        logger.info(f"Onboarding completed and applied for user {user.id}")
+        
+        # 3. Clear session (onboarding complete)
         await clear_session(user.id)
         
         return {
             "success": True,
-            "message": "Onboarding complete! Your preferences have been saved.",
-            "payload": payload.to_dict(),
+            "message": "Onboarding complete! Your preferences are now active in Alfred.",
+            "payload": payload_dict,
+            "applied_to_preferences": True,
         }
         
     except Exception as e:
         logger.error(f"Failed to complete onboarding: {e}")
         raise HTTPException(status_code=500, detail="Failed to save onboarding data")
+
+
+@router.post("/apply")
+async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_current_user)):
+    """
+    Apply onboarding data to Alfred's preferences table.
+    
+    Transfers:
+    - constraints → dietary_restrictions, allergies, cooking_skill_level, household_size, available_equipment
+    - cuisine_preferences → favorite_cuisines
+    - subdomain_guidance → subdomain_guidance (injected into prompts)
+    
+    Can be called after /complete or separately to re-apply.
+    """
+    from alfred.db.client import get_service_client
+    
+    client = get_service_client()
+    
+    # 1. Fetch onboarding payload
+    result = client.table("onboarding_data").select("payload").eq("user_id", user.id).limit(1).execute()
+    
+    if not result.data:
+        raise HTTPException(status_code=404, detail="No onboarding data found. Complete onboarding first.")
+    
+    payload = result.data[0]["payload"]
+    constraints = payload.get("constraints", {})
+    
+    # 2. Build preferences upsert
+    prefs_data = {
+        "user_id": user.id,
+        # Hard constraints
+        "dietary_restrictions": constraints.get("dietary_restrictions", []),
+        "allergies": constraints.get("allergens", []),  # Note: onboarding uses "allergens"
+        "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
+        "household_size": constraints.get("household_size", 1),
+        # Equipment (used by recipes/meal_plans)
+        "available_equipment": constraints.get("available_equipment", []),
+        # Taste preferences
+        "favorite_cuisines": payload.get("cuisine_preferences", []),
+        # Subdomain guidance (injected into Think/Act prompts)
+        "subdomain_guidance": payload.get("subdomain_guidance", {}),
+    }
+    
+    # 3. UPSERT to preferences table
+    try:
+        client.table("preferences").upsert(
+            prefs_data,
+            on_conflict="user_id"
+        ).execute()
+        
+        logger.info(f"Applied onboarding to preferences for user {user.id}")
+        
+        return {
+            "success": True,
+            "message": "Onboarding preferences applied to Alfred",
+            "applied": {
+                "dietary_restrictions": prefs_data["dietary_restrictions"],
+                "allergies": prefs_data["allergies"],
+                "cooking_skill_level": prefs_data["cooking_skill_level"],
+                "household_size": prefs_data["household_size"],
+                "available_equipment": prefs_data["available_equipment"],
+                "favorite_cuisines": prefs_data["favorite_cuisines"],
+                "subdomain_guidance_keys": list(prefs_data["subdomain_guidance"].keys()),
+            },
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to apply onboarding to preferences: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to apply preferences: {str(e)}")
