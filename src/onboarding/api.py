@@ -1,0 +1,1128 @@
+"""
+Onboarding API Endpoints.
+
+Separate router from Alfred's main /chat endpoints.
+Handles the onboarding flow with persistent state management.
+"""
+
+import logging
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Depends, Header
+from pydantic import BaseModel, Field
+
+from .state import (
+    OnboardingState,
+    OnboardingPhase,
+    get_next_phase,
+    can_skip_phase,
+)
+from .payload import OnboardingPayload, build_payload_from_state
+from .forms import ConstraintsForm, validate_constraints, get_form_options
+from .filters import get_constraints_summary
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+
+
+# =============================================================================
+# Auth - reuse from main app
+# =============================================================================
+
+class AuthenticatedUser(BaseModel):
+    """Authenticated user info from Supabase JWT."""
+    id: str
+    email: str | None
+    access_token: str
+
+
+async def get_current_user(authorization: str = Header(None)) -> AuthenticatedUser:
+    """
+    Validate Supabase JWT and extract user info.
+    
+    Expects: Authorization: Bearer <supabase_access_token>
+    """
+    from alfred.db.client import get_service_client
+    
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    
+    token = authorization.replace("Bearer ", "")
+    
+    try:
+        client = get_service_client()
+        # Verify token with Supabase
+        user_response = client.auth.get_user(token)
+        
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        return AuthenticatedUser(
+            id=user_response.user.id,
+            email=user_response.user.email,
+            access_token=token,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Auth error: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+# =============================================================================
+# Request/Response Models
+# =============================================================================
+
+
+class ConstraintsRequest(BaseModel):
+    """Phase 1: Hard constraints form data."""
+    household_size: int = Field(ge=1, le=12, default=2)
+    allergies: list[str] = Field(default_factory=list)
+    dietary_restrictions: list[str] = Field(default_factory=list)
+    cooking_skill_level: str = Field(default="intermediate")
+    available_equipment: list[str] = Field(default_factory=list)
+
+
+class PantryRequest(BaseModel):
+    """Phase 2a: Initial pantry items."""
+    items: list[dict] = Field(default_factory=list)
+    # Each: {"name": str, "category": str | None}
+
+
+class DiscoverySelectionRequest(BaseModel):
+    """Phase 2b: Ingredient discovery round selection."""
+    selections: list[str] = Field(default_factory=list)  # Ingredient IDs
+
+
+class CuisineRequest(BaseModel):
+    """Phase 2c: Cuisine selections."""
+    cuisines: list[str] = Field(default_factory=list)
+
+
+class StyleFeedbackRequest(BaseModel):
+    """Phase 3: Style selection feedback."""
+    domain: str  # "recipes", "meal_plans", or "tasks"
+    selection: str | None = None  # ID of selected sample
+    feedback: str = ""  # Natural language feedback
+    samples_shown: list[dict] = Field(default_factory=list)  # Samples that were shown to user
+
+
+class HabitsRequest(BaseModel):
+    """Phase 3: Habits free-form response."""
+    response: str
+
+
+class PreviewFeedbackRequest(BaseModel):
+    """Phase 4: Preview feedback."""
+    feedback: list[dict] = Field(default_factory=list)
+    # Each: {"recipe_id": str, "sentiment": "positive" | "negative"}
+
+
+class SkipPhaseRequest(BaseModel):
+    """Skip current phase."""
+    phase: str  # Phase to skip
+
+
+class InterviewAnswerRequest(BaseModel):
+    """Submit answers for an interview page."""
+    page_number: int = Field(ge=1, le=4)
+    answers: list[dict] = Field(default_factory=list)
+    # Each: {"question_id": str, "question": str, "answer": str}
+
+
+class InterviewSynthesisRequest(BaseModel):
+    """Request to synthesize all interview answers into guidance."""
+    all_answers: list[dict] = Field(default_factory=list)
+
+
+class StateResponse(BaseModel):
+    """Current onboarding state response."""
+    user_id: str
+    current_phase: str
+    phases_completed: list[str]
+    payload_preview: dict
+
+
+class PhaseResponse(BaseModel):
+    """Response after completing a phase."""
+    success: bool
+    current_phase: str
+    next_phase: str | None
+    message: str = ""
+
+
+# =============================================================================
+# State Management Helpers
+# =============================================================================
+
+
+async def get_or_create_session(user_id: str) -> OnboardingState:
+    """
+    Load existing session or create new one.
+    
+    Called at start of any onboarding endpoint.
+    """
+    from alfred.db.client import get_service_client
+    
+    client = get_service_client()
+    
+    try:
+        # Try to load existing session
+        result = client.table("onboarding_sessions").select("*").eq("user_id", user_id).execute()
+        
+        if result.data:
+            session_data = result.data[0]
+            state = OnboardingState.from_dict(session_data["state"])
+            return state
+    except Exception as e:
+        logger.warning(f"Failed to load onboarding session: {e}")
+    
+    # Create new session
+    state = OnboardingState(user_id=user_id)
+    await save_session(state)
+    return state
+
+
+async def save_session(state: OnboardingState) -> None:
+    """
+    Save session state to database.
+    
+    Called after every step to ensure durability.
+    """
+    from alfred.db.client import get_service_client
+    
+    client = get_service_client()
+    
+    state.updated_at = datetime.utcnow().isoformat()
+    
+    try:
+        client.table("onboarding_sessions").upsert({
+            "user_id": state.user_id,
+            "state": state.to_dict(),
+            "current_phase": state.current_phase.value,
+            "updated_at": state.updated_at,
+        }).execute()
+    except Exception as e:
+        logger.error(f"Failed to save onboarding session: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save session")
+
+
+async def clear_session(user_id: str) -> None:
+    """Delete onboarding session after completion."""
+    from alfred.db.client import get_service_client
+    
+    client = get_service_client()
+    
+    try:
+        client.table("onboarding_sessions").delete().eq("user_id", user_id).execute()
+    except Exception as e:
+        logger.warning(f"Failed to clear onboarding session: {e}")
+
+
+def get_completed_phases(state: OnboardingState) -> list[str]:
+    """Get list of completed phase names."""
+    completed = []
+    phase_order = list(OnboardingPhase)
+    current_idx = phase_order.index(state.current_phase)
+    
+    for phase in phase_order[:current_idx]:
+        completed.append(phase.value)
+    
+    return completed
+
+
+# =============================================================================
+# Endpoints: State Management
+# =============================================================================
+
+
+@router.get("/state", response_model=StateResponse)
+async def get_onboarding_state(user: AuthenticatedUser = Depends(get_current_user)) -> StateResponse:
+    """Get current onboarding progress."""
+    state = await get_or_create_session(user.id)
+    
+    return StateResponse(
+        user_id=state.user_id,
+        current_phase=state.current_phase.value,
+        phases_completed=get_completed_phases(state),
+        payload_preview=state.payload_draft,
+    )
+
+
+@router.post("/skip", response_model=PhaseResponse)
+async def skip_phase(request: SkipPhaseRequest, user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
+    """Skip the current phase if skippable."""
+    state = await get_or_create_session(user.id)
+    
+    try:
+        target_phase = OnboardingPhase(request.phase)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown phase: {request.phase}")
+    
+    if target_phase != state.current_phase:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Can only skip current phase ({state.current_phase.value})"
+        )
+    
+    if not can_skip_phase(target_phase):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phase {target_phase.value} cannot be skipped"
+        )
+    
+    # Force transition to next phase
+    next_phase = get_next_phase(state)
+    if next_phase == state.current_phase:
+        # Manual skip - find next in order
+        phase_order = list(OnboardingPhase)
+        current_idx = phase_order.index(state.current_phase)
+        if current_idx + 1 < len(phase_order):
+            next_phase = phase_order[current_idx + 1]
+    
+    state.current_phase = next_phase
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value if state.current_phase != OnboardingPhase.COMPLETE else None,
+        message=f"Skipped to {state.current_phase.value}",
+    )
+
+
+# =============================================================================
+# Endpoints: Phase 1 - Constraints
+# =============================================================================
+
+
+@router.get("/constraints/options")
+async def get_constraints_options():
+    """
+    Get form options for constraints (Phase 1).
+    
+    Returns allergens, dietary restrictions, equipment, and skill levels
+    with display metadata for frontend rendering.
+    """
+    return get_form_options()
+
+
+@router.post("/constraints", response_model=PhaseResponse)
+async def submit_constraints(request: ConstraintsRequest, user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
+    """Submit hard constraints form (Phase 1)."""
+    state = await get_or_create_session(user.id)
+    
+    # Validate using ConstraintsForm
+    try:
+        form = ConstraintsForm(
+            household_size=request.household_size,
+            allergies=request.allergies,
+            dietary_restrictions=request.dietary_restrictions,
+            cooking_skill_level=request.cooking_skill_level,
+            available_equipment=request.available_equipment,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Additional validation
+    is_valid, errors = validate_constraints(form)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    
+    # Store validated constraints
+    state.constraints = {
+        "household_size": form.household_size,
+        "allergies": form.allergies,
+        "dietary_restrictions": form.dietary_restrictions,
+        "cooking_skill_level": form.cooking_skill_level,
+        "available_equipment": form.available_equipment,
+    }
+    
+    # Update payload draft with preferences
+    state.payload_draft["preferences"] = state.constraints
+    
+    # Transition to next phase
+    state.current_phase = get_next_phase(state)
+    await save_session(state)
+    
+    summary = get_constraints_summary(state.constraints)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value,
+        message=f"Constraints saved: {summary}",
+    )
+
+
+# =============================================================================
+# Endpoints: Phase 2 - Pantry, Cuisines & Ingredient Discovery
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Pantry Seeding
+# -----------------------------------------------------------------------------
+
+@router.get("/pantry/search")
+async def search_pantry_ingredients(q: str, limit: int = 10):
+    """Search ingredients for pantry seeding."""
+    from .pantry import search_ingredients
+    
+    results = await search_ingredients(q, limit=limit)
+    return {"results": results}
+
+
+@router.get("/pantry/staples")
+async def get_pantry_staples():
+    """Get common pantry staples for quick-add."""
+    from .pantry import get_common_staples
+    
+    staples = await get_common_staples()
+    return {"staples": staples}
+
+
+@router.post("/pantry", response_model=PhaseResponse)
+async def submit_pantry(request: PantryRequest, user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
+    """Submit initial pantry items."""
+    from .pantry import validate_pantry_items
+    
+    state = await get_or_create_session(user.id)
+    
+    # Validate items
+    valid_items, errors = validate_pantry_items(request.items)
+    if errors:
+        logger.warning(f"Pantry validation errors: {errors}")
+    
+    state.pantry_items = valid_items
+    state.payload_draft["initial_inventory"] = valid_items
+    
+    # Don't auto-advance - user controls when to move on
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value,
+        message=f"Pantry saved ({len(valid_items)} items)",
+    )
+
+
+# -----------------------------------------------------------------------------
+# Cuisine Selection
+# -----------------------------------------------------------------------------
+
+@router.get("/cuisines/options")
+async def get_cuisine_options():
+    """Get cuisine options for selection."""
+    from .cuisine_selection import get_cuisine_options, MAX_CUISINE_SELECTIONS
+    
+    return {
+        "options": get_cuisine_options(),
+        "max_selections": MAX_CUISINE_SELECTIONS,
+    }
+
+
+@router.post("/cuisines", response_model=PhaseResponse)
+async def submit_cuisines(request: CuisineRequest, user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
+    """Submit cuisine selections."""
+    from .cuisine_selection import validate_cuisine_selections
+    
+    state = await get_or_create_session(user.id)
+    
+    # Validate cuisines
+    valid_cuisines = validate_cuisine_selections(request.cuisines)
+    
+    state.cuisine_selections = valid_cuisines
+    state.payload_draft["cuisine_preferences"] = valid_cuisines
+    
+    # Don't auto-advance - user controls when to move on
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value,
+        message=f"Cuisines saved ({len(valid_cuisines)} selected)",
+    )
+
+
+# -----------------------------------------------------------------------------
+# Ingredient Discovery (Likes/Dislikes)
+# -----------------------------------------------------------------------------
+
+@router.get("/discovery/categories")
+async def get_discovery_categories():
+    """Get available categories for ingredient discovery."""
+    from .ingredient_discovery import get_discovery_categories
+    
+    return {"categories": get_discovery_categories()}
+
+
+@router.get("/discovery/ingredients")
+async def get_discovery_ingredients(category: str | None = None, user: AuthenticatedUser = Depends(get_current_user)):
+    """
+    Get next batch of ingredients for discovery.
+    
+    Uses embeddings from user's liked ingredients (from pantry step) to seed
+    smarter suggestions. Falls back to random if no likes or embeddings fail.
+    
+    If category is provided, get ingredients from that category.
+    Otherwise, get next batch from rotating categories.
+    """
+    from .ingredient_discovery import (
+        get_ingredients_for_category,
+        get_next_discovery_batch,
+        get_user_preferences_count,
+    )
+    
+    state = await get_or_create_session(user.id)
+    
+    # Track shown ingredient IDs
+    shown_ids = state.payload_draft.get("_discovery_shown_ids", [])
+    
+    # Get liked ingredient IDs from pantry step (for embedding-based seeding)
+    liked_items = state.payload_draft.get("initial_inventory", [])
+    liked_ingredient_ids = []
+    
+    # Try to resolve ingredient names to IDs if we have names
+    if liked_items:
+        from alfred.db.client import get_service_client
+        client = get_service_client()
+        try:
+            names = [item.get("name") for item in liked_items if item.get("name")]
+            if names:
+                result = client.table("ingredients").select("id, name").in_("name", names).execute()
+                liked_ingredient_ids = [r["id"] for r in (result.data or [])]
+        except Exception as e:
+            logger.debug(f"Failed to resolve liked ingredient IDs: {e}")
+    
+    if category:
+        # Get from specific category, seeded by likes if available
+        ingredients = await get_ingredients_for_category(
+            category,
+            limit=8,
+            exclude_ids=shown_ids,
+            seed_from_likes=liked_ingredient_ids if liked_ingredient_ids else None,
+        )
+        prefs_count = await get_user_preferences_count(user.id)
+        
+        return {
+            "ingredients": ingredients,
+            "category": {"id": category},
+            "can_continue": prefs_count >= 20,
+            "total_preferences": prefs_count,
+        }
+    else:
+        # Get next batch from rotating categories
+        prefs_count = await get_user_preferences_count(user.id)
+        return await get_next_discovery_batch(shown_ids, prefs_count)
+
+
+class IngredientPreferenceRequest(BaseModel):
+    """Single ingredient preference."""
+    ingredient_id: str
+    preference: str  # "like" or "dislike"
+
+
+class IngredientPreferencesRequest(BaseModel):
+    """Batch of ingredient preferences."""
+    preferences: list[IngredientPreferenceRequest]
+
+
+@router.post("/discovery/preference")
+async def submit_ingredient_preference(
+    request: IngredientPreferenceRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Submit a single ingredient preference (like/dislike)."""
+    from .ingredient_discovery import save_ingredient_preference, get_user_preferences_count
+    
+    state = await get_or_create_session(user.id)
+    
+    # Validate preference value
+    if request.preference not in ("like", "dislike"):
+        raise HTTPException(status_code=400, detail="Preference must be 'like' or 'dislike'")
+    
+    # Save preference to flavor_preferences table
+    success = await save_ingredient_preference(
+        user.id,
+        request.ingredient_id,
+        request.preference,
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save preference")
+    
+    # Track shown IDs
+    shown_ids = state.payload_draft.get("_discovery_shown_ids", [])
+    if request.ingredient_id not in shown_ids:
+        shown_ids.append(request.ingredient_id)
+        state.payload_draft["_discovery_shown_ids"] = shown_ids
+        await save_session(state)
+    
+    # Get updated count
+    prefs_count = await get_user_preferences_count(user.id)
+    
+    return {
+        "success": True,
+        "total_preferences": prefs_count,
+        "can_continue": prefs_count >= 20,
+    }
+
+
+@router.post("/discovery/preferences")
+async def submit_ingredient_preferences_batch(
+    request: IngredientPreferencesRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Submit multiple ingredient preferences at once."""
+    from .ingredient_discovery import (
+        save_ingredient_preferences_batch,
+        get_user_preferences_count,
+    )
+    
+    state = await get_or_create_session(user.id)
+    
+    # Validate preferences
+    valid_prefs = [
+        {"ingredient_id": p.ingredient_id, "preference": p.preference}
+        for p in request.preferences
+        if p.preference in ("like", "dislike")
+    ]
+    
+    # Save batch
+    saved_count = await save_ingredient_preferences_batch(user.id, valid_prefs)
+    
+    # Track shown IDs
+    shown_ids = state.payload_draft.get("_discovery_shown_ids", [])
+    for pref in valid_prefs:
+        if pref["ingredient_id"] not in shown_ids:
+            shown_ids.append(pref["ingredient_id"])
+    state.payload_draft["_discovery_shown_ids"] = shown_ids
+    await save_session(state)
+    
+    # Get updated count
+    prefs_count = await get_user_preferences_count(user.id)
+    
+    return {
+        "success": True,
+        "saved": saved_count,
+        "total_preferences": prefs_count,
+        "can_continue": prefs_count >= 20,
+    }
+
+
+@router.get("/discovery/summary")
+async def get_discovery_summary(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get summary of user's ingredient preferences."""
+    from .ingredient_discovery import get_user_preferences_summary
+    
+    return await get_user_preferences_summary(user.id)
+
+
+@router.post("/discovery/complete", response_model=PhaseResponse)
+async def complete_discovery(user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
+    """
+    Mark ingredient discovery as complete and move to next phase.
+    
+    User can call this when ready to proceed (after 20+ preferences recommended).
+    """
+    from .ingredient_discovery import get_user_preferences_summary
+    
+    state = await get_or_create_session(user.id)
+    
+    # Get summary for payload
+    summary = await get_user_preferences_summary(user.id)
+    
+    # Store summary in payload
+    state.payload_draft["ingredient_preferences"] = {
+        "total": summary["total"],
+        "likes": summary["likes"],
+        "dislikes": summary["dislikes"],
+    }
+    
+    # Mark discovery complete
+    state.ingredient_discovery.completed = True
+    
+    # Move to next phase (style discovery or skip to complete)
+    state.current_phase = OnboardingPhase.STYLE_RECIPES
+    
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value,
+        message=f"Discovery complete! {summary['likes']} likes, {summary['dislikes']} dislikes",
+    )
+
+
+# =============================================================================
+# Endpoints: Phase 3 - Style Interview
+# =============================================================================
+
+
+@router.get("/interview/page/{page_number}")
+async def get_interview_page(
+    page_number: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Get an interview page with LLM-generated questions.
+    
+    Pages 1-3 have structured data points, page 4 is catch-all.
+    Questions are personalized based on user context and prior answers.
+    """
+    from .style_interview import generate_interview_page, generate_catchall_page
+    
+    if page_number < 1 or page_number > 4:
+        raise HTTPException(status_code=400, detail="Page number must be 1-4")
+    
+    state = await get_or_create_session(user.id)
+    
+    # Build user context from collected data
+    user_context = {
+        "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),
+        "household_size": state.constraints.get("household_size", 2),
+        "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
+        "available_equipment": state.constraints.get("available_equipment", []),
+        "cuisines": state.cuisine_selections,
+        "liked_ingredients": [item.get("name", "") for item in state.pantry_items[:10]],
+    }
+    
+    # Get prior answers from state
+    prior_answers = state.payload_draft.get("interview_answers", [])
+    
+    try:
+        if page_number <= 3:
+            page = await generate_interview_page(
+                page_number=page_number,
+                user_context=user_context,
+                prior_answers=prior_answers,
+            )
+            return {
+                "page_number": page_number,
+                "title": page.title,
+                "subtitle": page.subtitle,
+                "questions": [q.model_dump() for q in page.questions],
+                "is_catchall": False,
+            }
+        else:  # page 4 = catch-all
+            catchall = await generate_catchall_page(
+                user_context=user_context,
+                all_answers=prior_answers,
+            )
+            return {
+                "page_number": 4,
+                "title": "Almost Done",
+                "subtitle": catchall.subtitle,
+                "questions": [q.model_dump() for q in catchall.questions],
+                "is_catchall": True,
+                "ready_to_proceed": catchall.ready_to_proceed,
+            }
+    except Exception as e:
+        logger.error(f"Failed to generate interview page {page_number}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate questions: {str(e)}")
+
+
+@router.post("/interview/page/{page_number}")
+async def submit_interview_page(
+    page_number: int,
+    request: InterviewAnswerRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Submit answers for an interview page.
+    
+    Stores answers and returns next page number or synthesis-ready status.
+    """
+    if page_number < 1 or page_number > 4:
+        raise HTTPException(status_code=400, detail="Page number must be 1-4")
+    
+    state = await get_or_create_session(user.id)
+    
+    # Initialize interview_answers if needed
+    if "interview_answers" not in state.payload_draft:
+        state.payload_draft["interview_answers"] = []
+    
+    # Add new answers (with page context)
+    for ans in request.answers:
+        state.payload_draft["interview_answers"].append({
+            "page": page_number,
+            "question_id": ans.get("question_id", ""),
+            "question": ans.get("question", ""),
+            "answer": ans.get("answer", ""),
+        })
+    
+    await save_session(state)
+    
+    # Determine next step
+    if page_number < 4:
+        return {
+            "success": True,
+            "next_page": page_number + 1,
+            "message": f"Page {page_number} saved",
+        }
+    else:
+        return {
+            "success": True,
+            "next_page": None,
+            "ready_for_synthesis": True,
+            "message": "Interview complete, ready for synthesis",
+        }
+
+
+@router.post("/interview/synthesize")
+async def synthesize_interview(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Synthesize all interview answers into subdomain_guidance strings.
+    
+    Called after all interview pages are complete.
+    Returns guidance strings that will be stored in payload.
+    """
+    from .style_interview import synthesize_guidance
+    
+    state = await get_or_create_session(user.id)
+    
+    # Build user context
+    user_context = {
+        "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),
+        "household_size": state.constraints.get("household_size", 2),
+        "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
+        "available_equipment": state.constraints.get("available_equipment", []),
+        "cuisines": state.cuisine_selections,
+        "liked_ingredients": [item.get("name", "") for item in state.pantry_items[:10]],
+    }
+    
+    all_answers = state.payload_draft.get("interview_answers", [])
+    
+    if not all_answers:
+        raise HTTPException(status_code=400, detail="No interview answers to synthesize")
+    
+    try:
+        guidance = await synthesize_guidance(
+            user_context=user_context,
+            all_answers=all_answers,
+        )
+        
+        # Store draft guidance in payload
+        state.payload_draft["subdomain_guidance"] = {
+            "recipes": guidance.recipes,
+            "meal_plans": guidance.meal_plans,
+            "tasks": guidance.tasks,
+            "shopping": guidance.shopping,
+            "inventory": guidance.inventory,
+        }
+        
+        await save_session(state)
+        
+        return {
+            "success": True,
+            "subdomain_guidance": state.payload_draft["subdomain_guidance"],
+            "message": "Guidance synthesized from interview",
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to synthesize interview: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to synthesize: {str(e)}")
+
+
+# =============================================================================
+# Endpoints: Phase 3 - Style Samples (Optional Refinement)
+# =============================================================================
+
+
+@router.get("/style/samples/{domain}")
+async def get_style_samples(domain: str, user: AuthenticatedUser = Depends(get_current_user)):
+    """
+    Get LLM-generated style samples for a domain.
+    
+    Uses user's pantry, cuisines, and constraints to generate personalized samples.
+    """
+    from .style_discovery import (
+        generate_recipe_style_samples,
+        generate_meal_plan_style_samples,
+        generate_task_style_samples,
+    )
+    
+    state = await get_or_create_session(user.id)
+    
+    if domain not in ("recipes", "meal_plans", "tasks"):
+        raise HTTPException(status_code=400, detail=f"Unknown domain: {domain}")
+    
+    # Build payload_draft for LLM context
+    payload_draft = {
+        "preferences": state.constraints,
+        "initial_inventory": state.pantry_items,
+        "cuisine_preferences": state.cuisine_selections,
+    }
+    
+    try:
+        if domain == "recipes":
+            proposal = await generate_recipe_style_samples(payload_draft)
+            samples = [
+                {
+                    "id": s.id,
+                    "style_name": s.style_name,
+                    "style_tags": s.style_tags,
+                    "text": s.recipe_text,
+                    "why_this_style": s.why_this_style,
+                }
+                for s in proposal.samples
+            ]
+            return {
+                "domain": domain,
+                "dish_name": proposal.dish_name,
+                "intro_message": proposal.intro_message,
+                "samples": samples,
+            }
+        
+        elif domain == "meal_plans":
+            proposal = await generate_meal_plan_style_samples(payload_draft)
+            samples = [
+                {
+                    "id": s.id,
+                    "style_name": s.style_name,
+                    "text": s.plan_text,
+                    "why_this_style": s.why_this_style,
+                }
+                for s in proposal.samples
+            ]
+            return {
+                "domain": domain,
+                "intro_message": proposal.intro_message,
+                "samples": samples,
+            }
+        
+        else:  # tasks
+            proposal = await generate_task_style_samples(payload_draft)
+            samples = [
+                {
+                    "id": s.id,
+                    "style_name": s.style_name,
+                    "text": s.task_text,
+                    "why_this_style": s.why_this_style,
+                }
+                for s in proposal.samples
+            ]
+            return {
+                "domain": domain,
+                "intro_message": proposal.intro_message,
+                "samples": samples,
+            }
+            
+    except Exception as e:
+        logger.error(f"Failed to generate {domain} style samples: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate style samples: {str(e)}")
+
+
+@router.post("/style/feedback", response_model=PhaseResponse)
+async def submit_style_feedback(
+    request: StyleFeedbackRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> PhaseResponse:
+    """
+    Submit style selection feedback (Phase 3).
+    
+    Calls LLM to synthesize user's selection/feedback into subdomain_guidance.
+    """
+    from .style_discovery import synthesize_style_feedback
+    
+    state = await get_or_create_session(user.id)
+    
+    if request.domain not in ("recipes", "meal_plans", "tasks"):
+        raise HTTPException(status_code=400, detail=f"Unknown domain: {request.domain}")
+    
+    # Get the appropriate style state
+    style_state = getattr(state, f"style_{request.domain}")
+    style_state.user_selection = request.selection
+    style_state.user_feedback = request.feedback
+    style_state.samples_shown = request.samples_shown  # Store for reference
+    style_state.completed = True
+    
+    # Call LLM to synthesize feedback into guidance
+    try:
+        synthesis = await synthesize_style_feedback(
+            domain=request.domain,
+            samples_shown=request.samples_shown,
+            user_selection=request.selection,
+            user_feedback=request.feedback or "",
+        )
+        
+        # Store guidance in payload_draft
+        state.payload_draft.setdefault("subdomain_guidance", {})[request.domain] = synthesis.guidance_summary
+        
+        acknowledgment = synthesis.acknowledgment
+        
+    except Exception as e:
+        logger.warning(f"Failed to synthesize {request.domain} feedback: {e}")
+        # Fallback: use feedback directly if synthesis fails
+        if request.feedback:
+            state.payload_draft.setdefault("subdomain_guidance", {})[request.domain] = request.feedback
+        acknowledgment = f"Got it — your {request.domain.replace('_', ' ')} preferences saved."
+    
+    # Transition to next phase
+    state.current_phase = get_next_phase(state)
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value,
+        message=acknowledgment,
+    )
+
+
+@router.post("/habits", response_model=PhaseResponse)
+async def submit_habits(request: HabitsRequest, user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
+    """
+    Submit habits free-form response (Phase 3).
+    
+    Calls LLM to extract structured habits and generate subdomain guidance
+    for meal_plans, shopping, and inventory.
+    """
+    from .style_discovery import extract_habits
+    
+    state = await get_or_create_session(user.id)
+    
+    state.habits_response = request.response
+    
+    # Call LLM to extract structured habits
+    try:
+        extraction = await extract_habits(
+            user_response=request.response,
+            constraints=state.constraints,
+        )
+        
+        state.habits_extraction = {
+            "cooking_frequency": extraction.cooking_frequency,
+            "batch_cooking": extraction.batch_cooking,
+            "cooking_days": extraction.cooking_days,
+            "leftover_tolerance_days": extraction.leftover_tolerance_days,
+            "shopping_frequency": extraction.shopping_frequency,
+            "meal_plans_summary": extraction.meal_plans_summary,
+            "shopping_summary": extraction.shopping_summary,
+            "inventory_summary": extraction.inventory_summary,
+            "raw_response": request.response,
+        }
+        
+        # Apply summaries to subdomain_guidance
+        guidance = state.payload_draft.setdefault("subdomain_guidance", {})
+        if extraction.meal_plans_summary:
+            # Append to existing or set new
+            existing = guidance.get("meal_plans", "")
+            if existing:
+                guidance["meal_plans"] = f"{existing} {extraction.meal_plans_summary}"
+            else:
+                guidance["meal_plans"] = extraction.meal_plans_summary
+        if extraction.shopping_summary:
+            guidance["shopping"] = extraction.shopping_summary
+        if extraction.inventory_summary:
+            guidance["inventory"] = extraction.inventory_summary
+        
+        message = "Got it! I've noted your cooking and shopping habits."
+        
+    except Exception as e:
+        logger.warning(f"Failed to extract habits: {e}")
+        # Fallback: store raw response
+        state.habits_extraction = {
+            "raw_response": request.response,
+        }
+        message = "Habits saved."
+    
+    # Transition to next phase
+    state.current_phase = get_next_phase(state)
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=get_next_phase(state).value,
+        message=message,
+    )
+
+
+# =============================================================================
+# Endpoints: Phase 4 - Preview & Complete
+# =============================================================================
+
+
+@router.get("/preview/recipes")
+async def get_preview_recipes(count: int = 3, user: AuthenticatedUser = Depends(get_current_user)):
+    """Generate sample recipes based on collected preferences."""
+    state = await get_or_create_session(user.id)
+    
+    # TODO: Implement recipe generation
+    # For now, return placeholder
+    return {
+        "recipes": [],  # Will be populated by generation logic
+        "message": "Based on your preferences, here are some recipes you might enjoy...",
+    }
+
+
+@router.post("/preview/feedback", response_model=PhaseResponse)
+async def submit_preview_feedback(
+    request: PreviewFeedbackRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> PhaseResponse:
+    """Submit preview feedback (Phase 4)."""
+    state = await get_or_create_session(user.id)
+    
+    state.preview_feedback = request.feedback
+    
+    # Log feedback for future analysis
+    logger.info(f"Preview feedback for {user.id}: {request.feedback}")
+    
+    await save_session(state)
+    
+    return PhaseResponse(
+        success=True,
+        current_phase=state.current_phase.value,
+        next_phase=OnboardingPhase.COMPLETE.value,
+        message="Feedback recorded",
+    )
+
+
+@router.post("/complete")
+async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user)):
+    """
+    Finalize onboarding and store payload.
+    
+    Does NOT apply to Alfred yet - just stores the complete payload.
+    If user skipped style discovery, subdomain_guidance may be empty - that's fine,
+    Alfred works without personalization.
+    """
+    state = await get_or_create_session(user.id)
+    
+    # Build final payload
+    payload = build_payload_from_state(state)
+    
+    # Store payload to onboarding_data table
+    from alfred.db.client import get_service_client
+    
+    client = get_service_client()
+    
+    try:
+        client.table("onboarding_data").upsert({
+            "user_id": user.id,
+            "payload": payload.to_dict(),
+            "version": payload.onboarding_version,
+            "completed_at": datetime.utcnow().isoformat(),
+        }).execute()
+        
+        # Clear session (onboarding complete)
+        await clear_session(user.id)
+        
+        return {
+            "success": True,
+            "message": "Onboarding complete! Your preferences have been saved.",
+            "payload": payload.to_dict(),
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to complete onboarding: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save onboarding data")

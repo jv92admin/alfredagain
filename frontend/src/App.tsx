@@ -11,7 +11,9 @@ import { ShoppingView } from './components/Views/ShoppingView'
 import { TasksView } from './components/Views/TasksView'
 import { IngredientsView } from './components/Views/IngredientsView'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
+import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
 import { useAuth } from './hooks/useAuth'
+import { apiRequest } from './lib/api'
 
 // V3 Mode types
 export type Mode = 'quick' | 'plan'
@@ -27,10 +29,33 @@ function App() {
   const [focusItem, setFocusItem] = useState<{ type: string; id: string } | null>(null)
   const [chatMessages, setChatMessages] = useState<Message[]>([INITIAL_MESSAGE])
   const [mode, setMode] = useState<Mode>('plan') // V3: Default to plan mode
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
 
   useEffect(() => {
     checkAuth()
   }, [])
+
+  // Check if user needs onboarding after auth
+  useEffect(() => {
+    if (user) {
+      checkOnboarding()
+    }
+  }, [user])
+
+  const checkOnboarding = async () => {
+    try {
+      const state = await apiRequest<{ phase: string }>('/api/onboarding/state')
+      // User needs onboarding if they haven't completed it
+      setNeedsOnboarding(state.phase !== 'COMPLETE')
+    } catch {
+      // If API fails, assume they don't need onboarding
+      setNeedsOnboarding(false)
+    }
+  }
+
+  const handleOnboardingComplete = () => {
+    setNeedsOnboarding(false)
+  }
 
   if (loading) {
     return (
@@ -42,6 +67,19 @@ function App() {
 
   if (!user) {
     return <LoginPage onLogin={checkAuth} />
+  }
+
+  // Show onboarding if needed (still checking = null, needs = true)
+  if (needsOnboarding === null) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[var(--color-bg-primary)]">
+        <div className="text-[var(--color-text-secondary)]">Loading...</div>
+      </div>
+    )
+  }
+
+  if (needsOnboarding) {
+    return <OnboardingFlow onComplete={handleOnboardingComplete} />
   }
 
   const handleNewChat = () => {

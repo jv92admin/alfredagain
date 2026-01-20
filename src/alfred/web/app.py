@@ -27,6 +27,15 @@ from alfred.memory.conversation import initialize_conversation
 from alfred.graph.state import ConversationContext
 from alfred.config import settings
 
+# Onboarding module (isolated from Alfred's graph)
+# Optional import - may not be available in all deployment environments
+try:
+    from onboarding.api import router as onboarding_router
+    ONBOARDING_AVAILABLE = True
+except ImportError:
+    onboarding_router = None
+    ONBOARDING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # In-memory conversation store (keyed by user_id)
@@ -57,6 +66,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register onboarding router (separate UI flow from main chat)
+if ONBOARDING_AVAILABLE:
+    app.include_router(onboarding_router, prefix="/api")
 
 
 @app.get("/health")
