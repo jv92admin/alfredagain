@@ -15,9 +15,24 @@ Fetch data from database to inform current or later steps.
 | "Read saved recipes" | Read ALL recipes (`filters: []`) |
 | "Read recipes matching 'chicken'" | Filter by `name ilike %chicken%` |
 | "Read user's inventory" | Read ALL inventory items |
+| "Read what's in my pantry" | Read ALL inventory items (`filters: []`) |
 
 **Wrong:** Think says "read recipes" → you add tag/cuisine filters based on conversation context.
 **Right:** Think says "read recipes" → you read recipes. Period.
+
+### ⚠️ Broader Intent Before Filtering
+
+When reading inventory, **default to ALL items** unless user explicitly requests a specific location.
+
+| User says | Intent | Filter |
+|-----------|--------|--------|
+| "What do I have?" | All inventory | `filters: []` |
+| "What's in my pantry?" | All inventory | `filters: []` |
+| "Show my kitchen" | All inventory | `filters: []` |
+| "What's in my fridge?" | Specific location | `location = 'fridge'` |
+| "What's in my freezer?" | Specific location | `location = 'freezer'` |
+
+**"Pantry" and "kitchen" are colloquial terms for all food inventory. Only filter by `location` when user explicitly says "fridge" or "freezer".**
 
 If filtering is needed, Think will specify it in the step description or a later `analyze` step will narrow down.
 
