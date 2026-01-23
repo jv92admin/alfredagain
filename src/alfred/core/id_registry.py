@@ -1005,7 +1005,7 @@ class SessionIdRegistry:
         # Section 1: Generated content (user hasn't saved yet)
         if self.pending_artifacts:
             lines.append("## Generated Content")
-            lines.append("User can save these or discard:")
+            lines.append("**Act has full data for these.** Do NOT plan `read` steps — use `analyze` or `generate` directly.")
             lines.append("")
             for ref, artifact in self.pending_artifacts.items():
                 label = artifact.get("name") or artifact.get("label") or ref
@@ -1029,8 +1029,9 @@ class SessionIdRegistry:
                          if not (r.startswith("gen_") and r in self.pending_artifacts)]
         if recent_display:
             lines.append("## Recent Context (last 2 turns)")
-            lines.append("**Known refs and labels only. Do NOT assume full record data is loaded for Act in this turn.**")
-            lines.append("If you need actual record data (ingredients, instructions), plan a `read` step.")
+            lines.append("Act has data for these entities. Check the `[action:level]` tag:")
+            lines.append("- `[read:full]` → Act has instructions/ingredients, can `analyze` directly")
+            lines.append("- `[read:summary]` → Act has metadata only, `read with instructions` first for details")
             lines.append("")
             for ref in recent_display:
                 label = self.ref_labels.get(ref, ref)

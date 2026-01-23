@@ -201,46 +201,70 @@ Act figures out the mechanics (filters, queries, tool calls). You communicate th
 
 **Category-based recipe searches:** Act has semantic search. "Find fish recipes" just works — Act will match recipes conceptually, not by keyword.
 
-### Two Types of Context
+### Entity Types: Database vs Generated
+
+**Critical distinction:** There are TWO types of entity refs. They behave differently.
+
+| Ref Pattern | Where It Lives | Can `read`? | Examples |
+|-------------|----------------|-------------|----------|
+| `recipe_1`, `inv_5`, `meal_3` | Database | ✅ Yes | Saved entities |
+| `gen_recipe_1`, `gen_meal_1` | Memory (pending) | ❌ **No** | Generated, not yet saved |
+
+**`gen_*` refs are NOT in the database.** They exist in Act's "Generated Data" section as full JSON. You cannot `read` them — the data is already available for `analyze` or `generate` steps.
+
+| Task with `gen_*` | Correct Step Type |
+|-------------------|-------------------|
+| Iterate/improve generated recipe | `generate` (Act has full content) |
+| Analyze generated meal plan | `analyze` (Act has full content) |
+| Save generated recipe | `write` (creates in DB, promotes ref) |
+
+**Never plan:** `{"step_type": "read", "description": "Read gen_recipe_1..."}` — this will fail.
+
+### Context Layers
 
 **Kitchen Snapshot** (in "KITCHEN AT A GLANCE"):
 - High-level summary: counts, cuisines, what exists
-- Good for: holding a conversation, understanding vibes, knowing what domains are relevant
-- NOT actual data — just awareness of what the user has
+- Good for: holding a conversation, knowing what domains are relevant
+- NOT actual data — just awareness
 
-**Context Data** (in "Recent Context"):
-- Entity refs + labels (and a last-known status): `recipe_1`, `inv_5`, `shop_3`
-- Good for: referencing *known entities* deterministically (no name guessing)
-- **Important:** Recent Context is NOT “loaded data”. It’s refs/labels only. Act can only analyze actual data that appears in Step Results for THIS turn.
+**Generated Content** (in "Generated Content"):
+- Full artifacts that haven't been saved yet
+- Marked `[unsaved]` — user can save or discard
+- Act has complete JSON — no read needed
+
+**Recent Context** (in "Recent Context"):
+- Entity refs + labels from last 2 turns: `recipe_1`, `inv_5`
+- Act has data for these in "Active Entities" section
+- If you need to analyze/generate with this data, no read needed
+
+**Long Term Memory** (in "Long Term Memory"):
+- Older refs retained by Understand
+- **Refs only** — Act does NOT have full data
+- Must `read` before analyzing
 
 ### When to Read vs Analyze
 
-**Simple rule:** Act has full data for **Active Entities** (last 2 turns). Long-term memory is refs only.
+| You See | Data Location | Action |
+|---------|--------------|--------|
+| `gen_recipe_1` in Generated Content | Act's "Generated Data" | ✅ `analyze` or `generate` directly |
+| `recipe_1` in Recent Context | Act's "Active Entities" | ✅ `analyze` directly |
+| `recipe_5` in Long Term Memory | Database only | ❌ Plan `read` first |
+| Kitchen Snapshot shows recipes | Not loaded | ❌ Plan `read` first |
 
-| You See | Data Available? | Action |
-|---------|-----------------|--------|
-| Refs in **"Active Entities"** | ✅ Full data | Analyze directly — no re-read needed |
-| Refs in **"Long Term Memory"** | ❌ Refs only | Plan a `read` step first |
-| Kitchen Snapshot shows items, no refs | ❌ No refs yet | Plan a `read` (by name/semantic) |
+**Why this matters:** A re-read costs 2 LLM calls. Generated content and Active Entities are already available to Act.
 
-**Why this matters:** A re-read costs 2 LLM calls (read + step_complete). Persisted data costs ~20-40 lines. Huge token savings.
-
-**Pattern when data IS in Active Entities:**
+**Pattern: Iterate on generated recipe:**
 ```json
-{"description": "Analyze inventory in context for substitutes", "step_type": "analyze", "subdomain": "inventory"}
+{"description": "Generate improved version of gen_recipe_1 with Thai chilies", "step_type": "generate", "subdomain": "recipes"}
 ```
 
-**Pattern when ref is in Long Term Memory (needs re-read):**
+**Pattern: Analyze saved recipe from Long Term Memory:**
 ```json
 {"steps": [
   {"description": "Read recipe_1 (not in active context)", "step_type": "read", "subdomain": "recipes", "group": 0},
   {"description": "Analyze recipe for modifications", "step_type": "analyze", "subdomain": "recipes", "group": 1}
 ]}
 ```
-
-**How to tell:** Look at the entity context section in your prompt:
-- `## Active Entities (Full Data)` → data available, no read needed
-- `## Long Term Memory (refs only)` → need a read step
 
 ### Recipe Data Levels (Instructions & Ingredients)
 
