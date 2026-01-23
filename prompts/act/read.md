@@ -32,7 +32,7 @@ When reading inventory, **default to ALL items** unless user explicitly requests
 | "What's in my fridge?" | Specific location | `location = 'fridge'` |
 | "What's in my freezer?" | Specific location | `location = 'freezer'` |
 
-**"Pantry" and "kitchen" are colloquial terms for all food inventory. Only filter by `location` when user explicitly says "fridge" or "freezer".**
+**"Pantry" and "kitchen" are colloquial terms for all food inventory.**
 
 If filtering is needed, Think will specify it in the step description or a later `analyze` step will narrow down.
 

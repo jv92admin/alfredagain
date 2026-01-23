@@ -1161,14 +1161,15 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
         }).execute()
         
         # 2. Auto-apply to preferences table
-        constraints = payload_dict.get("constraints", {})
+        # Note: payload uses "preferences" key, not "constraints"
+        prefs = payload_dict.get("preferences", {})
         prefs_data = {
             "user_id": user.id,
-            "dietary_restrictions": constraints.get("dietary_restrictions", []),
-            "allergies": constraints.get("allergies", []),
-            "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
-            "household_size": constraints.get("household_size", 1),
-            "available_equipment": constraints.get("available_equipment", []),
+            "dietary_restrictions": prefs.get("dietary_restrictions", []),
+            "allergies": prefs.get("allergies", []),
+            "cooking_skill_level": prefs.get("cooking_skill_level", "intermediate"),
+            "household_size": prefs.get("household_size", 1),
+            "available_equipment": prefs.get("available_equipment", []),
             "favorite_cuisines": payload_dict.get("cuisine_preferences", []),
             "subdomain_guidance": payload_dict.get("subdomain_guidance", {}),
         }

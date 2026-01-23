@@ -145,6 +145,10 @@ class OnboardingPayload:
     ingredient_preferences: list[dict] = field(default_factory=list)
     # Each: {"ingredient_id": str, "preference_score": float}
     
+    # Interview answers (for audit/debugging synthesis)
+    interview_answers: list[dict] = field(default_factory=list)
+    # Each: {"page": int, "question_id": str, "question": str, "answer": str}
+    
     # =========================================================================
     # METADATA
     # =========================================================================
@@ -168,6 +172,7 @@ class OnboardingPayload:
                 for k, v in self.preference_interactions.items()
             },
             "ingredient_preferences": self.ingredient_preferences,
+            "interview_answers": self.interview_answers,
             # Metadata
             "onboarding_completed": self.onboarding_completed,
             "onboarding_version": self.onboarding_version,
@@ -262,6 +267,10 @@ def build_payload_from_state(state: "OnboardingState") -> OnboardingPayload:
     
     if state.payload_draft.get("stylistic_examples"):
         payload.stylistic_examples = state.payload_draft["stylistic_examples"]
+    
+    # Copy interview answers for audit/debugging
+    if state.payload_draft.get("interview_answers"):
+        payload.interview_answers = state.payload_draft["interview_answers"]
     
     payload.onboarding_completed = True
     
