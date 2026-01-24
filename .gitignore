@@ -42,6 +42,7 @@ env/
 *.swp
 *.swo
 *~
+.claude/
 
 # Testing
 .pytest_cache/
@@ -68,6 +69,7 @@ logs/
 prompt_logs/
 prompt_logs_downloaded/
 session_logs/
+tests/scenario_logs/
 
 # Local development
 *.sqlite

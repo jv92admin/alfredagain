@@ -111,45 +111,24 @@ TURN: "create a simple cod recipe"
     - Clears pending_artifacts[gen_recipe_1]
 ```
 
-### 🔴 TODO: Smart Read Rerouting for gen_* Refs
+### ✅ DONE: Smart Read Rerouting for gen_* Refs (V8)
 
-**Priority: HIGH** — Currently, `db_read` for `gen_*` refs fails because they have placeholder UUIDs (`__pending__`).
+**Implemented in `crud.py` → `_try_reroute_pending_read()`**
 
-**Current behavior:**
-- Think plans `read gen_recipe_1` → Act calls `db_read` → translation fails → error
-- Workaround: Think prompt teaches "don't read gen_* refs" (fragile)
-
-**Desired behavior:**
+**Behavior:**
 - Think plans `read gen_recipe_1` → CRUD layer detects pending ref → returns from `pending_artifacts`
 - Uniform mental model: "need data? read it" (works for both DB and generated content)
 
-**Implementation sketch (in `crud.py` → `execute_crud()`):**
-```python
-if tool == "db_read":
-    # Check if filtering by a gen_* ref
-    for f in params.get("filters", []):
-        ref = f.get("value")
-        if isinstance(ref, str) and registry._is_ref(ref):
-            uuid = registry.ref_to_uuid.get(ref, "")
-            if uuid.startswith("__pending__"):
-                # Return from pending_artifacts instead of DB
-                artifact = registry.get_artifact_content(ref)
-                if artifact:
-                    return [artifact]  # Formatted like db_read result
-    
-    # Normal db_read for real UUIDs
-    result = await db_read(...)
-```
+**Implementation:**
+- Added `_try_reroute_pending_read()` function in `crud.py`
+- Detects when filter references a gen_* ref with `__pending__` UUID
+- Returns artifact from `pending_artifacts` formatted to match db_read shape
+- Handles both single ref (`=` operator) and multiple refs (`in` operator)
 
-**Benefits:**
-- `gen_*` refs behave like Long Term Memory entities (read to access)
-- No special rules needed in Think prompt
+**Benefits achieved:**
+- `gen_*` refs can be read like any other entity
+- Removed "don't read gen_*" rules from prompts
 - Generated content can "fade" from Active Entities and still be retrievable
-
-**Considerations:**
-- Format artifact to match expected db_read shape (id, name, etc.)
-- Handle `gen_*` refs in `in` operator (list of refs)
-- Token cost: still dumps full artifact into context (separate issue)
 
 ### FK Lazy Registration Flow (V5)
 
@@ -211,6 +190,15 @@ current_turn: int                  # Current turn number
 pending_artifacts: dict[str, dict]  # gen_recipe_1 → {full JSON content}
 ```
 
+### V9: Unified Data Access
+```python
+# Single source of truth for "does this entity have data available?"
+get_entity_data(ref: str) -> dict | None
+
+# Unified modification API for gen_* artifacts
+update_entity_data(ref: str, content: dict) -> bool
+```
+
 ### V5: Context Curation
 ```python
 ref_active_reason: dict[str, str]        # gen_meal_plan_1 → "User's ongoing goal"
@@ -249,13 +237,19 @@ _lazy_enrich_queue: dict[str, tuple]     # Transient: refs needing name enrichme
 - `get_just_promoted_artifacts()` → Artifacts promoted this turn (for linked tables)
 - `clear_turn_promoted_artifacts()` → Clear at turn end (called by Summarize)
 
+### V9: Unified Data Access
+- `get_entity_data(ref)` → **Single source of truth** for entity data. Returns content from `pending_artifacts` or `None`
+- `update_entity_data(ref, content)` → Unified modification for gen_* artifacts. Updates content + label
+
+**Key principle:** These methods work identically for all refs. The registry determines what data it has available — callers don't need `startswith("gen_")` checks.
+
 ### Serialization
 - `to_dict()` → Serialize for state storage
 - `from_dict(data)` → Deserialize from state
 
 ---
 
-## Integration with Context API (V7)
+## Integration with Context API (V7 → V9)
 
 The registry is consumed by the **Context API** (`src/alfred/context/`):
 
@@ -267,7 +261,19 @@ ctx = get_entity_context(registry, mode="refs_and_labels")
 # Returns: EntityContext with active, generated, retained lists
 ```
 
-**Important:** The registry stores refs + labels, NOT full entity content.
+### V9: Unified View Across Nodes
+
+All nodes now have access to generated content (`pending_artifacts`):
+
+| Node | What It Sees |
+|------|--------------|
+| **Think** | Refs + labels (via ThinkContext) |
+| **Act** | Full JSON injection for write/generate/analyze steps |
+| **Reply** | Full JSON (via ReplyContext.pending_artifacts) ← **NEW in V9** |
+
+This enables Reply to display generated recipes/meal plans when users ask "show me that recipe".
+
+**Important:** The registry stores refs + labels for regular entities, and full content for generated entities in `pending_artifacts`.
 See `docs/context-engineering-architecture.md` for the "refs vs content" gap.
 
 ---
@@ -321,4 +327,4 @@ See `docs/context-engineering-architecture.md` for the "refs vs content" gap.
 
 ---
 
-*Last updated: 2026-01-14* (V7: Artifact promotion tracking, Context API integration)
+*Last updated: 2026-01-24* (V9: Unified data access — `get_entity_data()`, `update_entity_data()`)

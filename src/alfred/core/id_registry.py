@@ -329,12 +329,56 @@ class SessionIdRegistry:
     def get_artifact_content(self, ref: str) -> dict | None:
         """
         Retrieve the full content of a generated artifact.
-        
+
         Called when Act needs to save content that was generated in a prior turn.
         Returns None if ref not found or content was already saved.
         """
         return self.pending_artifacts.get(ref)
-    
+
+    # =========================================================================
+    # Unified Entity Data Access (V9)
+    # =========================================================================
+
+    def get_entity_data(self, ref: str) -> dict | None:
+        """
+        Unified entity data access - the SINGLE source of truth.
+
+        Works identically for gen_* and regular refs. This is the preferred
+        method for checking if entity data is available in the registry.
+
+        Returns:
+            - dict: Full entity content if available in registry (from pending_artifacts)
+            - None: Data not in registry (need step_results or DB read)
+
+        Note: Regular refs return None because their data lives in step_results,
+        not in the registry. This is intentional - we don't duplicate storage.
+        """
+        return self.pending_artifacts.get(ref)
+
+    def update_entity_data(self, ref: str, content: dict) -> bool:
+        """
+        Update content of an existing entity in the registry.
+
+        Used when Act modifies a gen_* artifact (e.g., applying user feedback
+        like "add feta to that recipe").
+
+        Args:
+            ref: Entity reference (e.g., "gen_recipe_1")
+            content: New full content to replace existing
+
+        Returns:
+            True if entity was updated, False if ref not found in registry
+        """
+        if ref in self.pending_artifacts:
+            self.pending_artifacts[ref] = content
+            # Update label if changed
+            new_label = content.get("name") or content.get("title")
+            if new_label:
+                self.ref_labels[ref] = new_label
+            logger.info(f"SessionRegistry: Updated entity data for {ref}")
+            return True
+        return False
+
     def get_all_pending_artifacts(self) -> dict[str, dict]:
         """
         Get all generated artifacts (including promoted ones).

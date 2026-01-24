@@ -1247,15 +1247,17 @@ async def act_node(state: AlfredState) -> dict:
         session_registry = SessionIdRegistry.from_dict(registry_data)
     session_registry.set_turn(state.get("current_turn", 1))
     
-    # V4: Inject generated content from SessionIdRegistry for write steps
-    # Shows full JSON data for db_create calls (includes promoted artifacts for linked records)
+    # V4+V8: Inject generated content from SessionIdRegistry for steps that need it
+    # - write: Full JSON data for db_create calls
+    # - generate: Full JSON for modifying existing gen_* artifacts
+    # - analyze: Full JSON for reasoning about generated content
     pending_artifacts_section = ""
-    if step_type == "write":
+    if step_type in ("write", "generate", "analyze"):
         pending = session_registry.get_all_pending_artifacts()
         if pending:
             import json
             pa_lines = ["### Generated Data"]
-            pa_lines.append("Full content for db_create. Use `recipe_id: \"gen_recipe_X\"` for linked records.")
+            pa_lines.append("Full artifact content. For write steps, use `recipe_id: \"gen_recipe_X\"` for linked records.")
             pa_lines.append("")
             for ref, content in pending.items():
                 label = content.get("name") or content.get("title") or ref
@@ -1696,20 +1698,34 @@ async def act_node(state: AlfredState) -> dict:
 
         # V4 CONSOLIDATION: Register generated artifacts in SessionIdRegistry
         # This is the ONLY place we track entities now
-        if step_type == "generate" and artifacts:
-            for i, artifact in enumerate(artifacts):
-                if isinstance(artifact, dict):
-                    entity_type = _infer_entity_type_from_artifact(artifact)
-                    label = _extract_artifact_label(artifact, entity_type, i)
-                    
-                    # Register with SessionIdRegistry INCLUDING FULL CONTENT
-                    # This is what allows "save" in a later turn to work
-                    session_registry.register_generated(
-                        entity_type=entity_type,
-                        label=label,
-                        content=artifact,
-                        source_step=current_step_index,
-                    )
+        # V9: Handle artifact modification using unified update_entity_data()
+        if step_type == "generate" and decision.data:
+            # Check if data contains existing refs as keys (modification case)
+            # e.g., {"gen_recipe_1": {...}} means update existing artifact
+            modified_refs = []
+            if isinstance(decision.data, dict):
+                for key in decision.data.keys():
+                    # UNIFIED: Use update_entity_data() instead of direct mutation
+                    new_content = decision.data[key]
+                    if session_registry.update_entity_data(key, new_content):
+                        modified_refs.append(key)
+                        logger.info(f"Act: Modified existing artifact {key}")
+
+            # Register new artifacts (that weren't modifications)
+            if artifacts and not modified_refs:
+                for i, artifact in enumerate(artifacts):
+                    if isinstance(artifact, dict):
+                        entity_type = _infer_entity_type_from_artifact(artifact)
+                        label = _extract_artifact_label(artifact, entity_type, i)
+
+                        # Register with SessionIdRegistry INCLUDING FULL CONTENT
+                        # This is what allows "save" in a later turn to work
+                        session_registry.register_generated(
+                            entity_type=entity_type,
+                            label=label,
+                            content=artifact,
+                            source_step=current_step_index,
+                        )
         
         # V4 FIX: Clear archives after successful write step (pending artifacts 
         # are cleared individually by register_created when each one is promoted)

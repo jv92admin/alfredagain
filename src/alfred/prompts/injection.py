@@ -96,7 +96,7 @@ def build_act_user_prompt(
         profile_section: User profile (analyze/generate only)
         subdomain_guidance: User's subdomain-specific preferences
         batch_manifest_section: Batch progress table (write only)
-        artifacts_section: Generated content for saving (write only)
+        artifacts_section: Generated content (write/generate/analyze)
         archive_section: Available archives from prior turns
         prev_step_note: Note from previous step
         tool_calls_made: Number of tool calls so far in this step
@@ -381,8 +381,9 @@ def _build_step_type_sections(
     if step_type == "write" and batch_manifest_section:
         result["batch_manifest"] = batch_manifest_section
     
-    # === Artifacts (write only) ===
-    if step_type == "write" and artifacts_section:
+    # === Artifacts (write/generate/analyze) ===
+    # V9: All step types that reason about generated content need full data
+    if step_type in ("write", "generate", "analyze") and artifacts_section:
         result["artifacts"] = f"""## 5. Generated Data
 
 {artifacts_section}"""

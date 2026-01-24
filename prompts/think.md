@@ -208,17 +208,42 @@ Act figures out the mechanics (filters, queries, tool calls). You communicate th
 | Ref Pattern | Where It Lives | Can `read`? | Examples |
 |-------------|----------------|-------------|----------|
 | `recipe_1`, `inv_5`, `meal_3` | Database | ✅ Yes | Saved entities |
-| `gen_recipe_1`, `gen_meal_1` | Memory (pending) | ❌ **No** | Generated, not yet saved |
+| `gen_recipe_1`, `gen_meal_1` | Memory (pending) | ✅ Yes* | Generated, not yet saved |
 
-**`gen_*` refs are NOT in the database.** They exist in Act's "Generated Data" section as full JSON. You cannot `read` them — the data is already available for `analyze` or `generate` steps.
+*`read gen_recipe_1` works — the system returns the artifact from memory instead of querying the database.
+
+**`gen_*` refs are NOT in the database** until saved. The data exists in Act's "Generated Data" section. For most operations, you can use `analyze` or `generate` directly without a read step.
 
 | Task with `gen_*` | Correct Step Type |
 |-------------------|-------------------|
 | Iterate/improve generated recipe | `generate` (Act has full content) |
-| Analyze generated meal plan | `analyze` (Act has full content) |
+| Analyze/compare generated content | `analyze` (Act has full content) |
+| **Show user the full recipe** | `read` (reroutes to memory, flows to Reply) |
 | Save generated recipe | `write` (creates in DB, promotes ref) |
 
-**Never plan:** `{"step_type": "read", "description": "Read gen_recipe_1..."}` — this will fail.
+### Modifying + Saving Generated Content
+
+When user wants to **change AND save** a `gen_*` artifact, plan **TWO steps**:
+
+| User says | What to plan |
+|-----------|--------------|
+| "add lime to gen_recipe_1" | 1× generate step (modify artifact) |
+| "save gen_recipe_1" | 1× write step (db_create) |
+| "add lime and save it" | generate step → write step |
+
+**Never:** Plan a single `write` step to "update gen_recipe_1" — there's no DB record to update. The artifact lives in memory, not the database.
+
+**Why two steps?**
+- `generate` modifies the artifact in memory (replaces content with updated version)
+- `write` then `db_create`s the modified content
+
+**Example — user says "add lime to that recipe and save it":**
+```json
+{"steps": [
+  {"description": "Modify gen_recipe_1 to add lime finish", "step_type": "generate", "subdomain": "recipes", "group": 0},
+  {"description": "Save gen_recipe_1", "step_type": "write", "subdomain": "recipes", "group": 1}
+]}
+```
 
 ### Context Layers
 
@@ -252,6 +277,35 @@ Act figures out the mechanics (filters, queries, tool calls). You communicate th
 | Kitchen Snapshot shows recipes | Not loaded | ❌ Plan `read` first |
 
 **Why this matters:** A re-read costs 2 LLM calls. Generated content and Active Entities are already available to Act.
+
+**CRITICAL — Multi-entity operations (compare, match, diff):**
+If your `analyze` step requires data from **multiple sources** (e.g., "compare recipe with inventory", "find missing ingredients"), verify **ALL** sources are in context:
+
+| Operation | Sources Needed | Check |
+|-----------|----------------|-------|
+| "What ingredients am I missing?" | Recipe + Inventory | Both in Generated Content or Recent Context? |
+| "Compare this recipe with that one" | Recipe A + Recipe B | Both available? |
+| "Match recipes to my pantry" | Recipes + Inventory | Both loaded? |
+
+**If ANY source is missing → read it first.** Example:
+
+```json
+{"steps": [
+  {"description": "Read current inventory", "step_type": "read", "subdomain": "inventory", "group": 0},
+  {"description": "Compare gen_recipe_1 ingredients with inventory", "step_type": "analyze", "subdomain": "recipes", "group": 1}
+]}
+```
+
+The generated recipe (`gen_recipe_1`) is in Generated Content, but inventory is not in Recent Context → read inventory first.
+
+**EXCEPTION — "Show me the recipe" for gen_* refs:**
+When user wants to **SEE the full content** of a generated artifact (e.g., "show me that recipe", "what's in that meal plan"), use `read` — NOT analyze. The read will be rerouted to return the artifact from memory, which puts the full content in step_results for Reply to display.
+
+| User Request | `gen_*` in Generated Content | Action |
+|--------------|------------------------------|--------|
+| "analyze/compare/check" | ✅ `analyze` | Act reasons internally |
+| "show me / display / what's in it" | ✅ `read` | Data flows to Reply for display |
+| "modify / improve / add X" | ✅ `generate` | Act updates the artifact |
 
 **Pattern: Iterate on generated recipe:**
 ```json

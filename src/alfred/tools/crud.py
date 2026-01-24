@@ -568,6 +568,78 @@ async def _enrich_records_with_ingredient_ids(records: list[dict]) -> list[dict]
 
 
 # =============================================================================
+# Read Rerouting via Unified Entity Data Access (V9)
+# =============================================================================
+
+
+def _extract_refs_from_filters(filters: list) -> list[str]:
+    """Extract entity refs from ID filters."""
+    refs = []
+    for f in filters:
+        f_dict = f if isinstance(f, dict) else (f.model_dump() if hasattr(f, 'model_dump') else {})
+        field = f_dict.get("field", "")
+        op = f_dict.get("op", "")
+        value = f_dict.get("value")
+
+        if field != "id":
+            continue
+
+        if op == "=" and isinstance(value, str):
+            refs.append(value)
+        elif op == "in" and isinstance(value, list):
+            refs.extend(v for v in value if isinstance(v, str))
+
+    return refs
+
+
+def _try_reroute_pending_read(
+    params: dict[str, Any],
+    registry: Any,
+) -> list[dict] | None:
+    """
+    Check if db_read references entities with registry data and reroute.
+
+    Uses the unified get_entity_data() method to check if data is available
+    in the registry. This works for any entity type - the registry determines
+    what data it has available.
+
+    This enables:
+    - "read gen_recipe_1" to work even though it's not in the database
+    - Uniform mental model: "need data? read it" (works for both DB and generated content)
+    - Entities can fade from Active Entities and still be retrievable
+
+    Returns:
+        - List of entity dicts if ALL refs have registry data
+        - None if ANY ref needs DB lookup (proceed with normal db_read)
+    """
+    filters = params.get("filters", [])
+    if not filters:
+        return None
+
+    refs = _extract_refs_from_filters(filters)
+    if not refs:
+        return None
+
+    # Check each ref using unified method
+    results = []
+    for ref in refs:
+        # UNIFIED: Use single method for all refs
+        data = registry.get_entity_data(ref)
+        if data is not None:
+            # Format to match db_read shape (add id field with ref)
+            result = data.copy() if isinstance(data, dict) else {"data": data}
+            result["id"] = ref  # Use the ref as ID (LLM-facing)
+            results.append(result)
+            logger.info(f"Read rerouting: {ref} → returned from registry")
+        else:
+            # Any ref without registry data = need DB lookup
+            # Can't mix registry and DB results, so go to DB for all
+            return None
+
+    return results if results else None
+
+
+# =============================================================================
 # Tool Execution Dispatcher
 # =============================================================================
 
@@ -595,15 +667,23 @@ async def execute_crud(
     Returns:
         Tool result (with refs if registry provided, UUIDs otherwise)
     """
-    # V4: Translate input refs to UUIDs
+    # V8: Read rerouting for gen_* refs (MUST be BEFORE translation!)
+    # If reading a gen_* ref that has __pending__ UUID, return from pending_artifacts.
+    # This check needs the original refs (gen_recipe_1), not translated UUIDs.
+    if tool == "db_read" and registry:
+        rerouted = _try_reroute_pending_read(params, registry)
+        if rerouted is not None:
+            return rerouted
+
+    # V4: Translate input refs to UUIDs (after read rerouting check)
     if registry:
         params = _translate_input_params(tool, params, registry)
-    
+
     # Sanitize data payloads - LLMs sometimes corrupt Unicode to NULL bytes
     # PostgreSQL rejects \u0000 in text fields
     if tool in ("db_create", "db_update") and "data" in params:
         params["data"] = _sanitize_payload(params["data"])
-    
+
     # Execute the raw operation
     match tool:
         case "db_read":

@@ -75,28 +75,31 @@ def get_entity_context(
         current_turn = registry.current_turn
     
     ctx = EntityContext(current_turn=current_turn)
-    
+
     # Get active entities (recent + retained)
     recent_refs, retained_refs = registry.get_active_entities(turns_window=2)
-    
-    # Get generated/pending artifacts
-    generated_refs = registry.get_generated_pending()
-    
-    # Build snapshots for each tier
+
+    # V9: Build snapshots using unified get_entity_data() for tier detection
+    # An entity is "generated" if:
+    # 1. It has data in the registry (get_entity_data returns non-None)
+    # 2. Its action is "generated" (not yet saved to DB)
     for ref in recent_refs:
-        if ref not in generated_refs:  # Don't duplicate
-            snapshot = _build_snapshot(registry, ref)
-            ctx.active.append(snapshot)
-    
-    for ref in generated_refs:
         snapshot = _build_snapshot(registry, ref)
-        ctx.generated.append(snapshot)
-    
+
+        # UNIFIED: Use get_entity_data() to check if entity has registry data
+        has_registry_data = registry.get_entity_data(ref) is not None
+        is_generated = registry.ref_actions.get(ref) == "generated"
+
+        if has_registry_data and is_generated:
+            ctx.generated.append(snapshot)
+        else:
+            ctx.active.append(snapshot)
+
     for ref in retained_refs:
         snapshot = _build_snapshot(registry, ref)
         snapshot.retention_reason = registry.ref_active_reason.get(ref)
         ctx.retained.append(snapshot)
-    
+
     return ctx
 
 
@@ -108,7 +111,7 @@ def _get_entity_context_from_dict(
     """Build entity context from serialized registry dict."""
     turn = current_turn or registry_dict.get("current_turn", 0)
     ctx = EntityContext(current_turn=turn)
-    
+
     ref_to_uuid = registry_dict.get("ref_to_uuid", {})
     ref_labels = registry_dict.get("ref_labels", {})
     ref_types = registry_dict.get("ref_types", {})
@@ -117,13 +120,17 @@ def _get_entity_context_from_dict(
     ref_turn_last_ref = registry_dict.get("ref_turn_last_ref", {})
     ref_active_reason = registry_dict.get("ref_active_reason", {})
     pending_artifacts = registry_dict.get("pending_artifacts", {})
-    
+
     for ref in ref_to_uuid.keys():
         last_ref_turn = ref_turn_last_ref.get(ref, 0)
         is_recent = (turn - last_ref_turn) <= 2
-        is_generated = ref.startswith("gen_") and ref_actions.get(ref) == "generated"
         is_retained = ref in ref_active_reason
-        
+
+        # V9 UNIFIED: Entity is "generated" if it has pending data AND action is "generated"
+        # This replaces the old ref.startswith("gen_") check
+        has_pending_data = ref in pending_artifacts
+        is_generated = has_pending_data and ref_actions.get(ref) == "generated"
+
         snapshot = EntitySnapshot(
             ref=ref,
             entity_type=ref_types.get(ref, "unknown"),
@@ -133,14 +140,14 @@ def _get_entity_context_from_dict(
             turn_last_ref=last_ref_turn,
             retention_reason=ref_active_reason.get(ref) if is_retained else None,
         )
-        
+
         if is_generated:
             ctx.generated.append(snapshot)
         elif is_retained and not is_recent:
             ctx.retained.append(snapshot)
         elif is_recent:
             ctx.active.append(snapshot)
-    
+
     return ctx
 
 

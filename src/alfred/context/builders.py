@@ -259,17 +259,23 @@ class ThinkContext:
         # Get active entities split by source
         recent_refs, retained_refs = self._get_active_entities()
 
+        # V9 UNIFIED: Identify generated entities using same logic as entity.py
+        # An entity is "generated" if it has pending data AND action is "generated"
+        generated_refs = [
+            ref for ref in pending_artifacts
+            if ref_actions.get(ref) == "generated"
+        ]
+
         # Section 1: Generated content (user hasn't saved yet)
-        if pending_artifacts:
+        if generated_refs:
             lines.append("## Generated Content")
-            lines.append("**Act has full data for these.** Do NOT plan `read` steps — use `analyze` or `generate` directly.")
+            lines.append("**Act has full data for these.** Use `analyze` or `generate` directly (no read needed).")
             lines.append("")
-            for ref, artifact in pending_artifacts.items():
+            for ref in generated_refs:
+                artifact = pending_artifacts[ref]
                 label = artifact.get("name") or artifact.get("label") or ref
                 entity_type = ref_types.get(ref, "unknown")
-                action = ref_actions.get(ref, "generated")
-                status = "saved" if action == "created" else "unsaved"
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{status}]")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [unsaved]")
             lines.append("")
 
         if not ref_to_uuid and not pending_artifacts:
@@ -280,9 +286,8 @@ class ThinkContext:
             return "\n".join(lines)
 
         # Section 2: Recent Context (last 2 turns - automatic)
-        # Filter out: pending artifacts (shown above)
-        recent_display = [r for r in recent_refs
-                         if not (r.startswith("gen_") and r in pending_artifacts)]
+        # Filter out: entities shown in Generated Content section
+        recent_display = [r for r in recent_refs if r not in generated_refs]
         if recent_display:
             lines.append("## Recent Context (last 2 turns)")
             lines.append("Act has data for these entities. Check the `[action:level]` tag:")
@@ -385,36 +390,53 @@ class ThinkContext:
 @dataclass
 class ReplyContext:
     """Context for Reply's response generation."""
-    
+
     entity: EntityContext
     conversation: ConversationHistory
     reasoning: ReasoningTrace
     execution_outcome: str  # What was accomplished
-    
+    pending_artifacts: dict  # V9: Full content of generated artifacts (unified view)
+
     def format(self) -> str:
         """Format context for Reply prompt."""
         sections = []
-        
+
         # Entity context with saved/generated distinction
         # Reply needs to know: recipe_3 = saved, gen_recipe_1 = not saved
         entity_section = format_entity_context(self.entity, mode="reply")
         if entity_section and "No entities" not in entity_section:
             sections.append(f"## Entity Context\n\n{entity_section}")
-        
+
+        # V9 UNIFIED: Include generated content so Reply can display it
+        # This gives Reply the same view as Think and Act
+        if self.pending_artifacts:
+            import json
+            gen_lines = ["## Generated Content (Full Data)"]
+            gen_lines.append("Use this to show users the actual content when requested.")
+            gen_lines.append("")
+            for ref, content in self.pending_artifacts.items():
+                label = content.get("name") or content.get("title") or ref
+                gen_lines.append(f"### {ref}: {label}")
+                gen_lines.append("```json")
+                gen_lines.append(json.dumps(content, indent=2, default=str))
+                gen_lines.append("```")
+                gen_lines.append("")
+            sections.append("\n".join(gen_lines))
+
         # Conversation with engagement summary
         conv_section = format_conversation(self.conversation, depth=2)
         if conv_section:
             sections.append(f"## Conversation\n\n{conv_section}")
-        
+
         # Reasoning for continuity (phase, user expressed)
         reasoning_section = format_reasoning(self.reasoning, node="reply")
         if reasoning_section and "No prior" not in reasoning_section:
             sections.append(f"## Conversation Flow\n\n{reasoning_section}")
-        
+
         # What was accomplished
         if self.execution_outcome:
             sections.append(f"## What Was Accomplished\n\n{self.execution_outcome}")
-        
+
         return "\n\n".join(sections)
 
 
@@ -496,27 +518,39 @@ def build_think_context(state: "AlfredState") -> ThinkContext:
 def build_reply_context(state: "AlfredState") -> ReplyContext:
     """
     Build context for Reply's response generation.
-    
+
     Includes:
     - Entity refs + labels with saved/generated status (so Reply knows what to offer saving)
     - Conversation with engagement summary
     - Reasoning trace (phase, user expressed)
     - Execution outcome summary
+    - V9: Full pending_artifacts content (unified view with Think/Act)
     """
+    from alfred.core.id_registry import SessionIdRegistry
+
     conversation = state.get("conversation", {})
     registry = state.get("id_registry", {})
     current_turn = state.get("current_turn", 0)
-    
+
     # Build execution outcome from step_results
     step_results = state.get("step_results", {})
     think_output = state.get("think_output")
     outcome = _build_execution_outcome(step_results, think_output)
-    
+
+    # V9 UNIFIED: Get pending_artifacts so Reply has same view as Think/Act
+    # This enables Reply to show generated content when user asks "show me that recipe"
+    pending_artifacts = {}
+    if isinstance(registry, SessionIdRegistry):
+        pending_artifacts = registry.get_all_pending_artifacts()
+    elif isinstance(registry, dict):
+        pending_artifacts = registry.get("pending_artifacts", {})
+
     return ReplyContext(
         entity=get_entity_context(registry, current_turn, mode="reply"),
         conversation=get_conversation_history(conversation),
         reasoning=get_reasoning_trace(conversation),
         execution_outcome=outcome,
+        pending_artifacts=pending_artifacts,
     )
 
 

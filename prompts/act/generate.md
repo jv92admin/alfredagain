@@ -47,6 +47,35 @@ The system will:
 
 ---
 
+## Modifying Existing Artifacts
+
+When the step description mentions modifying an existing `gen_*` ref (e.g., "Modify gen_recipe_1 to add lime"):
+
+1. The full artifact is in the "Generated Data" section above
+2. Apply the requested changes to the content
+3. Output the **complete updated artifact** (not just the diff)
+4. The system will replace the artifact in memory using the same ref
+
+**Example:**
+Step: "Modify gen_recipe_1 to add a lime finish"
+
+```json
+{
+  "action": "step_complete",
+  "result_summary": "Updated gen_recipe_1 with lime finish",
+  "data": {
+    "gen_recipe_1": {
+      "name": "South Indian Egg Masala",
+      "instructions": ["Step 1...", "Step 2...", "...", "Finish with a squeeze of lime"]
+    }
+  }
+}
+```
+
+**Key:** When modifying, include the ref name (`gen_recipe_1`) as the key in your output. This tells the system which artifact to update.
+
+---
+
 ## Quality Principles
 
 ### Be Genuinely Creative

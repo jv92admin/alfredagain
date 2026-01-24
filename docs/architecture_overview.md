@@ -1,7 +1,7 @@
 # Alfred Architecture Overview
 
-**Last Updated:** January 17, 2026  
-**Status:** V8 with Google OAuth, Supabase Auth, database-enforced RLS
+**Last Updated:** January 24, 2026
+**Status:** V9 with unified context API for generated entities
 
 ---
 
@@ -152,11 +152,13 @@ Alfred uses a **three-layer context model** managed by the Context API:
 
 ### What Each Node Sees
 
-| Node | Entity | Conversation | Reasoning |
-|------|--------|--------------|-----------|
-| **Think** | Refs + labels | Full recent, compressed older | Last 2 turn summaries |
-| **Act** | Refs + labels + step results | Recent | Prior turn steps (last 2) |
-| **Reply** | Labels only | Recent | Current turn summary |
+| Node | Entity | Conversation | Reasoning | Generated Content |
+|------|--------|--------------|-----------|-------------------|
+| **Think** | Refs + labels | Full recent, compressed older | Last 2 turn summaries | ✅ Refs + labels |
+| **Act** | Refs + labels + step results | Recent | Prior turn steps (last 2) | ✅ Full JSON |
+| **Reply** | Labels only | Recent | Current turn summary | ✅ Full JSON (V9) |
+
+**V9 Unification:** All nodes now see generated content (`pending_artifacts`). This enables Reply to display generated recipes/meal plans when users ask "show me that recipe".
 
 ### Recent Context vs Step Results
 
@@ -311,6 +313,7 @@ CREATE POLICY inventory_select_policy ON inventory
 
 | Version | Date | Changes |
 |---------|------|---------|
+| V9 | 2026-01-24 | **Unified Context API for generated entities:** `get_entity_data()` / `update_entity_data()` as single source of truth, Reply gets `pending_artifacts` (unified view with Think/Act), read rerouting uses unified method |
 | V8 | 2026-01-17 | Google OAuth via Supabase Auth, database-enforced RLS with auth.uid(), request context pattern for auth tokens |
 | V7.2 | 2026-01-16 | Profile for write steps, nested ingredient ID registration, dead code cleanup, Reply witness principle, summary duplication fix |
 | V7.1 | 2026-01-15 | Turn counter fix (double-increment), step_results persistence (2 turns), Act sees full instructions, Act Quick criteria tightening, Act prompt refactor |

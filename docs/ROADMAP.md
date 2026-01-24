@@ -1,6 +1,6 @@
 # Alfred Roadmap
 
-**Last Updated:** 2026-01-23
+**Last Updated:** 2026-01-24
 
 ---
 
@@ -28,6 +28,25 @@
 ---
 
 ## Recently Completed
+
+### 2026-01-24: V9 Unified Context API for Generated Entities
+- **Tier 1:** Generated entities treated like DB entities
+  - `get_entity_data(ref)` — single source of truth for entity data availability
+  - `update_entity_data(ref, content)` — unified modification API
+  - Read rerouting uses unified method (removed `startswith("gen_")` checks)
+- **Tier 2:** Centralized history/turn logic
+  - Entity tier logic unified in entity.py
+  - ThinkContext aligned with entity.py patterns
+- **Tier 2b:** Reply bug fix → true unification
+  - Reply now has access to `pending_artifacts` (same view as Think/Act)
+  - All nodes see same generated content
+- **Tier 3:** Act injection fix
+  - `injection.py` now injects `## 5. Generated Data` for write/generate/analyze (was write-only)
+  - Fixes "No data to analyze" bug when Act tries to reason about generated content
+- **Tier 4:** Think prompt - multi-entity operations
+  - Added guidance for compare/match/diff operations requiring multiple data sources
+  - Think must verify ALL sources are in context before planning `analyze`
+- **Spec:** [pr-unified-context-api.md](pr-unified-context-api.md) — Full PR documentation
 
 ### 2026-01-23: Context API Migration
 - Unified naming convention: `build_{node}_context()` for all nodes

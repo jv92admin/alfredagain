@@ -117,6 +117,18 @@ db_read → SessionIdRegistry.translate_read_output() → LLM sees recipe_1
 LLM says "delete recipe_1" → SessionIdRegistry.translate_filters() → db_delete with UUID
 ```
 
+### V9: Unified Data Access
+
+```python
+# Single source of truth for entity data availability
+registry.get_entity_data(ref) → dict | None
+
+# Unified modification for gen_* artifacts
+registry.update_entity_data(ref, content) → bool
+```
+
+All nodes now see generated content (`pending_artifacts`). Reply can display generated recipes when users ask "show me that recipe".
+
 ### Three-Layer Context Model
 
 | Layer | What | Owner | Survives Turns? |
