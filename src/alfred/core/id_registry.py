@@ -957,120 +957,17 @@ class SessionIdRegistry:
         ]
     
     # format_for_act_prompt() REMOVED (2026-01-16)
-    # Was V5 approach showing refs+labels only. Replaced by V6 _build_enhanced_entity_context() 
+    # Was V5 approach showing refs+labels only. Replaced by build_act_entity_context()
     # in act.py which includes full entity data, saving re-read costs.
-    
-    def format_for_understand_prompt(self) -> str:
-        """
-        Format entities for Understand prompt. REPLACES EntityContextModel.
-        
-        Shows all tracked entities so Understand can decide what's relevant.
-        """
-        lines = ["## Entity Registry (for context decisions)", ""]
-        
-        if not self.ref_to_uuid:
-            lines.append("*No entities tracked.*")
-            return "\n".join(lines)
-        
-        lines.append("| Ref | Type | Label | Last Action | Created | Last Ref |")
-        lines.append("|-----|------|-------|-------------|---------|----------|")
-        
-        # Sort by recency
-        for ref in self.get_entities_by_recency(20):
-            lines.append(
-                f"| `{ref}` | {self.ref_types.get(ref, '-')} | "
-                f"{self.ref_labels.get(ref, ref)} | {self.ref_actions.get(ref, '-')} | "
-                f"T{self.ref_turn_created.get(ref, '?')} | T{self.ref_turn_last_ref.get(ref, '?')} |"
-            )
-        
-        if len(self.ref_to_uuid) > 20:
-            lines.append(f"*... and {len(self.ref_to_uuid) - 20} more*")
-        
-        return "\n".join(lines)
-    
-    def format_for_think_prompt(self) -> str:
-        """
-        V5: Format entities for Think prompt with delineated sections.
-        
-        Shows:
-        1. Pending artifacts (need to be saved)
-        2. Recent Context (last 2 turns - automatic)
-        3. Long Term Memory (Understand-retained older entities)
-        """
-        lines = []
-        
-        # Get active entities split by source
-        recent_refs, retained_refs = self.get_active_entities(turns_window=2)
-        
-        # Section 1: Generated content (user hasn't saved yet)
-        if self.pending_artifacts:
-            lines.append("## Generated Content")
-            lines.append("**Act has full data for these.** Do NOT plan `read` steps — use `analyze` or `generate` directly.")
-            lines.append("")
-            for ref, artifact in self.pending_artifacts.items():
-                label = artifact.get("name") or artifact.get("label") or ref
-                entity_type = self.ref_types.get(ref, "unknown")
-                action = self.ref_actions.get(ref, "generated")
-                status = "saved" if action == "created" else "unsaved"
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{status}]")
-            lines.append("")
-        
-        if not self.ref_to_uuid and not self.pending_artifacts:
-            if not lines:
-                lines.append("## Available Items")
-                lines.append("")
-            lines.append("*No entities tracked.*")
-            return "\n".join(lines)
-        
-        # Section 2: Recent Context (last 2 turns - automatic)
-        # Filter out: pending artifacts (shown above)
-        # NOTE: Removed "linked" filter - linked entities ARE useful refs
-        recent_display = [r for r in recent_refs 
-                         if not (r.startswith("gen_") and r in self.pending_artifacts)]
-        if recent_display:
-            lines.append("## Recent Context (last 2 turns)")
-            lines.append("Act has data for these entities. Check the `[action:level]` tag:")
-            lines.append("- `[read:full]` → Act has instructions/ingredients, can `analyze` directly")
-            lines.append("- `[read:summary]` → Act has metadata only, `read with instructions` first for details")
-            lines.append("")
-            for ref in recent_display:
-                label = self.ref_labels.get(ref, ref)
-                entity_type = self.ref_types.get(ref, "unknown")
-                action = self.ref_actions.get(ref, "-")
-                if entity_type == "recipe":
-                    level = self.ref_recipe_last_read_level.get(ref)
-                    if level:
-                        action = f"{action}:{level}"
-                        if level != "full":
-                            last_full_turn = self.ref_recipe_last_full_turn.get(ref)
-                            if last_full_turn:
-                                action = f"{action} (last_full:T{last_full_turn})"
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
-            lines.append("")
-        
-        # Section 3: Long Term Memory (Understand-retained)
-        if retained_refs:
-            lines.append("## Long Term Memory (retained from earlier)")
-            lines.append("")
-            for ref in retained_refs:
-                label = self.ref_labels.get(ref, ref)
-                entity_type = self.ref_types.get(ref, "unknown")
-                reason = self.ref_active_reason.get(ref, "")
-                turn_created = self.ref_turn_created.get(ref, "?")
-                reason_note = f" — *{reason}*" if reason else ""
-                lines.append(f"- `{ref}`: {label} ({entity_type}, turn {turn_created}){reason_note}")
-            lines.append("")
-        
-        # If nothing in either section but we have entities, show summary
-        if not recent_refs and not retained_refs and self.ref_to_uuid:
-            lines.append("## Background Entities")
-            lines.append("")
-            lines.append(f"*{len(self.ref_to_uuid)} entities tracked but none currently active.*")
-            lines.append("*(Use entity refs from conversation to access them.)*")
-            lines.append("")
-        
-        return "\n".join(lines)
-    
+
+    # format_for_understand_prompt() REMOVED (2026-01-23)
+    # Migrated to Context API: build_understand_context() in context/builders.py
+    # Now includes both turn tracking table AND decision history in one place.
+
+    # format_for_think_prompt() REMOVED (2026-01-23)
+    # Migrated to Context API: build_think_context() in context/builders.py
+    # Now uses ThinkContext.format_entity_context() with recipe detail tracking.
+
     # =========================================================================
     # Serialization (for state persistence across turns)
     # =========================================================================

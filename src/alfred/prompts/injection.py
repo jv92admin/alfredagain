@@ -1429,9 +1429,9 @@ Return: `{"tool": "...", "params": {"table": "...", ...}}`""")
 # - build_summarize_context()
 #
 # These used SessionIdRegistry.format_for_act_prompt() which only provided refs+labels.
-# V5/V6 replaced this with _build_enhanced_entity_context() in act.py which provides
+# V5/V6 replaced this with build_act_entity_context() in act.py which provides
 # full entity data, saving the cost of re-reading (~300 tokens vs ~40 tokens per entity).
 #
-# See: act.py:_build_enhanced_entity_context()
+# See: act.py:build_act_entity_context()
 # =============================================================================
 

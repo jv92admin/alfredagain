@@ -111,6 +111,46 @@ TURN: "create a simple cod recipe"
     - Clears pending_artifacts[gen_recipe_1]
 ```
 
+### 🔴 TODO: Smart Read Rerouting for gen_* Refs
+
+**Priority: HIGH** — Currently, `db_read` for `gen_*` refs fails because they have placeholder UUIDs (`__pending__`).
+
+**Current behavior:**
+- Think plans `read gen_recipe_1` → Act calls `db_read` → translation fails → error
+- Workaround: Think prompt teaches "don't read gen_* refs" (fragile)
+
+**Desired behavior:**
+- Think plans `read gen_recipe_1` → CRUD layer detects pending ref → returns from `pending_artifacts`
+- Uniform mental model: "need data? read it" (works for both DB and generated content)
+
+**Implementation sketch (in `crud.py` → `execute_crud()`):**
+```python
+if tool == "db_read":
+    # Check if filtering by a gen_* ref
+    for f in params.get("filters", []):
+        ref = f.get("value")
+        if isinstance(ref, str) and registry._is_ref(ref):
+            uuid = registry.ref_to_uuid.get(ref, "")
+            if uuid.startswith("__pending__"):
+                # Return from pending_artifacts instead of DB
+                artifact = registry.get_artifact_content(ref)
+                if artifact:
+                    return [artifact]  # Formatted like db_read result
+    
+    # Normal db_read for real UUIDs
+    result = await db_read(...)
+```
+
+**Benefits:**
+- `gen_*` refs behave like Long Term Memory entities (read to access)
+- No special rules needed in Think prompt
+- Generated content can "fade" from Active Entities and still be retrievable
+
+**Considerations:**
+- Format artifact to match expected db_read shape (id, name, etc.)
+- Handle `gen_*` refs in `in` operator (list of refs)
+- Token cost: still dumps full artifact into context (separate issue)
+
 ### FK Lazy Registration Flow (V5)
 
 ```

@@ -16,6 +16,7 @@ from typing import Any
 from alfred.core.modes import Mode, ModeContext
 from alfred.core.id_registry import SessionIdRegistry
 from alfred.graph.state import AlfredState, UnderstandOutput
+from alfred.context.builders import build_understand_context
 from alfred.llm.client import call_llm, set_current_node
 
 logger = logging.getLogger(__name__)
@@ -31,142 +32,6 @@ def _load_prompt() -> str:
     else:
         logger.warning(f"Understand prompt not found at {PROMPT_PATH}")
         return "Analyze the user message and detect entity state changes."
-
-
-def _format_conversation_with_entities(
-    turns: list[dict], 
-    registry: SessionIdRegistry | None,
-    current_turn_num: int,
-    limit: int = 5
-) -> str:
-    """
-    V5: Format conversation history with entity annotations.
-    
-    Shows last N turns with what entities were involved in each.
-    This helps Understand see the connection between conversation and entities.
-    """
-    if not turns:
-        return "*No previous conversation.*"
-    
-    recent = turns[-limit:]
-    lines = []
-    
-    # Calculate turn numbers (working backwards from current)
-    start_turn = max(1, current_turn_num - len(recent))
-    
-    for i, turn in enumerate(recent):
-        turn_num = start_turn + i
-        turns_ago = current_turn_num - turn_num
-        ago_label = f"({turns_ago} turn{'s' if turns_ago != 1 else ''} ago)" if turns_ago > 0 else "(current)"
-        
-        lines.append(f"### Turn {turn_num} {ago_label}")
-        
-        user_msg = turn.get("user", "")
-        if len(user_msg) > 300:
-            user_msg = user_msg[:300] + "..."
-        lines.append(f"**User:** {user_msg}")
-        
-        assistant_msg = turn.get("assistant_summary") or turn.get("assistant", "")
-        if len(assistant_msg) > 300:
-            assistant_msg = assistant_msg[:300] + "..."
-        lines.append(f"**Alfred:** {assistant_msg}")
-        
-        # Show entities mentioned/affected this turn (from registry temporal data)
-        if registry:
-            turn_entities = []
-            for ref in registry.ref_to_uuid.keys():
-                created_turn = registry.ref_turn_created.get(ref, 0)
-                last_ref_turn = registry.ref_turn_last_ref.get(ref, 0)
-                action = registry.ref_actions.get(ref, "")
-                label = registry.ref_labels.get(ref, ref)
-                
-                # Entity was created or last referenced this turn
-                if created_turn == turn_num:
-                    turn_entities.append(f"`{ref}`: {label} ({action})")
-                elif last_ref_turn == turn_num and created_turn != turn_num:
-                    turn_entities.append(f"`{ref}`: {label} (referenced)")
-            
-            if turn_entities:
-                lines.append(f"**Entities:** {', '.join(turn_entities)}")
-        
-        lines.append("")
-    
-    return "\n".join(lines)
-
-
-def _format_decision_log(decision_log: list[dict], limit: int = 10) -> str:
-    """
-    V5: Format previous Understand decisions for continuity.
-    
-    Shows why entities were retained/demoted/dropped in previous turns.
-    """
-    if not decision_log:
-        return "*No previous context decisions.*"
-    
-    recent = decision_log[-limit:]
-    lines = ["| Turn | Entity | Decision | Reason |", "|------|--------|----------|--------|"]
-    
-    for entry in recent:
-        turn = entry.get("turn", "?")
-        ref = entry.get("ref", "-")
-        action = entry.get("action", "-")
-        reason = entry.get("reason", "-")
-        if reason and len(reason) > 50:
-            reason = reason[:50] + "..."
-        lines.append(f"| T{turn} | `{ref}` | {action} | {reason} |")
-    
-    return "\n".join(lines)
-
-
-def _build_understand_context(state: AlfredState) -> str:
-    """
-    V5: Build context for Understand prompt.
-    
-    Structure:
-    1. Current message (prominent)
-    2. Conversation history with entity annotations
-    3. Previous Understand decisions (continuity)
-    4. Entity Registry (reference material)
-    """
-    parts = []
-    conversation = state.get("conversation", {})
-    current_turn = state.get("current_turn", 1)
-    
-    # 1. Current message (prominent, first)
-    parts.append(f"## Current Message\n\n\"{state['user_message']}\"")
-    
-    # Load registry for entity annotations
-    registry_data = state.get("id_registry")
-    registry = None
-    if registry_data:
-        if isinstance(registry_data, SessionIdRegistry):
-            registry = registry_data
-        else:
-            registry = SessionIdRegistry.from_dict(registry_data)
-    
-    # 2. Conversation history with entity annotations (last 4-5 turns)
-    recent_turns = conversation.get("recent_turns", [])
-    conv_section = _format_conversation_with_entities(recent_turns, registry, current_turn, limit=5)
-    parts.append(f"## Recent Conversation\n\n{conv_section}")
-    
-    # 3. Previous Understand decisions (continuity)
-    decision_log = conversation.get("understand_decision_log", [])
-    if decision_log:
-        log_section = _format_decision_log(decision_log)
-        parts.append(f"## Your Previous Decisions\n\nMaintain continuity with past context curation:\n\n{log_section}")
-    
-    # 4. Entity Registry (reference material)
-    if registry:
-        parts.append(registry.format_for_understand_prompt())
-    else:
-        parts.append("## Entity Registry\n\n*No entities tracked yet.*")
-    
-    # 5. Pending clarification context (if any)
-    pending_clarification = conversation.get("pending_clarification")
-    if pending_clarification:
-        parts.append(f"## Pending Clarification\n\nYou previously asked: {pending_clarification}")
-    
-    return "\n\n---\n\n".join(parts)
 
 
 
@@ -201,9 +66,9 @@ async def understand_node(state: AlfredState) -> dict[str, Any]:
     # Set node name for prompt logging
     set_current_node("understand")
     
-    # Build prompt
+    # Build prompt using Context API
     base_prompt = _load_prompt()
-    context = _build_understand_context(state)
+    context = build_understand_context(state).format()
     full_prompt = f"{base_prompt}\n\n---\n\n# Current Request\n\n{context}"
     
     # Check for pending clarification - if user is answering, bias toward proceeding

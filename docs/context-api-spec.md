@@ -48,7 +48,7 @@ class EntitySnapshot:
     ref: str              # "recipe_1"
     type: str             # "recipes"
     label: str            # "Lemon Herb Chicken"
-    status: str           # "read" | "created" | "generated" | "linked"
+    status: str           # "read" | "created" | "updated" | "deleted" | "generated" | "linked"
     turn_created: int
     turn_last_ref: int
     retention_reason: str | None  # Why Understand kept it
@@ -60,10 +60,11 @@ class EntitySnapshot:
 def get_entity_context(registry: SessionIdRegistry, current_turn: int) -> EntityContext:
     """Build entity context from registry state."""
     
-def format_entity_context_for_prompt(ctx: EntityContext, mode: str) -> str:
+def format_entity_context(ctx: EntityContext, mode: str) -> str:
     """Format for injection into prompts.
-    
-    mode: 'full' (Act/Think) | 'brief' (Reply) | 'curation' (Understand)
+
+    mode: 'full' (Act) | 'refs_and_labels' (Think) | 'reply' (Reply)
+          | 'do_not_read' (Think alt) | 'curation' (Understand)
     """
 ```
 
@@ -282,7 +283,7 @@ def format_reasoning_for_prompt(trace: ReasoningTrace, node: str) -> str:
 
 ## Implementation: Context Builder Functions
 
-**File:** `src/alfred/context/builder.py` (NEW)
+**File:** `src/alfred/context/builders.py`
 
 ```python
 """
@@ -381,13 +382,23 @@ class ConversationContext(TypedDict):
 
 ## Migration Path
 
-1. **Phase 1:** Create `build_*_context()` functions
-2. **Phase 2:** Update Summarize to build `TurnExecutionSummary`
-3. **Phase 3:** Update Think to use `build_think_context()`
-4. **Phase 4:** Update Act to use `build_act_context()`
-5. **Phase 5:** Update Reply to use `build_reply_context()`
+1. **Phase 1:** Create `build_*_context()` functions ✅
+2. **Phase 2:** Update Summarize to build `TurnExecutionSummary` ✅
+3. **Phase 3:** Update Understand to use `build_understand_context()` ✅
+4. **Phase 4:** Update Think to use `build_think_context()` ✅
+5. **Phase 5:** Update Act to use `build_act_entity_context()` ✅ (follows naming convention, lives in act.py)
+6. **Phase 6:** Update Reply to use `build_reply_context()` ✅
 
-Each phase is isolated - we can deploy incrementally.
+### Current Implementation Status (Complete)
+
+| Node | Context Builder | Location |
+|------|-----------------|----------|
+| **Understand** | `build_understand_context()` | builders.py ✅ |
+| **Think** | `build_think_context()` | builders.py ✅ |
+| **Act** | `build_act_entity_context()` | act.py ✅ |
+| **Reply** | `build_reply_context()` | builders.py ✅ |
+
+**Naming Convention:** All builders follow `build_{node}_context()` pattern. Act's builder lives in act.py because it requires SessionIdRegistry methods and complex step_results parsing for full-data injection.
 
 ---
 

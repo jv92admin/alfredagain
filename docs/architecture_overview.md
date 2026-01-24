@@ -9,7 +9,9 @@
 
 | Doc | Purpose |
 |-----|---------|
-| [context-engineering-architecture.md](context-engineering-architecture.md) | **How it works now** — entity management, ID translation, state vs context |
+| [ROADMAP.md](ROADMAP.md) | **What's happening** — active work, backlog, recently completed |
+| [context-engineering-architecture.md](context-engineering-architecture.md) | How context flows — entity management, ID translation, state vs context |
+| [context-api-spec.md](context-api-spec.md) | Context builders — `build_*_context()` functions |
 | [session-id-registry-spec.md](session-id-registry-spec.md) | Session ID registry implementation details |
 
 ---

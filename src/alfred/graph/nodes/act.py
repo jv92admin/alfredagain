@@ -783,29 +783,31 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
     return "\n".join(lines)
 
 
-def _build_enhanced_entity_context(
+def build_act_entity_context(
     session_registry: SessionIdRegistry,
     current_step_index: int,
     current_step_results: dict[int, Any],
     turn_step_results: dict[str, dict],
 ) -> str:
     """
-    V5: Build enhanced entity context with FULL DATA for active entities.
-    
+    Build enhanced entity context with FULL DATA for active entities.
+
     This is the key to Act seeing entity data without re-reading:
     - Active entities (last 2 turns + current): Show full data
     - Long-term memory (>2 turns): Show refs only
-    
+
     Token cost: ~20-40 lines per entity vs 300+ lines for 2 LLM calls (read + step_complete)
-    
-    See docs/prompts/act-prompt-structure.md for the full specification.
-    
+
+    Note: This lives in act.py (not builders.py) because it requires SessionIdRegistry
+    methods and complex step_results parsing. Part of the unified Context API naming
+    convention: build_{node}_entity_context().
+
     Args:
         session_registry: SessionIdRegistry with entity refs
         current_step_index: Current step being executed
         current_step_results: This turn's step_results
         turn_step_results: Prior turns' step_results from conversation
-        
+
     Returns:
         Formatted entity context string
     """
@@ -1281,7 +1283,7 @@ async def act_node(state: AlfredState) -> dict:
     # Active = last 2 turns + current turn (matches token savings vs re-read cost)
     # Long-term = refs only (need re-read if data required)
     turn_step_results = conversation.get("turn_step_results", {})
-    working_set_section = _build_enhanced_entity_context(
+    working_set_section = build_act_entity_context(
         session_registry=session_registry,
         current_step_index=current_step_index,
         current_step_results=step_results,
@@ -1895,7 +1897,7 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
     
     # Build entity context - SAME as regular Act
     turn_step_results = conversation.get("turn_step_results", {})
-    entity_context = _build_enhanced_entity_context(
+    entity_context = build_act_entity_context(
         session_registry=session_registry,
         current_step_index=0,
         current_step_results={},

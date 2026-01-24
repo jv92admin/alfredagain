@@ -28,6 +28,7 @@ from alfred.background.profile_builder import (
     get_cached_profile,
 )
 from alfred.prompts.injection import format_all_subdomain_guidance
+from alfred.context.builders import build_think_context
 from alfred.context.reasoning import (
     get_reasoning_trace,
     get_current_turn_curation,
@@ -72,19 +73,9 @@ def adjust_step_complexity(step: ThinkStep) -> ThinkStep:
     return step
 
 
-def _format_entity_context_for_think(
-    registry: SessionIdRegistry,
-    referenced_entities: list[str],
-) -> str:
-    """
-    V4 CONSOLIDATION: Format entity context for Think's prompt.
-    
-    Uses SessionIdRegistry to show what entities are available.
-    """
-    if not registry.ref_to_uuid:
-        return ""
-    
-    return registry.format_for_think_prompt()
+# _format_entity_context_for_think() REMOVED (2026-01-23)
+# Migrated to Context API: build_think_context() in context/builders.py
+# Now uses ThinkContext.format_entity_context() with recipe detail tracking.
 
 
 # Load prompt once at module level
@@ -136,20 +127,18 @@ async def think_node(state: AlfredState) -> dict:
     if understand_output:
         referenced_entities = getattr(understand_output, "referenced_entities", []) or []
 
-    # V4 CONSOLIDATION: Load SessionIdRegistry for entity context
-    registry_data = state.get("id_registry")
-    entity_context_section = ""
+    # Build entity context using Context API (with recipe detail tracking)
+    think_context = build_think_context(state)
+    entity_context_section = think_context.format_entity_context()
+
+    # Build entity counts from registry
     entity_counts_section = ""
+    registry_data = state.get("id_registry")
     if registry_data:
-        # Handle both SessionIdRegistry objects and raw dicts
         if isinstance(registry_data, SessionIdRegistry):
             registry = registry_data
         else:
             registry = SessionIdRegistry.from_dict(registry_data)
-        registry.set_turn(state.get("current_turn", 1))
-        entity_context_section = _format_entity_context_for_think(registry, referenced_entities)
-        
-        # Build entity counts from registry
         entity_counts = {}
         for ref, entity_type in registry.ref_types.items():
             entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1

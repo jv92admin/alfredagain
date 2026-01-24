@@ -417,6 +417,9 @@ class TurnExecutionSummary(BaseModel):
 1. **Recent Context ≠ Data Loaded**: Refs in "Recent Context" don't mean full data is available to Act
 2. **Solution path**: Consider storing condensed snapshots alongside refs
 
+3. **🔴 gen_* refs can't be db_read**: Generated content lives in `pending_artifacts`, not DB. Currently Think must know "don't read gen_* refs" — fragile.
+4. **Solution path**: Smart rerouting in CRUD layer — detect `__pending__` UUID, return from `pending_artifacts` instead. See `docs/session-id-registry-spec.md` for full TODO.
+
 ### Smart Inventory/Shopping Search
 
 `db_read` for `inventory` and `shopping_list` tables now uses intelligent ingredient matching:

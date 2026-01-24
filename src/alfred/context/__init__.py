@@ -32,7 +32,6 @@ from alfred.context.reasoning import (
 from alfred.context.builders import (
     build_understand_context,
     build_think_context,
-    build_act_context,
     build_reply_context,
 )
 
@@ -57,6 +56,6 @@ __all__ = [
     # Node Builders
     "build_understand_context",
     "build_think_context",
-    "build_act_context",
     "build_reply_context",
+    # Note: build_act_entity_context() lives in act.py (requires SessionIdRegistry methods)
 ]
