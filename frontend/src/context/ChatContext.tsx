@@ -6,6 +6,7 @@ export interface UIChange {
   entity_type: string
   id: string      // Always UUID
   label: string
+  data?: Record<string, unknown>  // Fresh entity data for creates/updates
 }
 
 interface ChatContextValue {

@@ -383,6 +383,39 @@ async def run_alfred(
             )
             logger.info(f"Workflow: Processed UI change {ref} [{change['action']}]")
 
+        # Inject fresh data for UI changes into turn_step_results cache
+        # This ensures AI sees the updated data, not stale cached values
+        TYPE_TO_TABLE = {
+            "recipe": "recipes",
+            "ri": "recipe_ingredients",
+            "inv": "inventory",
+            "shop": "shopping_list",
+            "meal": "meal_plans",
+            "task": "tasks",
+            "pref": "preferences",
+            "ing": "ingredients",
+        }
+        turn_step_results = conv_context.get("turn_step_results", {})
+        current_turn_key = str(current_turn)
+
+        for change in ui_changes:
+            if change.get("data") and change["action"] in ("created:user", "updated:user"):
+                # Ensure current turn exists in cache
+                if current_turn_key not in turn_step_results:
+                    turn_step_results[current_turn_key] = {}
+
+                # Create a synthetic step result for this UI change
+                table_name = TYPE_TO_TABLE.get(change["entity_type"], change["entity_type"])
+                ui_step_key = f"ui_{change['entity_type']}_{change['id'][:8]}"
+                turn_step_results[current_turn_key][ui_step_key] = {
+                    "table": table_name,
+                    "data": [change["data"]],  # Wrap in list to match step_results format
+                }
+                logger.info(f"Workflow: Injected fresh data for {change['id'][:8]}...")
+
+        # Update conversation with modified cache
+        conv_context["turn_step_results"] = turn_step_results
+
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
     mode_context = ModeContext(selected_mode=selected_mode).to_dict()
@@ -517,6 +550,39 @@ async def run_alfred_streaming(
                 action=change["action"],
             )
             logger.info(f"Workflow: Processed UI change {ref} [{change['action']}]")
+
+        # Inject fresh data for UI changes into turn_step_results cache
+        # This ensures AI sees the updated data, not stale cached values
+        TYPE_TO_TABLE = {
+            "recipe": "recipes",
+            "ri": "recipe_ingredients",
+            "inv": "inventory",
+            "shop": "shopping_list",
+            "meal": "meal_plans",
+            "task": "tasks",
+            "pref": "preferences",
+            "ing": "ingredients",
+        }
+        turn_step_results = conv_context.get("turn_step_results", {})
+        current_turn_key = str(current_turn)
+
+        for change in ui_changes:
+            if change.get("data") and change["action"] in ("created:user", "updated:user"):
+                # Ensure current turn exists in cache
+                if current_turn_key not in turn_step_results:
+                    turn_step_results[current_turn_key] = {}
+
+                # Create a synthetic step result for this UI change
+                table_name = TYPE_TO_TABLE.get(change["entity_type"], change["entity_type"])
+                ui_step_key = f"ui_{change['entity_type']}_{change['id'][:8]}"
+                turn_step_results[current_turn_key][ui_step_key] = {
+                    "table": table_name,
+                    "data": [change["data"]],  # Wrap in list to match step_results format
+                }
+                logger.info(f"Workflow: Injected fresh data for {change['id'][:8]}...")
+
+        # Update conversation with modified cache
+        conv_context["turn_step_results"] = turn_step_results
 
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN

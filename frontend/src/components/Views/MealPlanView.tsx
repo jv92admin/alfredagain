@@ -86,6 +86,7 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
       entity_type: 'meal',
       id: data.id,
       label: getMealPlanLabel(data),
+      data: data,
     })
   }
 
@@ -98,6 +99,7 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
       entity_type: 'meal',
       id: data.id,
       label: getMealPlanLabel(data),
+      data: data,
     })
   }
 

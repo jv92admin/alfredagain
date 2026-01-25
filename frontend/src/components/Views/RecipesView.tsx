@@ -190,6 +190,7 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
           entity_type: 'recipe',
           id: editingRecipe.id,
           label: formData.name,
+          data: result.data,
         })
       } else {
         // Create new recipe
@@ -204,6 +205,7 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
           entity_type: 'recipe',
           id: result.data.id,
           label: result.data.name,
+          data: result.data,
         })
       }
 

@@ -70,6 +70,7 @@ export function InventoryView() {
         entity_type: 'inv',
         id: item.id,
         label: item.name,
+        data: { ...item, quantity: newQuantity },
       })
     } catch (err) {
       // Revert on error
@@ -121,6 +122,7 @@ export function InventoryView() {
       entity_type: 'inv',
       id: data.id,
       label: data.name,
+      data: data,
     })
   }
 
@@ -133,6 +135,7 @@ export function InventoryView() {
       entity_type: 'inv',
       id: data.id,
       label: data.name,
+      data: data,
     })
   }
 

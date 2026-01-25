@@ -59,6 +59,7 @@ export function TasksView() {
         entity_type: 'task',
         id: task.id,
         label: task.title,
+        data: { ...task, completed: newValue },
       })
     } catch (err) {
       // Revert on error
@@ -104,6 +105,7 @@ export function TasksView() {
       entity_type: 'task',
       id: data.id,
       label: data.title,
+      data: data,
     })
   }
 
@@ -116,6 +118,7 @@ export function TasksView() {
       entity_type: 'task',
       id: data.id,
       label: data.title,
+      data: data,
     })
   }
 

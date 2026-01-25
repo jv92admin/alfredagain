@@ -96,6 +96,7 @@ class UIChange(BaseModel):
     entity_type: str
     id: str  # UUID
     label: str
+    data: dict | None = None  # Fresh entity data for creates/updates
 
 
 class ChatRequest(BaseModel):

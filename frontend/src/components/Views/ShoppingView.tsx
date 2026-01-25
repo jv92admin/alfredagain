@@ -59,6 +59,7 @@ export function ShoppingView() {
         entity_type: 'shop',
         id: item.id,
         label: item.name,
+        data: { ...item, is_purchased: newValue },
       })
     } catch (err) {
       // Revert on error
@@ -107,6 +108,7 @@ export function ShoppingView() {
       entity_type: 'shop',
       id: data.id,
       label: data.name,
+      data: data,
     })
   }
 
@@ -119,6 +121,7 @@ export function ShoppingView() {
       entity_type: 'shop',
       id: data.id,
       label: data.name,
+      data: data,
     })
   }
 
