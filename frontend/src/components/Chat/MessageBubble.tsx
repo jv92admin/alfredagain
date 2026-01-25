@@ -24,7 +24,7 @@ interface MessageBubbleProps {
 }
 
 // Parse inline mentions: @[Label](type:id)
-const MENTION_REGEX = /@\[([^\]]+)\]\((recipe|meal_plan):([a-z0-9-]+)\)/g
+const MENTION_REGEX = /@\[([^\]]+)\]\((recipe|inv|shop|task):([a-zA-Z0-9-]+)\)/g
 
 function parseContent(content: string, onOpenFocus: (item: { type: string; id: string }) => void) {
   const parts: (string | React.ReactNode)[] = []

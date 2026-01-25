@@ -994,8 +994,15 @@ def _format_recipe_data(ref: str, label: str, data: dict, registry: "SessionIdRe
     meta = []
     if data.get("cuisine"):
         meta.append(f"cuisine: {data['cuisine']}")
-    if data.get("total_time"):
-        meta.append(f"time: {data['total_time']}")
+    # Handle prep/cook time (matches injection.py logic)
+    prep = data.get("prep_time_minutes") or data.get("prep_time")
+    cook = data.get("cook_time_minutes") or data.get("cook_time")
+    total = data.get("total_time")
+    if total:
+        meta.append(f"time: {total}")
+    elif prep or cook:
+        time_str = f"{prep or 0}+{cook or 0}min"
+        meta.append(f"time: {time_str}")
     if data.get("servings"):
         meta.append(f"servings: {data['servings']}")
     if data.get("difficulty"):

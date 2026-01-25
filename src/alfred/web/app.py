@@ -40,6 +40,7 @@ except ImportError:
 from alfred.web.auth import AuthenticatedUser, get_current_user
 from alfred.web.schema_routes import router as schema_router
 from alfred.web.entity_routes import router as entity_router
+from alfred.web.context_routes import router as context_router
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ if ONBOARDING_AVAILABLE:
 # Register schema-driven UI routes
 app.include_router(schema_router, prefix="/api")
 app.include_router(entity_router, prefix="/api")
+app.include_router(context_router, prefix="/api")
 
 
 @app.get("/health")

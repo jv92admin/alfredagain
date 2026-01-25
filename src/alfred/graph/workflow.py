@@ -22,11 +22,14 @@ Summarize maintains conversation memory and entity lifecycle after each exchange
 """
 
 import logging
+import re
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
 from alfred.core.id_registry import SessionIdRegistry
+from alfred.db.client import get_authenticated_client
+from alfred.db.request_context import get_access_token
 
 logger = logging.getLogger(__name__)
 from alfred.core.modes import Mode, ModeContext
@@ -400,6 +403,15 @@ async def run_alfred(
 
         for change in ui_changes:
             if change.get("data") and change["action"] in ("created:user", "updated:user"):
+                # Look up the ref that was registered earlier
+                ref = id_registry.uuid_to_ref.get(change["id"])
+                if not ref:
+                    logger.warning(f"Workflow: No ref for {change['id'][:8]}, skipping injection")
+                    continue
+
+                # Replace UUID with ref (fixes UUID leak + enables dedup by id key)
+                change["data"]["id"] = ref
+
                 # Ensure current turn exists in cache
                 if current_turn_key not in turn_step_results:
                     turn_step_results[current_turn_key] = {}
@@ -409,12 +421,80 @@ async def run_alfred(
                 ui_step_key = f"ui_{change['entity_type']}_{change['id'][:8]}"
                 turn_step_results[current_turn_key][ui_step_key] = {
                     "table": table_name,
-                    "data": [change["data"]],  # Wrap in list to match step_results format
+                    "data": [change["data"]],
+                    "meta": {
+                        "source": "ui_change",
+                        "action": change["action"],
+                        "turn": current_turn,
+                    },
                 }
-                logger.info(f"Workflow: Injected fresh data for {change['id'][:8]}...")
+                logger.info(f"Workflow: Injected fresh data for {ref} [{change['action']}]")
 
         # Update conversation with modified cache
         conv_context["turn_step_results"] = turn_step_results
+
+    # Phase 3b: Extract @-mentions from user message and inject entity data
+    # Format: @[Label](type:uuid) -> register ref, fetch data, inject into cache
+    mention_pattern = r'@\[([^\]]+)\]\((\w+):([a-zA-Z0-9_-]+)\)'
+    mentions = re.findall(mention_pattern, user_message)
+
+    if mentions:
+        if not id_registry:
+            id_registry = SessionIdRegistry()
+        id_registry.set_turn(current_turn)
+
+        # TYPE_TO_TABLE mapping (same as UI changes)
+        TYPE_TO_TABLE = {
+            "recipe": "recipes",
+            "ri": "recipe_ingredients",
+            "inv": "inventory",
+            "shop": "shopping_list",
+            "meal": "meal_plans",
+            "task": "tasks",
+            "pref": "preferences",
+            "ing": "ingredients",
+        }
+
+        turn_step_results = conv_context.get("turn_step_results", {})
+        current_turn_key = str(current_turn)
+
+        access_token = get_access_token()
+        if access_token:
+            client = get_authenticated_client(access_token)
+
+            for label, entity_type, uuid in mentions:
+                # 1. Register and get ref
+                ref = id_registry.register_from_ui(uuid, entity_type, label, "mentioned:user")
+                logger.info(f"Workflow: Registered @-mention {ref} [{entity_type}]")
+
+                # 2. Fetch full entity data from DB
+                table_name = TYPE_TO_TABLE.get(entity_type, entity_type)
+                try:
+                    result = client.table(table_name).select("*").eq("id", uuid).execute()
+
+                    if result.data:
+                        # 3. Replace UUID with ref and inject into cache
+                        entity_data = result.data[0]
+                        entity_data["id"] = ref
+
+                        if current_turn_key not in turn_step_results:
+                            turn_step_results[current_turn_key] = {}
+
+                        mention_step_key = f"mention_{entity_type}_{uuid[:8]}"
+                        turn_step_results[current_turn_key][mention_step_key] = {
+                            "table": table_name,
+                            "data": [entity_data],
+                            "meta": {
+                                "source": "mention",
+                                "action": "mentioned:user",
+                                "turn": current_turn,
+                            },
+                        }
+                        logger.info(f"Workflow: Injected @-mention data for {ref}")
+                except Exception as e:
+                    logger.warning(f"Workflow: Failed to fetch @-mention data for {uuid[:8]}: {e}")
+
+            conv_context["turn_step_results"] = turn_step_results
 
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
@@ -568,6 +648,15 @@ async def run_alfred_streaming(
 
         for change in ui_changes:
             if change.get("data") and change["action"] in ("created:user", "updated:user"):
+                # Look up the ref that was registered earlier
+                ref = id_registry.uuid_to_ref.get(change["id"])
+                if not ref:
+                    logger.warning(f"Workflow: No ref for {change['id'][:8]}, skipping injection")
+                    continue
+
+                # Replace UUID with ref (fixes UUID leak + enables dedup by id key)
+                change["data"]["id"] = ref
+
                 # Ensure current turn exists in cache
                 if current_turn_key not in turn_step_results:
                     turn_step_results[current_turn_key] = {}
@@ -577,12 +666,80 @@ async def run_alfred_streaming(
                 ui_step_key = f"ui_{change['entity_type']}_{change['id'][:8]}"
                 turn_step_results[current_turn_key][ui_step_key] = {
                     "table": table_name,
-                    "data": [change["data"]],  # Wrap in list to match step_results format
+                    "data": [change["data"]],
+                    "meta": {
+                        "source": "ui_change",
+                        "action": change["action"],
+                        "turn": current_turn,
+                    },
                 }
-                logger.info(f"Workflow: Injected fresh data for {change['id'][:8]}...")
+                logger.info(f"Workflow: Injected fresh data for {ref} [{change['action']}]")
 
         # Update conversation with modified cache
         conv_context["turn_step_results"] = turn_step_results
+
+    # Phase 3b: Extract @-mentions from user message and inject entity data
+    # Format: @[Label](type:uuid) -> register ref, fetch data, inject into cache
+    mention_pattern = r'@\[([^\]]+)\]\((\w+):([a-zA-Z0-9_-]+)\)'
+    mentions = re.findall(mention_pattern, user_message)
+
+    if mentions:
+        if not id_registry:
+            id_registry = SessionIdRegistry()
+        id_registry.set_turn(current_turn)
+
+        # TYPE_TO_TABLE mapping (same as UI changes)
+        TYPE_TO_TABLE = {
+            "recipe": "recipes",
+            "ri": "recipe_ingredients",
+            "inv": "inventory",
+            "shop": "shopping_list",
+            "meal": "meal_plans",
+            "task": "tasks",
+            "pref": "preferences",
+            "ing": "ingredients",
+        }
+
+        turn_step_results = conv_context.get("turn_step_results", {})
+        current_turn_key = str(current_turn)
+
+        access_token = get_access_token()
+        if access_token:
+            client = get_authenticated_client(access_token)
+
+            for label, entity_type, uuid in mentions:
+                # 1. Register and get ref
+                ref = id_registry.register_from_ui(uuid, entity_type, label, "mentioned:user")
+                logger.info(f"Workflow: Registered @-mention {ref} [{entity_type}]")
+
+                # 2. Fetch full entity data from DB
+                table_name = TYPE_TO_TABLE.get(entity_type, entity_type)
+                try:
+                    result = client.table(table_name).select("*").eq("id", uuid).execute()
+
+                    if result.data:
+                        # 3. Replace UUID with ref and inject into cache
+                        entity_data = result.data[0]
+                        entity_data["id"] = ref
+
+                        if current_turn_key not in turn_step_results:
+                            turn_step_results[current_turn_key] = {}
+
+                        mention_step_key = f"mention_{entity_type}_{uuid[:8]}"
+                        turn_step_results[current_turn_key][mention_step_key] = {
+                            "table": table_name,
+                            "data": [entity_data],
+                            "meta": {
+                                "source": "mention",
+                                "action": "mentioned:user",
+                                "turn": current_turn,
+                            },
+                        }
+                        logger.info(f"Workflow: Injected @-mention data for {ref}")
+                except Exception as e:
+                    logger.warning(f"Workflow: Failed to fetch @-mention data for {uuid[:8]}: {e}")
+
+            conv_context["turn_step_results"] = turn_step_results
 
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN

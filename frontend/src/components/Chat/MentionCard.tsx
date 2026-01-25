@@ -9,8 +9,12 @@ interface MentionCardProps {
 const typeIcons: Record<string, string> = {
   recipe: '🍳',
   recipes: '🍳',
-  meal_plan: '📅',
-  meal_plans: '📅',
+  inv: '📦',
+  inventory: '📦',
+  shop: '🛒',
+  shopping_list: '🛒',
+  task: '✅',
+  tasks: '✅',
 }
 
 export function MentionCard({ type, label, inline, onClick }: MentionCardProps) {
@@ -21,7 +25,7 @@ export function MentionCard({ type, label, inline, onClick }: MentionCardProps) 
     return (
       <button
         onClick={onClick}
-        className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--color-accent-muted)] text-[var(--color-accent)] rounded-[var(--radius-sm)] text-sm font-medium hover:bg-[var(--color-accent)] hover:text-[var(--color-text-inverse)] transition-colors cursor-pointer mx-0.5"
+        className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--color-accent)] text-[var(--color-text-inverse)] rounded-[var(--radius-sm)] text-sm font-medium hover:opacity-80 transition-colors cursor-pointer mx-0.5"
       >
         <span>{icon}</span>
         <span>{label}</span>
