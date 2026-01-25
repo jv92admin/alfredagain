@@ -4,6 +4,7 @@ import { ChatInput } from './ChatInput'
 import { ProgressTrail, ProgressStep } from './ProgressTrail'
 import { Mode } from '../../App'
 import { apiStream } from '../../lib/api'
+import { useChatContext } from '../../context/ChatContext'
 
 interface ChatViewProps {
   messages: Message[]
@@ -26,6 +27,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<ProgressStep[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const { getAndClearUIChanges } = useChatContext()
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -53,12 +55,16 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
     setMessages((prev) => [...prev, userMsg])
 
     try {
+      // Get and clear UI changes to include with this message
+      const uiChanges = getAndClearUIChanges()
+
       const res = await apiStream('/api/chat/stream', {
         method: 'POST',
-        body: JSON.stringify({ 
-          message: userMessage, 
+        body: JSON.stringify({
+          message: userMessage,
           log_prompts: true,
           mode: mode, // V3: Pass mode to backend
+          ui_changes: uiChanges.length > 0 ? uiChanges : undefined,
         }),
       })
 

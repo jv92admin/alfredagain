@@ -284,3 +284,14 @@ class ShoppingListItemCreate(BaseModel):
     category: str | None = None
     source: str | None = None
 
+
+class TaskCreate(BaseModel):
+    """Input for creating a task."""
+
+    title: str
+    due_date: date | None = None
+    category: str | None = None
+    completed: bool = False
+    recipe_id: UUID | None = None
+    meal_plan_id: UUID | None = None
+

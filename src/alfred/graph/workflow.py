@@ -302,22 +302,24 @@ async def run_alfred(
     conversation_id: str | None = None,
     conversation: dict | None = None,
     mode: str = "plan",  # V3: Accept mode from UI/CLI
+    ui_changes: list[dict] | None = None,  # Phase 3: UI CRUD tracking
 ) -> tuple[str, dict]:
     """
     Run Alfred on a user message.
-    
+
     This is the main entry point for processing user requests.
-    
+
     Args:
         user_message: The user's input message
         user_id: The user's ID for context retrieval
         conversation_id: Optional conversation ID for continuity
         conversation: Optional existing conversation context (for multi-turn)
         mode: The interaction mode ("quick" | "plan")
-        
+        ui_changes: Optional list of UI changes (create/update/delete) from frontend
+
     Returns:
         Tuple of (response string, updated conversation context)
-        
+
     Example:
         # First turn
         response, conv = await run_alfred(
@@ -325,7 +327,7 @@ async def run_alfred(
             user_id="user_123",
         )
         print(response)
-        
+
         # Second turn (with context)
         response, conv = await run_alfred(
             user_message="Save that recipe",
@@ -362,17 +364,32 @@ async def run_alfred(
         id_registry = id_registry_data  # Already an object (in-memory session)
     else:
         id_registry = SessionIdRegistry.from_dict(id_registry_data)  # Deserialize from dict
-    
+
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
-    
+
+    # Phase 3: Process UI changes before Understand runs
+    # This registers entities created/updated/deleted via the UI into the registry
+    if ui_changes:
+        if not id_registry:
+            id_registry = SessionIdRegistry()
+        id_registry.set_turn(current_turn)
+        for change in ui_changes:
+            ref = id_registry.register_from_ui(
+                uuid=change["id"],
+                entity_type=change["entity_type"],
+                label=change["label"],
+                action=change["action"],
+            )
+            logger.info(f"Workflow: Processed UI change {ref} [{change['action']}]")
+
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
     mode_context = ModeContext(selected_mode=selected_mode).to_dict()
-    
+
     # Phase 0: Skip Router - create default router output
     default_router = _create_default_router_output(user_message)
-    
+
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
@@ -398,7 +415,7 @@ async def run_alfred(
         "final_response": None,
         "error": None,
     }
-    
+
     # Run the graph
     final_state = await app.ainvoke(initial_state)
     
@@ -438,23 +455,25 @@ async def run_alfred_streaming(
     conversation_id: str | None = None,
     conversation: dict | None = None,
     mode: str = "plan",  # V3: Accept mode from UI/CLI
+    ui_changes: list[dict] | None = None,  # Phase 3: UI CRUD tracking
 ):
     """
     Run Alfred with streaming updates.
-    
+
     Yields status updates as the workflow progresses:
     - {"type": "thinking", "message": "Planning..."}
     - {"type": "step", "step": 1, "total": 4, "description": "Reading inventory..."}
     - {"type": "step_complete", "step": 1, "total": 4}
     - {"type": "done", "response": "...", "conversation": {...}}
-    
+
     Args:
         user_message: The user's input message
         user_id: The user's ID for context retrieval
         conversation_id: Optional conversation ID
         conversation: Optional existing conversation context
         mode: The interaction mode ("quick" | "plan")
-        
+        ui_changes: Optional list of UI changes (create/update/delete) from frontend
+
     Yields:
         Dict with status updates
     """
@@ -480,17 +499,32 @@ async def run_alfred_streaming(
         id_registry = id_registry_data  # Already an object (in-memory session)
     else:
         id_registry = SessionIdRegistry.from_dict(id_registry_data)  # Deserialize from dict
-    
+
     # V3: Get current turn number
     current_turn = conv_context.get("current_turn", 0) + 1
-    
+
+    # Phase 3: Process UI changes before Understand runs
+    # This registers entities created/updated/deleted via the UI into the registry
+    if ui_changes:
+        if not id_registry:
+            id_registry = SessionIdRegistry()
+        id_registry.set_turn(current_turn)
+        for change in ui_changes:
+            ref = id_registry.register_from_ui(
+                uuid=change["id"],
+                entity_type=change["entity_type"],
+                label=change["label"],
+                action=change["action"],
+            )
+            logger.info(f"Workflow: Processed UI change {ref} [{change['action']}]")
+
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
     mode_context = ModeContext(selected_mode=selected_mode).to_dict()
-    
+
     # Phase 0: Skip Router - create default router output
     default_router = _create_default_router_output(user_message)
-    
+
     initial_state: AlfredState = {
         "user_id": user_id,
         "conversation_id": conversation_id,
@@ -516,7 +550,7 @@ async def run_alfred_streaming(
         "final_response": None,
         "error": None,
     }
-    
+
     yield {"type": "thinking", "message": "Planning..."}
     
     # Track state for step updates

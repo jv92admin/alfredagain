@@ -1,5 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
+import { motion } from 'framer-motion'
 import { apiRequest } from '../../lib/api'
+import { useUIChanges } from '../../context/ChatContext'
+import { EntityFormModal } from '../Form/EntityForm'
 
 interface ShoppingItem {
   id: string
@@ -13,8 +16,11 @@ interface ShoppingItem {
 export function ShoppingView() {
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [editingItem, setEditingItem] = useState<ShoppingItem | null>(null)
   const pendingRef = useRef<HTMLDivElement>(null)
   const purchasedRef = useRef<HTMLDivElement>(null)
+  const { pushUIChange } = useUIChanges()
 
   useEffect(() => {
     fetchShopping()
@@ -22,7 +28,7 @@ export function ShoppingView() {
 
   const fetchShopping = async () => {
     try {
-      const data = await apiRequest('/api/tables/shopping')
+      const data = await apiRequest('/api/entities/shopping_list')
       setItems(data.data || [])
     } catch (err) {
       console.error('Failed to fetch shopping list:', err)
@@ -33,7 +39,7 @@ export function ShoppingView() {
 
   const togglePurchased = async (item: ShoppingItem) => {
     const newValue = !item.is_purchased
-    
+
     // Optimistic update
     setItems((prev) =>
       prev.map((i) =>
@@ -43,9 +49,16 @@ export function ShoppingView() {
 
     // Persist to backend
     try {
-      await apiRequest(`/api/tables/shopping_list/${item.id}`, {
+      await apiRequest(`/api/entities/shopping_list/${item.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ is_purchased: newValue }),
+      })
+      // Track UI change for AI context
+      pushUIChange({
+        action: 'updated:user',
+        entity_type: 'shop',
+        id: item.id,
+        label: item.name,
       })
     } catch (err) {
       // Revert on error
@@ -61,21 +74,52 @@ export function ShoppingView() {
   const deleteItem = async (e: React.MouseEvent, item: ShoppingItem) => {
     e.stopPropagation()
     e.preventDefault()
-    
+
     if (!confirm(`Delete "${item.name}"?`)) return
-    
+
     // Optimistic update
     setItems(prev => prev.filter(i => i.id !== item.id))
 
     try {
-      await apiRequest(`/api/tables/shopping_list/${item.id}`, {
+      await apiRequest(`/api/entities/shopping_list/${item.id}`, {
         method: 'DELETE',
+      })
+      // Track UI change for AI context
+      pushUIChange({
+        action: 'deleted:user',
+        entity_type: 'shop',
+        id: item.id,
+        label: item.name,
       })
     } catch (err) {
       // Revert on error
       setItems(prev => [...prev, item])
       console.error('Failed to delete item:', err)
     }
+  }
+
+  const handleItemCreated = (data: any) => {
+    setItems((prev) => [...prev, data])
+    setShowAddModal(false)
+    // Track UI change for AI context
+    pushUIChange({
+      action: 'created:user',
+      entity_type: 'shop',
+      id: data.id,
+      label: data.name,
+    })
+  }
+
+  const handleItemUpdated = (data: any) => {
+    setItems((prev) => prev.map((i) => (i.id === data.id ? data : i)))
+    setEditingItem(null)
+    // Track UI change for AI context
+    pushUIChange({
+      action: 'updated:user',
+      entity_type: 'shop',
+      id: data.id,
+      label: data.name,
+    })
   }
 
   const clearPurchased = async () => {
@@ -89,7 +133,7 @@ export function ShoppingView() {
     try {
       await Promise.all(
         purchasedItems.map(item =>
-          apiRequest(`/api/tables/shopping_list/${item.id}`, {
+          apiRequest(`/api/entities/shopping_list/${item.id}`, {
             method: 'DELETE',
           })
         )
@@ -113,15 +157,57 @@ export function ShoppingView() {
     )
   }
 
+  // Modal components - rendered once at the end
+  const addItemModal = (
+    <EntityFormModal
+      title="Add Shopping Item"
+      isOpen={showAddModal}
+      onClose={() => setShowAddModal(false)}
+      subdomain="shopping"
+      table="shopping_list"
+      mode="create"
+      onSuccess={handleItemCreated}
+      fieldOrder={['name', 'quantity', 'unit', 'category']}
+      excludeFields={['id', 'user_id', 'created_at', 'updated_at', 'ingredient_id', 'is_purchased', 'source']}
+    />
+  )
+
+  const editItemModal = editingItem && (
+    <EntityFormModal
+      title="Edit Shopping Item"
+      isOpen={!!editingItem}
+      onClose={() => setEditingItem(null)}
+      subdomain="shopping"
+      table="shopping_list"
+      mode="edit"
+      entityId={editingItem.id}
+      initialData={editingItem}
+      onSuccess={handleItemUpdated}
+      fieldOrder={['name', 'quantity', 'unit', 'category']}
+      excludeFields={['id', 'user_id', 'created_at', 'updated_at', 'ingredient_id', 'is_purchased', 'source']}
+    />
+  )
+
   if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-8">
-        <span className="text-4xl mb-4">🛒</span>
-        <h2 className="text-xl text-[var(--color-text-primary)] mb-2">Shopping list is empty</h2>
-        <p className="text-[var(--color-text-muted)]">
-          Ask Alfred to add items or create a list from a recipe!
-        </p>
-      </div>
+      <>
+        <div className="flex flex-col items-center justify-center h-full text-center p-8">
+          <span className="text-4xl mb-4">🛒</span>
+          <h2 className="text-xl text-[var(--color-text-primary)] mb-2">Shopping list is empty</h2>
+          <p className="text-[var(--color-text-muted)] mb-4">
+            Ask Alfred to add items or create a list from a recipe!
+          </p>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-medium rounded-[var(--radius-md)]"
+          >
+            + Add Item
+          </motion.button>
+        </div>
+        {addItemModal}
+      </>
     )
   }
 
@@ -129,12 +215,23 @@ export function ShoppingView() {
   const purchasedItems = items.filter((i) => i.is_purchased)
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Sticky header with tabs */}
+    <>
+      <div className="h-full flex flex-col">
+        {/* Sticky header with tabs */}
       <div className="sticky top-0 z-10 bg-[var(--color-bg-primary)] border-b border-[var(--color-border)] p-4">
-        <h1 className="text-2xl font-semibold text-[var(--color-text-primary)] mb-4">
-          Shopping List
-        </h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold text-[var(--color-text-primary)]">
+            Shopping List
+          </h1>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-medium rounded-[var(--radius-md)] text-sm"
+          >
+            + Add Item
+          </motion.button>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => scrollToSection(pendingRef)}
@@ -179,6 +276,16 @@ export function ShoppingView() {
                       {item.quantity} {item.unit || ''}
                     </span>
                   )}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setEditingItem(item)
+                  }}
+                  className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity px-2"
+                  title="Edit"
+                >
+                  ✏️
                 </button>
                 <button
                   onClick={(e) => deleteItem(e, item)}
@@ -232,7 +339,10 @@ export function ShoppingView() {
           )}
         </div>
       </div>
-    </div>
+      </div>
+      {addItemModal}
+      {editItemModal}
+    </>
   )
 }
 

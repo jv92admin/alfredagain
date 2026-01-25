@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response, Depends, Header
+from fastapi import FastAPI, HTTPException, Request, Response, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,11 @@ try:
 except ImportError:
     onboarding_router = None
     ONBOARDING_AVAILABLE = False
+
+# Schema-driven UI routes
+from alfred.web.auth import AuthenticatedUser, get_current_user
+from alfred.web.schema_routes import router as schema_router
+from alfred.web.entity_routes import router as entity_router
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +76,10 @@ app.add_middleware(
 if ONBOARDING_AVAILABLE:
     app.include_router(onboarding_router, prefix="/api")
 
+# Register schema-driven UI routes
+app.include_router(schema_router, prefix="/api")
+app.include_router(entity_router, prefix="/api")
+
 
 @app.get("/health")
 async def health_check():
@@ -82,54 +91,25 @@ async def health_check():
 # Models
 # =============================================================================
 
+class UIChange(BaseModel):
+    action: str  # "created:user" | "updated:user" | "deleted:user"
+    entity_type: str
+    id: str  # UUID
+    label: str
+
+
 class ChatRequest(BaseModel):
     message: str
     log_prompts: bool = False
     mode: str = "plan"  # V3: "quick" | "plan"
+    ui_changes: list[UIChange] | None = None  # Phase 3: UI CRUD tracking
 
 
 # =============================================================================
-# Auth - Supabase JWT Validation
+# Auth - Supabase JWT Validation (see alfred.web.auth)
 # =============================================================================
 
-class AuthenticatedUser(BaseModel):
-    """Authenticated user info from Supabase JWT."""
-    id: str
-    email: str | None
-    access_token: str
-
-
-async def get_current_user(authorization: str = Header(None)) -> AuthenticatedUser:
-    """
-    Validate Supabase JWT and extract user info.
-    
-    Expects Authorization header: "Bearer <access_token>"
-    """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization header")
-    
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization format")
-    
-    access_token = authorization[7:]  # Remove "Bearer " prefix
-    
-    try:
-        # Use service client to validate the token
-        client = get_service_client()
-        user_response = client.auth.get_user(access_token)
-        
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        
-        user = user_response.user
-        return AuthenticatedUser(
-            id=user.id,
-            email=user.email,
-            access_token=access_token
-        )
-    except Exception as e:
-        logger.warning(f"Auth validation failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+# AuthenticatedUser and get_current_user imported from alfred.web.auth
 
 
 def get_user_conversation(user_id: str) -> dict[str, Any]:
@@ -187,12 +167,18 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
         # Get conversation from user's session
         conversation = get_user_conversation(user.id)
         
+        # Convert ui_changes to dict format for workflow
+        ui_changes_data = None
+        if req.ui_changes:
+            ui_changes_data = [c.model_dump() for c in req.ui_changes]
+
         # Run Alfred (will use authenticated client via request context)
         response_text, updated_conversation = await run_alfred(
             user_message=req.message,
             user_id=user.id,
             conversation=conversation,
             mode=req.mode,
+            ui_changes=ui_changes_data,
         )
         
         # Update conversation state
@@ -250,12 +236,18 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
             # Get conversation from user's session
             conversation = get_user_conversation(user.id)
             
+            # Convert ui_changes to dict format for workflow
+            ui_changes_data = None
+            if req.ui_changes:
+                ui_changes_data = [c.model_dump() for c in req.ui_changes]
+
             # Stream Alfred's progress (will use authenticated client via request context)
             async for update in run_alfred_streaming(
                 user_message=req.message,
                 user_id=user.id,
                 conversation=conversation,
                 mode=req.mode,
+                ui_changes=ui_changes_data,
             ):
                 if update["type"] == "done":
                     # Update conversation state

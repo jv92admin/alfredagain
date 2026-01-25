@@ -172,10 +172,24 @@ gen_counters: dict[str, int]     # recipe → 1 (next gen ref will be gen_recipe
 
 ### Entity Metadata
 ```python
-ref_actions: dict[str, str]      # recipe_1 → "read" | "created" | "linked" | etc.
+ref_actions: dict[str, str]      # recipe_1 → "read" | "created" | "linked" | "created:user" | etc.
 ref_labels: dict[str, str]       # recipe_1 → "Butter Chicken"
 ref_types: dict[str, str]        # recipe_1 → "recipe"
 ```
+
+**Action Tags:**
+| Tag | Source | Meaning |
+|-----|--------|---------|
+| `read` | CRUD layer | Entity fetched from database |
+| `created` | CRUD layer | AI created via `db_create` |
+| `updated` | CRUD layer | AI modified via `db_update` |
+| `deleted` | CRUD layer | AI removed via `db_delete` |
+| `generated` | Act node | Content generated, not yet saved |
+| `linked` | CRUD layer | FK lazy-registered (e.g., recipe_id in meal_plans) |
+| `created:user` | UI | User created via frontend form |
+| `updated:user` | UI | User edited via frontend form |
+| `deleted:user` | UI | User deleted via frontend |
+| `mentioned:user` | Chat | User @-mentioned entity in chat |
 
 ### Temporal Tracking
 ```python
@@ -214,6 +228,7 @@ _lazy_enrich_queue: dict[str, tuple]     # Transient: refs needing name enrichme
 - `_next_gen_ref(entity_type)` → Generate next gen ref (gen_recipe_1, ...)
 - `register_generated(entity_type, label, content)` → Register pending artifact
 - `register_created(gen_ref, uuid, entity_type, label)` → Promote gen ref or create new
+- `register_from_ui(uuid, entity_type, label, action)` → Register UI-originated entity (Phase 3a)
 
 ### Translation
 - `translate_read_output(records, table)` → UUIDs → refs, lazy register FKs

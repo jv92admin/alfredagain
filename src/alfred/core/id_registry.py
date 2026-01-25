@@ -517,18 +517,68 @@ class SessionIdRegistry:
     ) -> list[str]:
         """
         Register multiple created entities after batch db_create.
-        
+
         Matches by order if gen_refs provided.
         """
         result_refs = []
         gen_refs = gen_refs or []
-        
+
         for i, uuid in enumerate(uuids):
             gen_ref = gen_refs[i] if i < len(gen_refs) else None
             ref = self.register_created(gen_ref, uuid, entity_type)
             result_refs.append(ref)
-        
+
         return result_refs
+
+    def register_from_ui(
+        self,
+        uuid: str,
+        entity_type: str,
+        label: str,
+        action: str,
+    ) -> str:
+        """
+        Register an entity created/edited via UI.
+
+        Called when processing ui_changes from frontend before Understand runs.
+        Handles both new entities and entities already in registry.
+
+        Args:
+            uuid: Entity UUID from database
+            entity_type: Type like "recipe", "inv", "task"
+            label: Human-readable label (e.g., recipe name)
+            action: Action tag like "created:user", "updated:user", "deleted:user"
+
+        Returns:
+            The ref assigned to this entity
+        """
+        uuid = str(uuid)
+
+        # Check if already registered
+        existing_ref = self.uuid_to_ref.get(uuid)
+        if existing_ref:
+            # Entity already in registry — just update action and touch
+            self.ref_actions[existing_ref] = action
+            self.touch_ref(existing_ref)
+            if label:
+                self.ref_labels[existing_ref] = label
+            logger.info(f"SessionRegistry: UI change {existing_ref} [{action}]")
+            return existing_ref
+        else:
+            # New to registry — assign ref
+            ref = self._next_ref(entity_type)
+            self.ref_to_uuid[ref] = uuid
+            self.uuid_to_ref[uuid] = ref
+            self.ref_actions[ref] = action
+            self.ref_types[ref] = entity_type
+            self.ref_labels[ref] = label or ref
+
+            # Temporal tracking
+            self.ref_turn_created[ref] = self.current_turn
+            self.ref_turn_last_ref[ref] = self.current_turn
+
+            logger.info(f"SessionRegistry: UI registered {ref} → {uuid[:8]}... [{action}]")
+            return ref
     
     # =========================================================================
     # Input Translation (LLM → DB) - Called by CRUD layer

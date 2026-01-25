@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { AppShell } from './components/Layout/AppShell'
 import { LoginPage } from './components/Auth/LoginPage'
 import { ChatView } from './components/Chat/ChatView'
@@ -31,14 +31,16 @@ function App() {
   const [chatMessages, setChatMessages] = useState<Message[]>([INITIAL_MESSAGE])
   const [mode, setMode] = useState<Mode>('plan') // V3: Default to plan mode
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
+  const onboardingCheckedForUser = useRef<string | null>(null)
 
   useEffect(() => {
     checkAuth()
   }, [])
 
-  // Check if user needs onboarding after auth
+  // Check if user needs onboarding after auth (only once per user)
   useEffect(() => {
-    if (user) {
+    if (user && onboardingCheckedForUser.current !== user.user_id) {
+      onboardingCheckedForUser.current = user.user_id
       checkOnboarding()
     }
   }, [user])
