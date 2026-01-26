@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect, FormEvent, Dispatch, SetStateAction } from 'react'
 import { MessageBubble, Message } from './MessageBubble'
 import { ChatInput } from './ChatInput'
-import { ProgressTrail, ProgressStep } from './ProgressTrail'
+import {
+  StreamingProgress,
+  createInitialPhaseState,
+  updatePhaseState,
+} from './StreamingProgress'
 import { Mode } from '../../App'
 import { apiStream } from '../../lib/api'
 import { useChatContext } from '../../context/ChatContext'
+import type { ActiveContext } from '../../types/chat'
 
 interface ChatViewProps {
   messages: Message[]
@@ -14,18 +19,13 @@ interface ChatViewProps {
   onModeChange: (mode: Mode) => void
 }
 
-interface AffectedEntity {
-  type: string
-  id: string
-  name: string
-  action?: string
-  state?: 'pending' | 'active' // V3 entity state
-}
-
 export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChange }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState<ProgressStep[]>([])
+  // V10: Phase-based progress tracking
+  const [phaseState, setPhaseState] = useState(createInitialPhaseState())
+  // V10: Active context state - can be used in future for persistent context bar
+  const [, setActiveContext] = useState<ActiveContext | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { getAndClearUIChanges } = useChatContext()
 
@@ -35,7 +35,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, progress])
+  }, [messages, phaseState])
 
   const handleSend = async (e?: FormEvent) => {
     e?.preventDefault()
@@ -44,7 +44,8 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
     const userMessage = input.trim()
     setInput('')
     setLoading(true)
-    setProgress([{ label: mode === 'quick' ? 'Working...' : 'Planning...', status: 'active' }])
+    // Reset phase state for new request
+    setPhaseState(createInitialPhaseState())
 
     // Add user message
     const userMsg: Message = {
@@ -72,8 +73,9 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
       const decoder = new TextDecoder()
       let buffer = ''
       let currentEvent = 'progress'
-      const affectedEntities: AffectedEntity[] = []
-      const steps: string[] = []
+      let latestActiveContext: ActiveContext | null = null
+      // Track phase state locally to avoid React state timing issues
+      let localPhaseState = createInitialPhaseState()
 
       while (reader) {
         const { done, value } = await reader.read()
@@ -89,92 +91,40 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
           } else if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6))
-              
+
               if (currentEvent === 'done') {
-                // Final response
+                // Update active context if included in done event
+                if (data.active_context) {
+                  latestActiveContext = data.active_context
+                  setActiveContext(latestActiveContext)
+                }
+                // Final response - use latestActiveContext (local var) to avoid stale state
                 const assistantMsg: Message = {
                   id: Date.now().toString(),
                   role: 'assistant',
                   content: data.response,
-                  entities: affectedEntities,
+                  activeContext: latestActiveContext || undefined,
                 }
                 setMessages((prev) => [...prev, assistantMsg])
-                setProgress([])
+                setPhaseState(createInitialPhaseState())
               } else if (currentEvent === 'error') {
                 throw new Error(data.error)
-              } else if (data.type === 'plan') {
-                // Got the plan
-                steps.push(...(data.steps || []))
-                setProgress(
-                  steps.map((s, i) => ({
-                    label: `Step ${i + 1}: ${s}`,
-                    status: 'pending' as const,
-                  }))
-                )
-              } else if (data.type === 'step') {
-                // Step starting
-                setProgress((prev) =>
-                  prev.map((p, i) => ({
-                    ...p,
-                    status: i === data.step - 1 ? 'active' : i < data.step - 1 ? 'completed' : 'pending',
-                  }))
-                )
-              } else if (data.type === 'step_complete') {
-                // Collect affected entities with state
-                // Skip child/junction tables - users don't need to see these as separate entities
-                const SKIP_TABLES = ['recipe_ingredients']
-                
-                // Helper to extract a display name from a record
-                const getEntityName = (table: string, record: Record<string, unknown>): string => {
-                  // Use name/title if available
-                  if (record.name) return record.name as string
-                  if (record.title) return record.title as string
-                  
-                  // Special handling for meal_plans: "Jan 15 - Dinner"
-                  if (table === 'meal_plans' && record.date && record.meal_type) {
-                    // Parse as local date to avoid timezone shift (e.g., "2026-01-05" showing as Jan 4 in EST)
-                    const [year, month, day] = (record.date as string).split('-').map(Number)
-                    const date = new Date(year, month - 1, day)
-                    const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                    const mealType = (record.meal_type as string).charAt(0).toUpperCase() + (record.meal_type as string).slice(1)
-                    return `${formatted} - ${mealType}`
-                  }
-                  
-                  // Special handling for tasks
-                  if (table === 'tasks' && record.description) {
-                    const desc = record.description as string
-                    return desc.length > 30 ? desc.slice(0, 30) + '...' : desc
-                  }
-                  
-                  // Fallback
-                  return table.replace('_', ' ')
+              } else {
+                // V10: Handle all events through phase state machine
+                const eventData = {
+                  type: data.type || currentEvent,
+                  ...data,
                 }
-                
-                if (data.data) {
-                  for (const [table, records] of Object.entries(data.data)) {
-                    if (SKIP_TABLES.includes(table)) continue
-                    
-                    if (Array.isArray(records)) {
-                      for (const record of records as Record<string, unknown>[]) {
-                        if (record.id) {
-                          affectedEntities.push({
-                            type: table,
-                            id: record.id as string,
-                            name: getEntityName(table, record),
-                            state: (record.state as 'pending' | 'active') || 'active',
-                          })
-                        }
-                      }
-                    }
-                  }
+
+                // Update active context tracking
+                if (eventData.type === 'active_context') {
+                  latestActiveContext = data.data || data
+                  setActiveContext(latestActiveContext)
                 }
-                // Mark step complete
-                setProgress((prev) =>
-                  prev.map((p, i) => ({
-                    ...p,
-                    status: i === data.step - 1 ? 'completed' : p.status,
-                  }))
-                )
+
+                // Update phase state
+                localPhaseState = updatePhaseState(localPhaseState, eventData)
+                setPhaseState(localPhaseState)
               }
             } catch {
               // Ignore parse errors
@@ -189,11 +139,16 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
         content: `Sorry, something went wrong: ${err instanceof Error ? err.message : 'Unknown error'}`,
       }
       setMessages((prev) => [...prev, errorMsg])
-      setProgress([])
+      setPhaseState(createInitialPhaseState())
     } finally {
       setLoading(false)
     }
   }
+
+  // Determine if we should show progress (has any activity)
+  const hasProgress = phaseState.understand.context ||
+    phaseState.think.complete ||
+    phaseState.steps.length > 0
 
   return (
     <div className="h-full flex flex-col">
@@ -208,10 +163,25 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
             />
           ))}
 
-          {/* Progress indicator */}
-          {loading && progress.length > 0 && (
+          {/* V10: Inline streaming progress */}
+          {loading && hasProgress && (
             <div className="py-2">
-              <ProgressTrail steps={progress} />
+              <StreamingProgress
+                phase={phaseState}
+                mode={mode === 'quick' ? 'quick' : 'plan'}
+              />
+            </div>
+          )}
+
+          {/* Initial loading state before any events */}
+          {loading && !hasProgress && (
+            <div className="py-2">
+              <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4">
+                <div className="flex items-center gap-2 text-sm text-[var(--color-accent)]">
+                  <span className="w-4 text-center">●</span>
+                  <span>{mode === 'quick' ? 'Working...' : 'Understanding...'}</span>
+                </div>
+              </div>
             </div>
           )}
 

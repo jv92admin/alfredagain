@@ -100,6 +100,10 @@ class SessionIdRegistry:
     # Format: {ref: (table_to_query, name_column)}
     # Cleared after enrichment batch runs
     _lazy_enrich_queue: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+    # V10: Change tracking for frontend streaming
+    # Tracks last snapshot of active refs to compute diffs
+    _last_snapshot_refs: set[str] = field(default_factory=set)
     
     # =========================================================================
     # Ref Generation
@@ -1042,6 +1046,49 @@ class SessionIdRegistry:
         refs = list(self.ref_to_uuid.keys())
         refs.sort(key=lambda r: self.ref_turn_last_ref.get(r, 0), reverse=True)
         return refs[:limit]
+
+    def get_active_context_for_frontend(self) -> dict:
+        """
+        Return active entities with full metadata for frontend streaming.
+
+        Includes change tracking to highlight newly added entities.
+        Called after each phase that modifies entity context (Understand, Act steps, Reply).
+        """
+        recent, retained = self.get_active_entities(turns_window=2)
+        all_active = set(recent + retained)
+
+        # Compute changes since last snapshot
+        added = all_active - self._last_snapshot_refs
+
+        def entity_to_dict(ref: str) -> dict:
+            return {
+                "ref": ref,
+                "type": self.ref_types.get(ref),
+                "label": self.ref_labels.get(ref),
+                "action": self.ref_actions.get(ref),
+                "turnCreated": self.ref_turn_created.get(ref),
+                "turnLastRef": self.ref_turn_last_ref.get(ref),
+                "isGenerated": ref.startswith("gen_"),
+                "retentionReason": self.ref_active_reason.get(ref),
+            }
+
+        # Sort by recency (most recent first)
+        sorted_refs = sorted(
+            all_active,
+            key=lambda r: self.ref_turn_last_ref.get(r, 0),
+            reverse=True
+        )
+
+        # Update snapshot for next diff
+        self._last_snapshot_refs = all_active
+
+        return {
+            "entities": [entity_to_dict(ref) for ref in sorted_refs],
+            "currentTurn": self.current_turn,
+            "changes": {
+                "added": list(added),
+            }
+        }
     
     def get_generated_pending(self) -> list[str]:
         """Get all gen_* refs that are still pending (not yet saved)."""

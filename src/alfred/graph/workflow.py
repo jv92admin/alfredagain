@@ -61,6 +61,51 @@ def _create_default_router_output(user_message: str) -> RouterOutput:
     )
 
 
+def _extract_tool_calls(step_result: Any) -> list[dict] | None:
+    """
+    Extract tool call summaries from a step result for frontend display.
+
+    Returns list like [{"tool": "db_read", "table": "inventory", "count": 12}, ...]
+    """
+    if step_result is None:
+        return None
+
+    tool_calls: list[dict] = []
+
+    if isinstance(step_result, list):
+        for item in step_result:
+            if isinstance(item, tuple) and len(item) >= 2:
+                if len(item) == 3:
+                    tool_name, table, result = item
+                else:
+                    tool_name, result = item
+                    table = "unknown"
+
+                # Count results
+                count = 0
+                if isinstance(result, list):
+                    count = len(result)
+                elif isinstance(result, dict):
+                    if "id" in result:
+                        count = 1
+                    else:
+                        # Count nested entities
+                        for v in result.values():
+                            if isinstance(v, list):
+                                count += len(v)
+
+                # Simplify tool name for display (db_read -> read)
+                display_tool = tool_name.replace("db_", "") if tool_name else "unknown"
+
+                tool_calls.append({
+                    "tool": display_tool,
+                    "table": table,
+                    "count": count,
+                })
+
+    return tool_calls if tool_calls else None
+
+
 def _extract_step_data(step_result: Any) -> dict[str, list[dict]] | None:
     """
     Extract entity data from a step result for frontend entity cards.
@@ -775,18 +820,39 @@ async def run_alfred_streaming(
     }
 
     yield {"type": "thinking", "message": "Planning..."}
-    
+
     # Track state for step updates
     last_step_index = -1
     total_steps = 0
     final_response = None
     final_conversation = None
-    
+
     # Track step results for entity cards
     all_step_results: dict = {}
-    
+
     # Session logger (if enabled)
     slog = get_session_logger()
+
+    # Helper to ensure registry is a SessionIdRegistry object
+    def ensure_registry(reg: SessionIdRegistry | dict | None) -> SessionIdRegistry | None:
+        """Convert dict to SessionIdRegistry if needed."""
+        if reg is None:
+            return None
+        if isinstance(reg, SessionIdRegistry):
+            return reg
+        if isinstance(reg, dict):
+            return SessionIdRegistry.from_dict(reg)
+        return None
+
+    # Helper to emit active_context event
+    def emit_active_context(registry: SessionIdRegistry | None) -> dict | None:
+        """Emit active_context event if registry exists."""
+        if registry and isinstance(registry, SessionIdRegistry):
+            return {
+                "type": "active_context",
+                "data": registry.get_active_context_for_frontend(),
+            }
+        return None
     
     # Use LangGraph's streaming to get node-by-node updates
     async for event in app.astream(initial_state, stream_mode="updates"):
@@ -795,7 +861,18 @@ async def run_alfred_streaming(
             # Log node completion
             slog.node_exit(node_name, {"keys": list(node_output.keys()) if node_output else []})
             
-            if node_name == "think" and node_output:
+            if node_name == "understand" and node_output:
+                # Update registry reference from state (may be dict or object)
+                updated_registry = ensure_registry(node_output.get("id_registry"))
+                if updated_registry:
+                    id_registry = updated_registry
+
+                # Emit active_context after Understand (may pull/retain entities)
+                context_event = emit_active_context(id_registry)
+                if context_event:
+                    yield context_event
+
+            elif node_name == "think" and node_output:
                 think_output = node_output.get("think_output")
                 if think_output:
                     # Check decision type
@@ -805,6 +882,14 @@ async def run_alfred_streaming(
                         total_steps = len(think_output.steps)
                         # Send all step descriptions so frontend can build progress trail
                         step_descriptions = [s.description for s in think_output.steps]
+
+                        # V10: Emit think_complete for inline progress display
+                        yield {
+                            "type": "think_complete",
+                            "goal": think_output.goal,
+                            "stepCount": total_steps,
+                        }
+
                         yield {
                             "type": "plan",
                             "message": f"Planning {total_steps} step{'s' if total_steps != 1 else ''}...",
@@ -831,7 +916,12 @@ async def run_alfred_streaming(
             elif node_name == "act" and node_output:
                 current_index = node_output.get("current_step_index", 0)
                 think_output = node_output.get("think_output")
-                
+
+                # Update registry reference from state (may be dict or object)
+                updated_registry = ensure_registry(node_output.get("id_registry"))
+                if updated_registry:
+                    id_registry = updated_registry
+
                 # Track step results for entity cards
                 step_results = node_output.get("step_results", {})
                 all_step_results.update(step_results)
@@ -863,13 +953,20 @@ async def run_alfred_streaming(
                 if current_index > last_step_index:
                     # Previous step completed - include the step's data for entity cards
                     if last_step_index >= 0:
-                        step_data = _extract_step_data(all_step_results.get(last_step_index))
+                        step_result = all_step_results.get(last_step_index)
+                        step_data = _extract_step_data(step_result)
+                        tool_calls = _extract_tool_calls(step_result)
                         yield {
                             "type": "step_complete",
                             "step": last_step_index + 1,
                             "total": total_steps,
                             "data": step_data,
+                            "tool_calls": tool_calls,  # V10: Tool call summary for inline display
                         }
+                        # Emit active_context after each step (reads/creates entities)
+                        context_event = emit_active_context(id_registry)
+                        if context_event:
+                            yield context_event
                     
                     # New step started - V3: include group and step_type
                     yield {
@@ -888,19 +985,46 @@ async def run_alfred_streaming(
                         "step": current_index + 1,
                     }
             
+            elif node_name == "act_quick" and node_output:
+                # Quick mode execution - update registry and emit context
+                updated_registry = ensure_registry(node_output.get("id_registry"))
+                if updated_registry:
+                    id_registry = updated_registry
+
+                # Emit active_context after Quick mode execution
+                context_event = emit_active_context(id_registry)
+                if context_event:
+                    yield context_event
+
             elif node_name == "reply" and node_output:
+                # Update registry reference from state (may be dict or object)
+                updated_registry = ensure_registry(node_output.get("id_registry"))
+                if updated_registry:
+                    id_registry = updated_registry
+
                 # Final step complete - include the step's data for entity cards
                 if last_step_index >= 0 and total_steps > 0:
-                    step_data = _extract_step_data(all_step_results.get(last_step_index))
+                    step_result = all_step_results.get(last_step_index)
+                    step_data = _extract_step_data(step_result)
+                    tool_calls = _extract_tool_calls(step_result)
                     yield {
                         "type": "step_complete",
                         "step": last_step_index + 1,
                         "total": total_steps,
                         "data": step_data,
+                        "tool_calls": tool_calls,  # V10: Tool call summary for inline display
                     }
+                    # Emit active_context for final step
+                    context_event = emit_active_context(id_registry)
+                    if context_event:
+                        yield context_event
+
                 # Capture final response
                 final_response = node_output.get("final_response")
-                
+
+                # Emit final active_context with Reply
+                context_event = emit_active_context(id_registry)
+
                 # Phase 1: Yield response immediately after Reply, don't wait for Summarize
                 # This makes the response appear faster to the user
                 response = final_response or "I'm sorry, I couldn't process that request."
@@ -908,6 +1032,7 @@ async def run_alfred_streaming(
                     "type": "done",
                     "response": response,
                     "conversation": conv_context,  # Use initial context, will be updated async
+                    "active_context": context_event.get("data") if context_event else None,
                 }
             
             elif node_name == "summarize" and node_output:

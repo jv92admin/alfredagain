@@ -1,19 +1,20 @@
 # Alfred Roadmap
 
-**Last Updated:** 2026-01-24
+**Last Updated:** 2026-01-25
 
 ---
 
 ## Documentation Structure
 
-| File | Purpose | Update Frequency |
+| Path | Purpose | Update Frequency |
 |------|---------|------------------|
-| [../CLAUDE.md](../CLAUDE.md) | AI assistant entry point | When system behavior changes |
-| [architecture_overview.md](architecture_overview.md) | System map, graph flow, node responsibilities | Major architectural changes |
-| [context-engineering-architecture.md](context-engineering-architecture.md) | State vs context, three-layer model | Conceptual changes |
-| [session-id-registry-spec.md](session-id-registry-spec.md) | SessionIdRegistry implementation | When registry behavior changes |
-| [context-api-spec.md](context-api-spec.md) | Context builders, entity snapshots | When context API changes |
-| [onboarding-spec.md](onboarding-spec.md) | User onboarding flow | When onboarding changes |
+| [../CLAUDE.md](../CLAUDE.md) | System constitution (stable) | Rarely |
+| [../skills/](../skills/) | Agent-scoped context | When patterns change |
+| [architecture/overview.md](architecture/overview.md) | System map, graph flow | Major changes |
+| [architecture/context-and-session.md](architecture/context-and-session.md) | Context engineering, registry | Conceptual changes |
+| [architecture/capabilities.md](architecture/capabilities.md) | User-facing capabilities | Feature changes |
+| [specs/context-api-spec.md](specs/context-api-spec.md) | Context builders | API changes |
+| [specs/onboarding-spec.md](specs/onboarding-spec.md) | User onboarding | Onboarding changes |
 
 ---
 
@@ -28,6 +29,94 @@
 ---
 
 ## Recently Completed
+
+### 2026-01-25: Streaming Architecture Phase A - Active Context Events
+
+Rich entity metadata now flows from SessionIdRegistry to frontend via streaming events.
+
+- **Backend: SessionIdRegistry**
+  - `get_active_context_for_frontend()` - Returns active entities with full metadata
+  - `_last_snapshot_refs` field enables "+N new" change tracking between events
+  - Metadata includes: ref, type, label, action, turnCreated, turnLastRef, isGenerated, retentionReason
+
+- **Backend: Streaming Events**
+  - `active_context` event emitted after Understand, Act steps, Act Quick, Reply
+  - `done` event includes final `active_context` payload
+  - Change tracking shows which entities were added since last event
+
+- **Frontend: ActiveContextDisplay Component**
+  - Collapsible inline display showing "AI Context (Turn N)"
+  - Action-aware badges: read (gray), created (green), generated (amber), linked (blue), updated (cyan)
+  - User action styles: mentioned:user, created:user, updated:user
+  - "+N new" indicator with pulse animation for entities added this phase
+  - Clickable entities navigate to relevant views
+
+- **Shared Types**
+  - `types/chat.ts` - ActiveContext, ActiveContextEntity interfaces
+
+- **Spec:** [../CLAUDE.plans/fluffy-mixing-sun.md](../CLAUDE.plans/fluffy-mixing-sun.md)
+
+### 2026-01-25: Streaming Architecture Phase B - Inline Progress Display
+
+Full visibility into Alfred's execution with inline progress, tool calls, and context updates.
+
+- **Backend: New Events**
+  - `think_complete` event with goal and step count
+  - `step_complete` now includes `tool_calls` array (tool, table, count)
+  - `_extract_tool_calls()` helper in workflow.py
+
+- **Frontend: StreamingProgress Component**
+  - Replaces ProgressTrail with phase-aware display
+  - Shows: Understanding → Planning (goal + steps) → Act steps → Response
+  - Inline tool call display: `read(inventory) → 12 items`
+  - Inline ActiveContextDisplay after each phase
+  - State machine pattern (`createInitialPhaseState`, `updatePhaseState`)
+
+- **ChatView Refactor**
+  - Phase-based state tracking instead of simple progress array
+  - All events routed through `updatePhaseState`
+  - Quick Mode vs Plan Mode rendering
+
+- **Legacy Cleanup**
+  - Removed EntityCard component (replaced by ActiveContextDisplay)
+  - Removed legacy entity tracking from ChatView
+
+- **Spec:** [../CLAUDE.plans/fluffy-mixing-sun.md](../CLAUDE.plans/fluffy-mixing-sun.md)
+
+### 2026-01-25: Schema-Driven CRUD + User Context Integration
+
+Full CRUD across all subdomains with AI context awareness.
+
+- **Phase 1-2: Schema-Driven UI Infrastructure**
+  - Backend: Schema API (`/api/schema/*`), Entity CRUD (`/api/entities/*`)
+  - Frontend: `useSchema` hooks, `FieldRenderer`, `EntityForm`, `EntityFormModal`
+  - Custom editors: `IngredientsEditor`, `StepsEditor`, `RecipePicker`, `MealPlanPicker`
+
+- **Full CRUD for All Subdomains**
+  | View | Create | Update | Delete |
+  |------|--------|--------|--------|
+  | Inventory | ✅ | ✅ | ✅ |
+  | Shopping | ✅ | ✅ | ✅ |
+  | Tasks | ✅ | ✅ | ✅ |
+  | Recipes | ✅ | ✅ | ✅ |
+  | Meal Plans | ✅ | ✅ | ✅ |
+
+- **Phase 3a: UI Changes → SessionIdRegistry**
+  - `ChatContext` with `pushUIChange()` tracks frontend CRUD
+  - `register_from_ui()` method registers UI-created entities
+  - UI changes sent with next chat message, injected into `turn_step_results`
+
+- **Phase 3b: @-Mention Autocomplete**
+  - `/api/context/entities` search endpoint
+  - Frontend autocomplete dropdown in `ChatInput`
+  - Format: `@[Label](type:uuid)` → AI receives full entity data
+
+- **Phase 3d: Prompt Optimization**
+  - Action tags: `[created:user]`, `[updated:user]`, `[mentioned:user]`, `[read]`, `[linked]`
+  - Turn numbers in entity context (e.g., `T5` for turn 5)
+  - 5-line legend added to Act/Think/Understand prompts
+
+- **Spec:** [ideas/vision-feasibility-assessment.md](ideas/vision-feasibility-assessment.md) — Implementation plan
 
 ### 2026-01-24: V9 Unified Context API for Generated Entities
 - **Tier 1:** Generated entities treated like DB entities
@@ -46,19 +135,19 @@
 - **Tier 4:** Think prompt - multi-entity operations
   - Added guidance for compare/match/diff operations requiring multiple data sources
   - Think must verify ALL sources are in context before planning `analyze`
-- **Spec:** [pr-unified-context-api.md](pr-unified-context-api.md) — Full PR documentation
+- **Spec:** [archive/pr-unified-context-api.md](archive/pr-unified-context-api.md) — Full PR documentation
 
 ### 2026-01-23: Context API Migration
 - Unified naming convention: `build_{node}_context()` for all nodes
 - Migrated Understand, Think to use builders.py
 - Act uses `build_act_entity_context()` (lives in act.py due to SessionIdRegistry dependencies)
 - Removed legacy formatters from id_registry.py
-- **Spec:** [context-api-spec.md](context-api-spec.md) — Migration Path section ✅
+- **Spec:** [specs/context-api-spec.md](specs/context-api-spec.md) — Migration Path section
 
 ### 2026-01-22: Onboarding Flow
 - Auto-apply preferences during onboarding
 - Preferences view for users
-- **Spec:** [onboarding-spec.md](onboarding-spec.md)
+- **Spec:** [specs/onboarding-spec.md](specs/onboarding-spec.md)
 
 ### Earlier: V8 Architecture
 - Google OAuth + Supabase Auth
