@@ -26,11 +26,13 @@ export function CuisinesStep({ onNext, onBack }: CuisinesStepProps) {
 
   const loadCuisines = async () => {
     try {
-      const data = await fetch('/api/onboarding/cuisines/options')
-      const json = await data.json()
+      const response = await fetch('/api/onboarding/cuisines/options')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const json = await response.json()
       // API returns {options: [...], max_selections: number}
       setCuisines(json.options || [])
     } catch (err) {
+      console.error('Failed to load cuisines:', err)
       setError('Failed to load cuisines')
     } finally {
       setLoading(false)

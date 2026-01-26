@@ -32,8 +32,9 @@ export function PantryStep({ onNext, onBack }: PantryStepProps) {
 
     setSearching(true)
     try {
-      const data = await fetch(`/api/onboarding/pantry/search?q=${encodeURIComponent(q)}`)
-      const json = await data.json()
+      const response = await fetch(`/api/onboarding/pantry/search?q=${encodeURIComponent(q)}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const json = await response.json()
       // API returns {results: [...]}
       const ingredients = json.results || []
       // Filter out already selected items

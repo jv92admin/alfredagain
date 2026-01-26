@@ -31,12 +31,18 @@ export function ConstraintsStep({ onNext }: ConstraintsStepProps) {
   }, [])
 
   const loadOptions = async () => {
+    setLoading(true)
+    setError('')
     try {
-      const data = await fetch('/api/onboarding/constraints/options')
-      const json = await data.json()
+      const response = await fetch('/api/onboarding/constraints/options')
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      const json = await response.json()
       setOptions(json)
     } catch (err) {
-      setError('Failed to load options')
+      console.error('Failed to load constraint options:', err)
+      setError('Failed to load options. Please refresh the page.')
     } finally {
       setLoading(false)
     }
@@ -72,10 +78,24 @@ export function ConstraintsStep({ onNext }: ConstraintsStepProps) {
     }
   }
 
-  if (loading || !options) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-[var(--color-text-secondary)]">Loading...</div>
+      </div>
+    )
+  }
+
+  if (!options) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-4">
+        <div className="text-[var(--color-error)]">{error || 'Failed to load options'}</div>
+        <button
+          onClick={loadOptions}
+          className="px-4 py-2 bg-[var(--color-accent)] text-[var(--color-text-inverse)] rounded-[var(--radius-md)]"
+        >
+          Retry
+        </button>
       </div>
     )
   }

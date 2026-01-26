@@ -54,8 +54,9 @@ export function DiscoveryStep({ onNext, onBack }: DiscoveryStepProps) {
 
   const loadCategories = async () => {
     try {
-      const data = await fetch('/api/onboarding/discovery/categories')
-      const json = await data.json()
+      const response = await fetch('/api/onboarding/discovery/categories')
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const json = await response.json()
       // API returns {categories: [...]}
       const cats = json.categories || []
       setCategories(cats)
@@ -63,6 +64,7 @@ export function DiscoveryStep({ onNext, onBack }: DiscoveryStepProps) {
         setCurrentCategory(cats[0].id)
       }
     } catch (err) {
+      console.error('Failed to load categories:', err)
       setError('Failed to load categories')
     } finally {
       setLoading(false)
