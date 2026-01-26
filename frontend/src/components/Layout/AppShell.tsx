@@ -1,7 +1,9 @@
 import { ReactNode, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth, User } from '../../hooks/useAuth'
+import { BottomTabBar } from './BottomTabBar'
+import { BrowseDrawer } from './BrowseDrawer'
+import { ChatFAB } from './ChatFAB'
 
 interface AppShellProps {
   children: ReactNode
@@ -10,20 +12,20 @@ interface AppShellProps {
 }
 
 const navItems = [
-  { path: '/', label: 'Chat', icon: '💬' },
-  { path: '/inventory', label: 'Inventory', icon: '📦' },
-  { path: '/recipes', label: 'Recipes', icon: '🍳' },
-  { path: '/meals', label: 'Meal Plans', icon: '📅' },
-  { path: '/shopping', label: 'Shopping', icon: '🛒' },
-  { path: '/tasks', label: 'Tasks', icon: '✅' },
-  { path: '/ingredients', label: 'Ingredients DB', icon: '🧂' },
-  { path: '/preferences', label: 'Preferences', icon: '⚙️' },
+  { path: '/', label: 'Chat' },
+  { path: '/inventory', label: 'Inventory' },
+  { path: '/recipes', label: 'Recipes' },
+  { path: '/meals', label: 'Meal Plans' },
+  { path: '/shopping', label: 'Shopping' },
+  { path: '/tasks', label: 'Tasks' },
+  { path: '/ingredients', label: 'Ingredients DB' },
+  { path: '/preferences', label: 'Preferences' },
 ]
 
 export function AppShell({ children, user, onNewChat }: AppShellProps) {
   const { logout } = useAuth()
   const navigate = useNavigate()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [browseDrawerOpen, setBrowseDrawerOpen] = useState(false)
 
   const handleLogout = async () => {
     await logout()
@@ -36,8 +38,8 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
       <aside className="hidden md:flex flex-col w-[var(--sidebar-width)] bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] flex-shrink-0">
         {/* Logo */}
         <div className="p-4 border-b border-[var(--color-border)]">
-          <h1 className="text-xl font-light tracking-[3px] text-[var(--color-accent)]">
-            ALFRED
+          <h1 className="text-xl font-semibold text-[var(--color-accent)]">
+            Alfred
           </h1>
         </div>
 
@@ -61,15 +63,14 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
+                `block px-4 py-2.5 text-sm transition-colors ${
                   isActive
-                    ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent)] border-r-2 border-[var(--color-accent)]'
+                    ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent)] font-semibold border-r-2 border-[var(--color-accent)]'
                     : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
                 }`
               }
             >
-              <span>{item.icon}</span>
-              <span>{item.label}</span>
+              {item.label}
             </NavLink>
           ))}
         </nav>
@@ -90,110 +91,38 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Mobile Header - Sticky */}
-        <header className="md:hidden flex items-center justify-between p-4 bg-[var(--color-bg-secondary)] border-b border-[var(--color-border)] flex-shrink-0">
-          <button
-            onClick={() => setMobileMenuOpen(true)}
-            className="text-2xl text-[var(--color-text-primary)]"
-          >
-            ☰
-          </button>
-          <h1 className="text-lg font-light tracking-[2px] text-[var(--color-accent)]">
-            ALFRED
+        {/* Mobile Header */}
+        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-[var(--color-bg-elevated)] border-b border-[var(--color-border)] flex-shrink-0">
+          <h1 className="text-lg font-semibold text-[var(--color-accent)]">
+            Alfred
           </h1>
+          <NavLink
+            to="/preferences"
+            className={({ isActive }) =>
+              `text-sm font-medium transition-colors ${
+                isActive
+                  ? 'text-[var(--color-accent)]'
+                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+              }`
+            }
+          >
+            Settings
+          </NavLink>
         </header>
 
-        {/* Page Content - Scrollable */}
-        <main className="flex-1 overflow-auto">
+        {/* Page Content - Scrollable with bottom padding on mobile for tab bar */}
+        <main className="flex-1 overflow-auto pb-12 md:pb-0">
           {children}
         </main>
       </div>
 
-      {/* Mobile Drawer */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <>
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setMobileMenuOpen(false)}
-              className="fixed inset-0 bg-black/50 z-[var(--z-overlay)] md:hidden"
-            />
-
-            {/* Drawer */}
-            <motion.aside
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="fixed top-0 left-0 bottom-0 w-64 bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] z-[var(--z-modal)] md:hidden"
-            >
-              {/* Close button */}
-              <div className="p-4 border-b border-[var(--color-border)] flex justify-between items-center">
-                <span className="text-[var(--color-text-secondary)]">Menu</span>
-                <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="text-xl text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* New Chat Button */}
-              {onNewChat && (
-                <div className="px-4 py-3 border-b border-[var(--color-border)]">
-                  <button
-                    onClick={() => {
-                      onNewChat()
-                      setMobileMenuOpen(false)
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-2 bg-[var(--color-accent)] text-[var(--color-text-inverse)] rounded-[var(--radius-md)] text-sm font-medium"
-                  >
-                    <span>+</span>
-                    <span>New Chat</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Navigation */}
-              <nav className="py-4">
-                {navItems.map((item) => (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
-                        isActive
-                          ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent)]'
-                          : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
-                      }`
-                    }
-                  >
-                    <span>{item.icon}</span>
-                    <span>{item.label}</span>
-                  </NavLink>
-                ))}
-              </nav>
-
-              {/* User */}
-              <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-[var(--color-border)]">
-                <div className="text-sm text-[var(--color-text-secondary)] mb-2">
-                  {user.display_name}
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-colors"
-                >
-                  Logout
-                </button>
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
+      {/* Mobile Navigation */}
+      <BottomTabBar onBrowseClick={() => setBrowseDrawerOpen(true)} />
+      <BrowseDrawer
+        isOpen={browseDrawerOpen}
+        onClose={() => setBrowseDrawerOpen(false)}
+      />
+      <ChatFAB />
     </div>
   )
 }

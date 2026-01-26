@@ -247,17 +247,15 @@ export function TasksView() {
                     e.stopPropagation()
                     setEditingTask(task)
                   }}
-                  className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity px-2"
-                  title="Edit"
+                  className="md:opacity-0 md:group-hover:opacity-100 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity px-2"
                 >
-                  ✏️
+                  Edit
                 </button>
                 <button
                   onClick={(e) => deleteTask(e, task)}
-                  className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity px-2"
-                  title="Delete"
+                  className="md:opacity-0 md:group-hover:opacity-100 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity px-2"
                 >
-                  🗑️
+                  Delete
                 </button>
               </div>
             ))}
@@ -277,7 +275,7 @@ export function TasksView() {
                   onClick={() => toggleCompleted(task)}
                   className="w-full text-left flex items-center gap-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 opacity-60"
                 >
-                  <span className="w-5 h-5 rounded border-2 border-[var(--color-success)] bg-[var(--color-success)] flex items-center justify-center text-white text-xs">
+                  <span className="w-5 h-5 rounded border-2 border-[var(--color-success)] bg-[var(--color-success)] flex items-center justify-center text-white text-xs animate-checkbox">
                     ✓
                   </span>
                   <span className="text-[var(--color-text-primary)] line-through">

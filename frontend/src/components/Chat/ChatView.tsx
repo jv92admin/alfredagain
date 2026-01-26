@@ -16,10 +16,9 @@ interface ChatViewProps {
   setMessages: Dispatch<SetStateAction<Message[]>>
   onOpenFocus: (item: { type: string; id: string }) => void
   mode: Mode
-  onModeChange: (mode: Mode) => void
 }
 
-export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChange }: ChatViewProps) {
+export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   // V10: Phase-based progress tracking
@@ -190,16 +189,14 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, onModeChang
       </div>
 
       {/* Input - Fixed at bottom */}
-      <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 flex-shrink-0">
+      <div className="bg-[var(--color-bg-primary)] px-4 py-3 flex-shrink-0">
         <div className="max-w-2xl mx-auto">
           <ChatInput
             value={input}
             onChange={setInput}
             onSubmit={handleSend}
             disabled={loading}
-            placeholder={mode === 'quick' ? "Quick question..." : "Ask Alfred anything..."}
-            mode={mode}
-            onModeChange={onModeChange}
+            placeholder="Ask Alfred anything..."
           />
         </div>
       </div>

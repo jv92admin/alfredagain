@@ -1,5 +1,4 @@
 import { FormEvent, KeyboardEvent, useState, useRef, useEffect, useCallback } from 'react'
-import { Mode } from '../../App'
 import { useAuth } from '../../hooks/useAuth'
 
 interface ChatInputProps {
@@ -8,8 +7,6 @@ interface ChatInputProps {
   onSubmit: (e?: FormEvent) => void
   disabled?: boolean
   placeholder?: string
-  mode: Mode
-  onModeChange: (mode: Mode) => void
 }
 
 // API response types
@@ -34,12 +31,8 @@ export function ChatInput({
   onSubmit,
   disabled,
   placeholder = 'Ask Alfred anything...',
-  mode,
-  onModeChange,
 }: ChatInputProps) {
   const { session } = useAuth()
-  const [showModeMenu, setShowModeMenu] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // @-mention state
@@ -51,12 +44,9 @@ export function ChatInput({
   const [isSearching, setIsSearching] = useState(false)
   const mentionDropdownRef = useRef<HTMLDivElement>(null)
 
-  // Close mode menu when clicking outside
+  // Close mention dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setShowModeMenu(false)
-      }
       if (mentionDropdownRef.current && !mentionDropdownRef.current.contains(e.target as Node)) {
         setShowMentionDropdown(false)
         setMentionStartPos(null)
@@ -201,18 +191,8 @@ export function ChatInput({
     }
   }
 
-  const modeLabels: Record<Mode, string> = {
-    quick: '⚡',
-    plan: '📋',
-  }
-
-  const modeDescriptions: Record<Mode, string> = {
-    quick: 'Quick — Fast, direct answers',
-    plan: 'Plan — Detailed, step-by-step',
-  }
-
   return (
-    <form onSubmit={onSubmit} className="flex gap-2 items-end relative">
+    <form onSubmit={onSubmit} className="flex gap-3 items-center relative">
       <div className="flex-1 relative">
         <textarea
           ref={textareaRef}
@@ -222,7 +202,7 @@ export function ChatInput({
           disabled={disabled}
           placeholder={placeholder}
           rows={1}
-          className="w-full px-4 py-3 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[var(--radius-md)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] resize-none focus:border-[var(--color-accent)] focus:outline-none disabled:opacity-50"
+          className="w-full px-4 py-2.5 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-[var(--radius-lg)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] resize-none focus:border-[var(--color-accent)] focus:outline-none disabled:opacity-50 shadow-sm"
         />
 
         {/* @-mention dropdown */}
@@ -277,51 +257,14 @@ export function ChatInput({
         )}
       </div>
 
-      {/* Mode selector + Send button group */}
-      <div className="flex items-stretch" ref={menuRef}>
-        {/* Mode dropdown trigger */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setShowModeMenu(!showModeMenu)}
-            className="h-full px-3 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] border-r-0 rounded-l-[var(--radius-md)] text-lg hover:bg-[var(--color-bg-secondary)] transition-colors"
-            title={modeDescriptions[mode]}
-          >
-            {modeLabels[mode]}
-          </button>
-
-          {/* Dropdown menu */}
-          {showModeMenu && (
-            <div className="absolute bottom-full left-0 mb-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-lg overflow-hidden min-w-[180px] z-50">
-              {(Object.keys(modeLabels) as Mode[]).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => {
-                    onModeChange(m)
-                    setShowModeMenu(false)
-                  }}
-                  className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 hover:bg-[var(--color-bg-tertiary)] transition-colors ${
-                    mode === m ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-primary)]'
-                  }`}
-                >
-                  <span>{modeLabels[m]}</span>
-                  <span>{modeDescriptions[m]}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Send button */}
-        <button
-          type="submit"
-          disabled={disabled || !value.trim()}
-          className="px-5 py-3 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-semibold rounded-r-[var(--radius-md)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Send
-        </button>
-      </div>
+      {/* Send button */}
+      <button
+        type="submit"
+        disabled={disabled || !value.trim()}
+        className="px-5 py-2.5 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-semibold rounded-[var(--radius-lg)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+      >
+        Send
+      </button>
     </form>
   )
 }

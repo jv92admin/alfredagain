@@ -29,7 +29,7 @@ function App() {
   const { user, loading, checkAuth } = useAuth()
   const [focusItem, setFocusItem] = useState<{ type: string; id: string } | null>(null)
   const [chatMessages, setChatMessages] = useState<Message[]>([INITIAL_MESSAGE])
-  const [mode, setMode] = useState<Mode>('plan') // V3: Default to plan mode
+  const mode: Mode = 'plan' // Default to plan mode (toggle removed)
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
   const onboardingCheckedForUser = useRef<string | null>(null)
 
@@ -93,7 +93,7 @@ function App() {
     <>
       <AppShell user={user} onNewChat={handleNewChat}>
         <Routes>
-          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} onModeChange={setMode} />} />
+          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} />} />
           <Route path="/recipes" element={<RecipesView onOpenFocus={setFocusItem} />} />
           <Route path="/meals" element={<MealPlanView onOpenFocus={setFocusItem} />} />
           <Route path="/inventory" element={<InventoryView />} />
