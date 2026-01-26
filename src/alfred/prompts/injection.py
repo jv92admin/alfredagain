@@ -849,7 +849,7 @@ _TABLE_FORMAT_PROTOCOLS = {
     },
     "meal_plans": {
         "primary": "date",
-        "details": ["meal_type", "recipe_id"],  # Show recipe_id for linking
+        "details": ["meal_type", "recipe_id", "notes", "servings"],  # Include notes for planning context
         "show_id": True,
         "format": "meal_plan",  # Custom format: date [slot] → recipe
     },
@@ -956,12 +956,12 @@ def _format_record_key_value(record: dict, protocol: dict) -> str:
 
 def _format_meal_plan_record(record: dict, protocol: dict) -> str:
     """
-    Format a meal plan record: date [slot] → recipe or notes (id:meal_1)
-    
+    Format a meal plan record: date [slot] → recipe (servings) notes id:meal_1
+
     Examples:
-    - 2026-01-12 [lunch] → Butter Chicken (recipe_1) id:meal_1
-    - 2026-01-13 [dinner] → recipe_2 id:meal_2
-    - 2026-01-14 [other] → "Make chicken stock" (servings: 4) id:meal_3
+    - 2026-01-12 [lunch] → Butter Chicken (recipe_1) (servings: 2) id:meal_1
+    - 2026-01-13 [dinner] → recipe_2 (servings: 1) notes:"Leftovers from lunch" id:meal_2
+    - 2026-01-14 [other] → notes:"Make chicken stock" (servings: 4) id:meal_3
     """
     date = record.get("date", "no-date")
     meal_type = record.get("meal_type", "meal")
@@ -969,31 +969,36 @@ def _format_meal_plan_record(record: dict, protocol: dict) -> str:
     notes = record.get("notes")
     servings = record.get("servings")
     meal_id = record.get("id", "")
-    
+
     # Try to get enriched recipe name
     recipe_label = record.get("_recipe_id_label")
-    
-    # Determine main content: recipe or notes
+
+    # Determine main content: recipe or notes-only
     if recipe_ref:
         if recipe_label:
             content = f"{recipe_label} ({recipe_ref})"
         else:
             content = recipe_ref
     elif notes:
-        content = f'"{notes}"'  # Quote notes to distinguish from recipe
+        content = f'notes:"{notes}"'  # Notes-only meal (prep session, etc.)
     else:
         content = "no-recipe"
-    
+
     # Format: date [slot] → content
     parts = [f"  - {date} [{meal_type}] → {content}"]
-    
+
     # Add servings if present
     if servings:
         parts.append(f"(servings: {servings})")
-    
+
+    # Add notes if present AND there's also a recipe (notes alongside recipe)
+    # Notes-only meals are already shown in content above
+    if notes and recipe_ref:
+        parts.append(f'notes:"{notes}"')
+
     if meal_id:
         parts.append(f"id:{meal_id}")
-    
+
     return " ".join(parts)
 
 

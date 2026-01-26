@@ -1278,16 +1278,21 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
                     parts.append(f"[{clean['meal_type']}]")
                 # Include recipe info - _recipe_id_label is added by CRUD enrichment
                 recipe_label = clean.get("_recipe_id_label")
+                has_recipe = recipe_label or clean.get("recipe_id")
                 if recipe_label:
                     parts.append(f"→ {recipe_label}")
                 elif clean.get("recipe_id"):
                     parts.append(f"→ recipe:{clean['recipe_id']}")
                 elif clean.get("notes"):
-                    # Use notes as fallback (often contains "Open slot" or recipe description)
+                    # Notes-only meal (no recipe) - show notes as main content
                     notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
-                    parts.append(f"- {notes_preview}")
+                    parts.append(f'notes:"{notes_preview}"')
                 if clean.get("servings"):
                     parts.append(f"({clean['servings']} servings)")
+                # Show notes alongside recipe (not just as fallback)
+                if clean.get("notes") and has_recipe:
+                    notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
+                    parts.append(f'notes:"{notes_preview}"')
             else:
                 # Generic formatting
                 if clean.get("quantity"):

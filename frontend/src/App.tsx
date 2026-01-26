@@ -49,10 +49,12 @@ function App() {
     try {
       const state = await apiRequest<{ phase: string }>('/api/onboarding/state')
       // User needs onboarding if they haven't completed it
-      setNeedsOnboarding(state.phase !== 'COMPLETE')
-    } catch {
-      // If API fails, assume they don't need onboarding
-      setNeedsOnboarding(false)
+      // Backend returns lowercase phase values (e.g., "complete", "constraints")
+      setNeedsOnboarding(state.phase !== 'complete')
+    } catch (error) {
+      // If API fails for a new user, show onboarding to be safe
+      console.error('Onboarding check failed:', error)
+      setNeedsOnboarding(true)
     }
   }
 
