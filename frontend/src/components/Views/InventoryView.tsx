@@ -275,17 +275,15 @@ export function InventoryView() {
                   <td className="px-4 py-3 flex gap-2">
                     <button
                       onClick={() => setEditingItem(item)}
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity"
-                      title="Edit"
+                      className="md:opacity-0 md:group-hover:opacity-100 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity"
                     >
-                      ✏️
+                      Edit
                     </button>
                     <button
                       onClick={() => deleteItem(item)}
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity"
-                      title="Delete"
+                      className="md:opacity-0 md:group-hover:opacity-100 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity"
                     >
-                      🗑️
+                      Delete
                     </button>
                   </td>
                 </tr>
@@ -294,8 +292,8 @@ export function InventoryView() {
           </table>
         </div>
 
-        <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-          Click quantity to quick-edit. Hover row to see edit/delete buttons.
+        <p className="mt-4 text-sm text-[var(--color-text-muted)] hidden md:block">
+          Click quantity to quick-edit.
         </p>
       </div>
       {addItemModal}
