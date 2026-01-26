@@ -815,10 +815,18 @@ def build_act_entity_context(
     import json
     
     lines = []
-    
+
+    # Entity Source Legend (helps Act understand context origins)
+    lines.append("**Entity Source Tags:**")
+    lines.append("- `[created:user]` / `[updated:user]` — User made this change via UI")
+    lines.append("- `[mentioned:user]` — User @-mentioned this entity")
+    lines.append("- `[read]` / `[created]` / `[generated]` — Alfred accessed via conversation")
+    lines.append("- `[linked]` — Auto-registered from FK field")
+    lines.append("")
+
     # Get active entities split by source
     recent_refs, retained_refs = session_registry.get_active_entities(turns_window=2)
-    
+
     # Section 1: Artifacts needing main record created (same as before)
     truly_pending = session_registry.get_truly_pending_artifacts()
     if truly_pending:
@@ -935,7 +943,8 @@ def build_act_entity_context(
             label = session_registry.ref_labels.get(ref, ref)
             entity_type = session_registry.ref_types.get(ref, "unknown")
             action = session_registry.ref_actions.get(ref, "-")
-            lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
+            last_ref = session_registry.ref_turn_last_ref.get(ref, "?")
+            lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}] T{last_ref}")
         lines.append("")
     
     # Section 4: Long Term Memory (refs only - same as before)
@@ -946,7 +955,11 @@ def build_act_entity_context(
         for ref in retained_refs:
             label = session_registry.ref_labels.get(ref, ref)
             entity_type = session_registry.ref_types.get(ref, "unknown")
-            lines.append(f"- `{ref}`: {label} ({entity_type})")
+            action = session_registry.ref_actions.get(ref, "-")
+            last_ref = session_registry.ref_turn_last_ref.get(ref, "?")
+            reason = session_registry.ref_active_reason.get(ref, "")
+            reason_note = f" — *{reason}*" if reason else ""
+            lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}] T{last_ref}{reason_note}")
         lines.append("")
     
     if not lines:

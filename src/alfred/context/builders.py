@@ -189,6 +189,12 @@ class UnderstandContext:
             return "## Entity Registry\n\n*No entities tracked yet.*"
 
         lines = ["## Entity Registry (for context decisions)", ""]
+        lines.append("**Entity Source Tags:**")
+        lines.append("- `created:user` / `updated:user` — User made this change via UI")
+        lines.append("- `mentioned:user` — User @-mentioned this entity")
+        lines.append("- `read` / `created` / `generated` — Alfred accessed via conversation")
+        lines.append("- `linked` — Auto-registered from FK field")
+        lines.append("")
         lines.append("| Ref | Type | Label | Last Action | Created | Last Ref |")
         lines.append("|-----|------|-------|-------------|---------|----------|")
 
@@ -244,6 +250,14 @@ class ThinkContext:
         """
         lines = []
 
+        # Entity Source Legend (helps Think understand context origins)
+        lines.append("**Entity Source Tags:**")
+        lines.append("- `[created:user]` / `[updated:user]` — User made this change via UI")
+        lines.append("- `[mentioned:user]` — User @-mentioned this entity")
+        lines.append("- `[read]` / `[created]` / `[generated]` — Alfred accessed via conversation")
+        lines.append("- `[linked]` — Auto-registered from FK field")
+        lines.append("")
+
         ref_to_uuid = self.registry_data.get("ref_to_uuid", {})
         ref_types = self.registry_data.get("ref_types", {})
         ref_labels = self.registry_data.get("ref_labels", {})
@@ -298,6 +312,7 @@ class ThinkContext:
                 label = ref_labels.get(ref, ref)
                 entity_type = ref_types.get(ref, "unknown")
                 action = ref_actions.get(ref, "-")
+                last_ref = ref_turn_last_ref.get(ref, "?")
                 # Recipe detail level tracking
                 if entity_type == "recipe":
                     level = ref_recipe_last_read_level.get(ref)
@@ -307,7 +322,7 @@ class ThinkContext:
                             last_full_turn = ref_recipe_last_full_turn.get(ref)
                             if last_full_turn:
                                 action = f"{action} (last_full:T{last_full_turn})"
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}]")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}] T{last_ref}")
             lines.append("")
 
         # Section 3: Long Term Memory (Understand-retained)
@@ -317,10 +332,11 @@ class ThinkContext:
             for ref in retained_refs:
                 label = ref_labels.get(ref, ref)
                 entity_type = ref_types.get(ref, "unknown")
+                action = ref_actions.get(ref, "-")
+                last_ref = ref_turn_last_ref.get(ref, "?")
                 reason = ref_active_reason.get(ref, "")
-                turn_created = ref_turn_created.get(ref, "?")
                 reason_note = f" — *{reason}*" if reason else ""
-                lines.append(f"- `{ref}`: {label} ({entity_type}, turn {turn_created}){reason_note}")
+                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}] T{last_ref}{reason_note}")
             lines.append("")
 
         # If nothing in either section but we have entities, show summary

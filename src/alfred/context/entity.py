@@ -180,7 +180,15 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
         Formatted string for prompt injection
     """
     lines = []
-    
+
+    # Entity Source Legend (for modes that show action tags)
+    if mode in ("full", "reply"):
+        lines.append("**Entity Source Tags:**")
+        lines.append("- `[created:user]` / `[updated:user]` — User made this change via UI")
+        lines.append("- `[mentioned:user]` — User @-mentioned this entity")
+        lines.append("- `[read]` / `[created]` / `[generated]` — Alfred accessed via conversation")
+        lines.append("")
+
     # Generated content (user hasn't saved yet)
     if ctx.generated:
         if mode == "reply":
@@ -210,7 +218,7 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
             lines.append("### Saved Entities (in database)")
             lines.append("*These ALREADY EXIST. Don't offer to save them again.*")
             for e in ctx.active:
-                lines.append(f"- `{e.ref}`: {e.label}")
+                lines.append(f"- `{e.ref}`: {e.label} [{e.status}] T{e.turn_last_ref}")
         elif mode == "refs_and_labels":
             lines.append("### Recent Context")
             for e in ctx.active:
@@ -218,20 +226,22 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
         else:  # full
             lines.append("### Recent Context (last 2 turns)")
             for e in ctx.active:
-                lines.append(f"- `{e.ref}`: {e.label} ({e.entity_type}, {e.status})")
+                lines.append(f"- `{e.ref}`: {e.label} ({e.entity_type}) [{e.status}] T{e.turn_last_ref}")
         lines.append("")
     
     # Retained (long-term memory)
     if ctx.retained:
         lines.append("### Long-Term Memory")
         for e in ctx.retained:
-            reason = f" — {e.retention_reason}" if e.retention_reason else ""
+            reason = f" — *{e.retention_reason}*" if e.retention_reason else ""
             if mode == "labels_only":
                 lines.append(f"- {e.label}")
-            elif mode in ("refs_and_labels", "do_not_read", "reply"):
+            elif mode == "reply":
+                lines.append(f"- `{e.ref}`: {e.label} [{e.status}] T{e.turn_last_ref}{reason}")
+            elif mode in ("refs_and_labels", "do_not_read"):
                 lines.append(f"- `{e.ref}`: {e.label}{reason}")
-            else:
-                lines.append(f"- `{e.ref}`: {e.label} ({e.entity_type}){reason}")
+            else:  # full
+                lines.append(f"- `{e.ref}`: {e.label} ({e.entity_type}) [{e.status}] T{e.turn_last_ref}{reason}")
         lines.append("")
     
     if not lines:
