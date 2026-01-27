@@ -837,13 +837,13 @@ _TABLE_FORMAT_PROTOCOLS = {
     },
     "recipes": {
         "primary": "name",
-        "details": ["cuisine", "total_time", "servings", "occasions", "health_tags"],
+        "details": ["cuisine", "total_time", "servings", "occasions", "health_tags", "source_url"],
         "show_id": True,  # Critical for FK references
         "format": "recipe",  # Custom format with grouped ingredients
     },
     "recipe_ingredients": {
         "primary": "name",
-        "details": ["quantity", "unit"],
+        "details": ["quantity", "unit", "notes", "is_optional"],
         "show_id": False,  # Not needed, use recipe_id
         "group_by": "recipe_id",  # Hint to group these
     },

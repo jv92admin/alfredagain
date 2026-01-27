@@ -101,10 +101,25 @@ Use **simple, canonical names** in the `name` field:
 
 **Why:** The system auto-links ingredients to a canonical database via `ingredient_id`. Simple names match better.
 
-**Qualifiers go in `notes`:**
+**All qualifiers go in `notes`:**
 ```json
 {"name": "garlic", "quantity": 2, "unit": "cloves", "notes": "minced"}
 {"name": "basil", "quantity": 1, "unit": "cup", "notes": "fresh, loosely packed"}
+{"name": "potato", "quantity": 3, "unit": null, "notes": "medium, boiled and cubed"}
+{"name": "chicken breast", "quantity": 4, "unit": null, "notes": "thin-cut, boneless, skinless, pounded"}
+```
+
+**Notes field contains:**
+- Prep: "minced", "diced", "peeled", "boiled", "cubed"
+- State: "fresh", "dried", "frozen", "room temperature"
+- Size: "medium", "large", "thin-cut"
+- Alternatives: "or substitute X"
+- Special: "to taste", "for garnish"
+
+**Mark optional items with is_optional:**
+```json
+{"name": "parsley", "quantity": null, "unit": null, "notes": "for garnish", "is_optional": true}
+{"name": "salt", "quantity": null, "unit": null, "notes": "to taste", "is_optional": true}
 ```
 
 **Singular forms preferred:** "chicken thigh" not "chicken thighs" (quantity handles plural)

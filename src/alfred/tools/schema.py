@@ -467,6 +467,20 @@ SEMANTIC_NOTES: dict[str, str] = {
 - "quick comfort food" → `{"field": "_semantic", "op": "similar", "value": "quick comfort food"}`
 - "something healthy" → `{"field": "_semantic", "op": "similar", "value": "healthy nutritious meal"}`
 Combines with other filters (semantic narrows first, then other filters apply).
+
+**recipe_ingredients.notes field:**
+The `notes` field stores preparation instructions and qualifiers:
+- "minced", "diced", "peeled" → prep instructions
+- "fresh", "dried", "frozen" → state
+- "medium", "large" → size
+- "or substitute X" → alternatives
+- "to taste" → optional amount
+
+When reading recipes, surface notes to user (e.g., "garlic, minced" not just "garlic").
+When creating recipes, put all qualifiers in notes, not in the name field.
+
+**is_optional field:**
+Set `is_optional: true` for garnishes, "to taste" ingredients, explicitly optional items.
 """,
     "shopping": "",
     "meal_plans": """

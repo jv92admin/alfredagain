@@ -4,6 +4,7 @@ import { apiRequest } from '../../lib/api'
 import { useUIChanges } from '../../context/ChatContext'
 import { IngredientsEditor, type RecipeIngredient } from '../Form/editors'
 import { StepsEditor } from '../Form/editors'
+import { RecipeImportModal } from '../Recipe'
 
 interface Recipe {
   id: string
@@ -64,6 +65,7 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [loadingIngredients, setLoadingIngredients] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const { pushUIChange } = useUIChanges()
 
   useEffect(() => {
@@ -470,16 +472,31 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
           <p className="text-[var(--color-text-muted)] mb-4">
             Ask Alfred to create some recipes for you!
           </p>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={openCreateModal}
-            className="px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-medium rounded-[var(--radius-md)]"
-          >
-            + Add Recipe
-          </motion.button>
+          <div className="flex gap-2">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowImportModal(true)}
+              className="px-4 py-2 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] font-medium rounded-[var(--radius-md)] border border-[var(--color-border)]"
+            >
+              Import from URL
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={openCreateModal}
+              className="px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-medium rounded-[var(--radius-md)]"
+            >
+              + Add Recipe
+            </motion.button>
+          </div>
         </div>
         {recipeModal}
+        <RecipeImportModal
+          isOpen={showImportModal}
+          onClose={() => setShowImportModal(false)}
+          onSuccess={fetchRecipes}
+        />
       </>
     )
   }
@@ -491,14 +508,24 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
           <h1 className="text-2xl font-semibold text-[var(--color-text-primary)]">
             Recipes
           </h1>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={openCreateModal}
-            className="px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-medium rounded-[var(--radius-md)] text-sm"
-          >
-            + Add Recipe
-          </motion.button>
+          <div className="flex gap-2">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowImportModal(true)}
+              className="px-4 py-2 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] font-medium rounded-[var(--radius-md)] border border-[var(--color-border)] text-sm"
+            >
+              Import from URL
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={openCreateModal}
+              className="px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-text-inverse)] font-medium rounded-[var(--radius-md)] text-sm"
+            >
+              + Add Recipe
+            </motion.button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -557,6 +584,11 @@ export function RecipesView({ onOpenFocus }: RecipesViewProps) {
         </div>
       </div>
       {recipeModal}
+      <RecipeImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={fetchRecipes}
+      />
     </>
   )
 }
