@@ -39,6 +39,10 @@ class Ingredient(BaseModel):
     name: str
     aliases: list[str] = Field(default_factory=list)
     category: str | None = None
+    parent_category: str = "pantry"
+    family: str = ""
+    cuisines: list[str] = Field(default_factory=list)
+    tier: int = 2
     default_unit: str | None = None
     nutrition_per_100g: dict | None = None
     flavor_compounds: list[str] = Field(default_factory=list)
@@ -171,7 +175,11 @@ class Preferences(BaseModel):
     # Keys: inventory, recipes, meal_plans, shopping, tasks
     # Values: ~200 token narrative strings
     subdomain_guidance: dict[str, str] = Field(default_factory=dict)
-    
+
+    # Assumed staples - ingredients user always keeps stocked
+    # Set during onboarding, used to skip "do you have X?" questions
+    assumed_staples: list[UUID] = Field(default_factory=list)
+
     updated_at: datetime | None = None
 
 

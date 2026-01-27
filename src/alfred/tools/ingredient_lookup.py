@@ -487,30 +487,38 @@ async def lookup_ingredients_batch(
 async def enrich_with_ingredient_id(
     data: dict,
     operation: Literal["read", "write"] = "write",
+    use_resolver: bool = False,
 ) -> dict:
     """
     Enrich a single record with ingredient_id if it has a 'name' field.
-    
+
     Used by db_create to auto-link inventory/shopping_list items to ingredients.
     Keeps the original 'name' field as-is (per user preference).
-    
+
     Args:
         data: Record dict with optional 'name' field
         operation: "write" for creates, "read" for searches
-        
+        use_resolver: Whether to use full resolver (parses qty/unit/modifiers)
+
     Returns:
         Enriched data dict with ingredient_id if match found
     """
     name = data.get("name")
     if not name:
         return data
-    
+
     # Skip if already has ingredient_id
     if data.get("ingredient_id"):
         return data
-    
+
+    if use_resolver:
+        # Use the full resolver for complex inputs (extracts modifiers, qty, unit)
+        from alfred.tools.ingredient_resolver import resolve_and_enrich
+        return await resolve_and_enrich(data, use_resolver=True)
+
+    # Simple lookup (no parsing)
     match = await lookup_ingredient(name, operation=operation, use_semantic=False)
-    
+
     if match:
         enriched = {**data, "ingredient_id": match.id}
         # Also copy category for grouping/filtering (if available)
@@ -518,25 +526,27 @@ async def enrich_with_ingredient_id(
             enriched["category"] = match.category
         logger.info(f"Linked '{name}' to ingredient '{match.name}' ({match.match_type})")
         return enriched
-    
+
     return data
 
 
 async def enrich_batch_with_ingredient_ids(
     records: list[dict],
     operation: Literal["read", "write"] = "write",
+    use_resolver: bool = False,
 ) -> list[dict]:
     """
     Enrich multiple records with ingredient_ids.
-    
+
     Args:
         records: List of record dicts
         operation: "write" for creates, "read" for searches
-        
+        use_resolver: Whether to use full resolver (parses qty/unit/modifiers)
+
     Returns:
         List of enriched records
     """
-    return [await enrich_with_ingredient_id(r, operation) for r in records]
+    return [await enrich_with_ingredient_id(r, operation, use_resolver) for r in records]
 
 
 async def expand_search_with_similar(

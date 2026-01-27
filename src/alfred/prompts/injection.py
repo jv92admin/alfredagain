@@ -827,12 +827,14 @@ def _infer_table_from_record(record: dict) -> str | None:
 _TABLE_FORMAT_PROTOCOLS = {
     "inventory": {
         "primary": "name",
-        "details": ["quantity", "unit", "location", "category", "expiry_date"],
+        "details": ["quantity", "location", "expiry_date"],  # unit folded into quantity display
+        "ingredient_details": ["parent_category", "family", "tier"],  # From joined ingredients table
         "show_id": True,
     },
     "shopping_list": {
-        "primary": "name", 
+        "primary": "name",
         "details": ["quantity", "unit", "category"],
+        "ingredient_details": ["parent_category", "family", "tier"],  # From joined ingredients table
         "show_id": True,
     },
     "recipes": {
@@ -928,6 +930,25 @@ def _format_record_clean(record: dict, table: str | None = None) -> str:
                 parts.append(f"[{', '.join(value[:3])}{'...' if len(value) > 3 else ''}]")
             else:
                 parts.append(f"{field}:{value}")
+
+    # Add ingredient enrichment (from joined ingredients table)
+    ingredients_data = record.get("ingredients")
+    if ingredients_data and isinstance(ingredients_data, dict):
+        ing_parts = []
+        for field in protocol.get("ingredient_details", []):
+            value = ingredients_data.get(field)
+            if value is not None and value != "" and value != []:
+                if field == "parent_category":
+                    ing_parts.append(value)  # Just the category name
+                elif field == "tier":
+                    tier_label = {1: "common", 2: "standard", 3: "specialty"}.get(value, str(value))
+                    ing_parts.append(tier_label)
+                elif field == "family":
+                    ing_parts.append(f"family:{value}")
+                elif field == "cuisines" and isinstance(value, list) and value:
+                    ing_parts.append(f"cuisines:{','.join(value[:2])}")
+        if ing_parts:
+            parts.append(f"| {' | '.join(ing_parts)}")
     
     # Add ID if protocol says to
     # V4: IDs are simple refs (recipe_1, inv_5), show in full

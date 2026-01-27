@@ -1,0 +1,126 @@
+# Ingredient Taxonomy Configuration
+# Defines allowed parent_category → category mappings
+# Used by validation scripts and LLM cleanup prompts
+
+parent_categories:
+  produce:
+    description: "Fresh fruits, vegetables, and herbs"
+    store_section: "Produce aisle"
+    categories:
+      - vegetables
+      - fruits
+      - herbs
+
+  protein:
+    description: "Meat, poultry, seafood, eggs, and plant proteins"
+    store_section: "Meat/Seafood/Deli"
+    categories:
+      - poultry
+      - beef
+      - pork
+      - lamb
+      - seafood
+      - eggs
+      - plant_protein
+
+  dairy:
+    description: "Milk, cream, cheese, yogurt, and butter"
+    store_section: "Dairy"
+    categories:
+      - milk
+      - cream
+      - cheese
+      - yogurt
+      - butter
+
+  grains:
+    description: "Rice, pasta, noodles, bread, and flour"
+    store_section: "Bread/Pasta aisle"
+    categories:
+      - rice
+      - pasta
+      - noodles
+      - bread
+      - flour
+      - whole_grains
+
+  pantry:
+    description: "Canned goods, oils, vinegars, condiments, and broths"
+    store_section: "Center aisles"
+    categories:
+      - canned
+      - oils
+      - vinegars
+      - condiments
+      - broths
+
+  spices:
+    description: "Whole spices, ground spices, blends, and dried herbs"
+    store_section: "Spice aisle"
+    categories:
+      - whole
+      - ground
+      - blends
+      - dried_herbs
+
+  baking:
+    description: "Sweeteners, leaveners, chocolate, and extracts"
+    store_section: "Baking aisle"
+    categories:
+      - sweeteners
+      - leaveners
+      - chocolate
+      - extracts
+
+  specialty:
+    description: "Cuisine-specific items not fitting above categories"
+    store_section: "International aisle"
+    categories:
+      - asian
+      - latin
+      - mediterranean
+      - indian
+      - other
+
+# Tier definitions for ingredient commonality
+tiers:
+  1:
+    name: "core"
+    description: "Top ~500 grocery staples, available anywhere"
+    criteria:
+      - "Appears in >50% of common recipe sites"
+      - "Available at any grocery store"
+      - "Most users recognize without googling"
+  2:
+    name: "standard"
+    description: "Well-stocked stores, ~1500 items"
+    criteria:
+      - "Available at Whole Foods / well-stocked grocery"
+      - "Appears in popular cuisines"
+      - "May need brief explanation"
+  3:
+    name: "niche"
+    description: "Specialty/regional items, ~500 items"
+    criteria:
+      - "Specialty/ethnic stores only"
+      - "Regional or professional use"
+      - "Keep for completeness, deprioritize in UX"
+
+# Cuisines for tagging specialty ingredients
+cuisines:
+  - korean
+  - japanese
+  - chinese
+  - thai
+  - vietnamese
+  - indian
+  - mediterranean
+  - greek
+  - italian
+  - french
+  - spanish
+  - mexican
+  - latin_american
+  - african
+  - middle_eastern
+  - caribbean

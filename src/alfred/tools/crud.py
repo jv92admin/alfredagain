@@ -298,6 +298,11 @@ async def db_read(params: DbReadParams, user_id: str) -> list[dict]:
     # This gives us ingredient names + categories for grouping, without needing prompts to specify nested syntax
     if params.table == "recipes" and "recipe_ingredients" not in select_clause:
         select_clause += ", recipe_ingredients(name, category)"
+
+    # Auto-include ingredient metadata for inventory/shopping reads
+    # This flows parent_category, family, tier, cuisines into LLM context
+    if params.table in INGREDIENT_LINKED_TABLES and "ingredients(" not in select_clause:
+        select_clause += ", ingredients(parent_category, family, tier, cuisines)"
     
     query = client.table(params.table).select(select_clause)
 

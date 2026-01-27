@@ -48,19 +48,30 @@ def get_openai_client() -> OpenAI:
 def create_ingredient_text(ingredient: dict) -> str:
     """
     Create text representation of an ingredient for embedding.
-    
-    Combines name, category, and aliases into a single searchable text.
+
+    Combines name, parent_category, family, category, aliases, and cuisines
+    into a single searchable text for semantic matching.
     """
     parts = [ingredient.get("name", "")]
-    
-    category = ingredient.get("category")
-    if category:
-        parts.append(f"category: {category}")
-    
+
+    # Add parent_category and family for better semantic grouping
+    if parent := ingredient.get("parent_category"):
+        parts.append(f"section: {parent}")
+
+    if family := ingredient.get("family"):
+        parts.append(f"family: {family}")
+
+    if category := ingredient.get("category"):
+        parts.append(f"type: {category}")
+
     aliases = ingredient.get("aliases", [])
     if aliases:
         parts.append(f"also known as: {', '.join(aliases)}")
-    
+
+    cuisines = ingredient.get("cuisines", [])
+    if cuisines:
+        parts.append(f"cuisines: {', '.join(cuisines)}")
+
     return " | ".join(parts)
 
 
@@ -85,31 +96,57 @@ def create_recipe_text(recipe: dict) -> str:
 def batch_embeddings(texts: list[str], client: OpenAI) -> list[list[float]]:
     """
     Generate embeddings for a batch of texts.
-    
+
     Uses OpenAI's batch embedding API for efficiency.
     """
     response = client.embeddings.create(
         model=EMBEDDING_MODEL,
         input=texts,
     )
-    
+
     return [item.embedding for item in response.data]
+
+
+def fetch_all_rows(supabase, table: str, select_cols: str, filter_null_embedding: bool = True) -> list[dict]:
+    """Fetch all rows with pagination (Supabase limits to 1000 per query)."""
+    all_items = []
+    page_size = 1000
+    offset = 0
+
+    while True:
+        query = supabase.table(table).select(select_cols)
+        if filter_null_embedding:
+            query = query.is_("embedding", "null")
+
+        result = query.range(offset, offset + page_size - 1).execute()
+
+        if not result.data:
+            break
+
+        all_items.extend(result.data)
+
+        if len(result.data) < page_size:
+            break
+
+        offset += page_size
+
+    return all_items
 
 
 async def generate_ingredient_embeddings(batch_size: int = 50, force: bool = False) -> None:
     """Generate embeddings for all ingredients."""
     print("🔍 Generating ingredient embeddings...")
-    
+
     supabase = get_client()
     openai = get_openai_client()
-    
-    # Fetch ingredients without embeddings (or all if force)
-    query = supabase.table("ingredients").select("id, name, category, aliases")
-    if not force:
-        query = query.is_("embedding", "null")
-    
-    result = query.limit(1000).execute()
-    ingredients = result.data
+
+    # Fetch ingredients without embeddings (or all if force) - with pagination
+    ingredients = fetch_all_rows(
+        supabase,
+        "ingredients",
+        "id, name, category, aliases, parent_category, family, cuisines",
+        filter_null_embedding=not force
+    )
     
     if not ingredients:
         print("  No ingredients need embeddings")
@@ -147,17 +184,17 @@ async def generate_ingredient_embeddings(batch_size: int = 50, force: bool = Fal
 async def generate_recipe_embeddings(batch_size: int = 20, force: bool = False) -> None:
     """Generate embeddings for all recipes."""
     print("🔍 Generating recipe embeddings...")
-    
+
     supabase = get_client()
     openai = get_openai_client()
-    
-    # Fetch recipes - only need name and description for lean embeddings
-    query = supabase.table("recipes").select("id, name, description")
-    if not force:
-        query = query.is_("embedding", "null")
-    
-    result = query.limit(1000).execute()
-    recipes = result.data
+
+    # Fetch recipes - only need name and description for lean embeddings - with pagination
+    recipes = fetch_all_rows(
+        supabase,
+        "recipes",
+        "id, name, description",
+        filter_null_embedding=not force
+    )
     
     if not recipes:
         print("  No recipes need embeddings")
