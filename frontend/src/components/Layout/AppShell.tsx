@@ -96,18 +96,28 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
           <h1 className="text-lg font-semibold text-[var(--color-accent)]">
             Alfred
           </h1>
-          <NavLink
-            to="/preferences"
-            className={({ isActive }) =>
-              `text-sm font-medium transition-colors ${
-                isActive
-                  ? 'text-[var(--color-accent)]'
-                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-              }`
-            }
-          >
-            Settings
-          </NavLink>
+          <div className="flex items-center gap-4">
+            {onNewChat && (
+              <button
+                onClick={onNewChat}
+                className="text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                + New
+              </button>
+            )}
+            <NavLink
+              to="/preferences"
+              className={({ isActive }) =>
+                `text-sm font-medium transition-colors ${
+                  isActive
+                    ? 'text-[var(--color-accent)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                }`
+              }
+            >
+              Settings
+            </NavLink>
+          </div>
         </header>
 
         {/* Page Content - Scrollable with bottom padding on mobile for tab bar */}
