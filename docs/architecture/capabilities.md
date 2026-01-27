@@ -211,12 +211,17 @@ The AI understands relationships between entities.
 ### Entity Relationships
 
 ```
-recipes ←── recipe_ingredients ──→ ingredients
+                    ingredients (canonical)
+                    ↑ parent_category, family, tier, cuisines
+                    │
+recipes ←── recipe_ingredients ──→ ingredient_id
     ↑                                   ↓
-meal_plans                          inventory
-    ↑                              shopping_list
+meal_plans                          inventory → ingredient_id
+    ↑                              shopping_list → ingredient_id
   tasks
 ```
+
+All user-facing ingredient tables link to the canonical `ingredients` table. Enriched metadata (category, family, tier) flows into LLM context automatically via CRUD join.
 
 ---
 
@@ -284,10 +289,14 @@ If extraction fails:
 
 | Capability | Description |
 |------------|-------------|
+| Ingredient Enrichment | Canonical ingredients with parent_category, family, tier, cuisines. Auto-joined into LLM context. See [spec](../specs/ingredient-enrichment.md). |
 | Recipe Import from URL | Import recipes from 400+ sites with LLM ingredient parsing |
 | Session Resume Prompt | After 30 min inactivity, prompt to resume or start fresh |
 | Inline Progress Display | Real-time visibility into AI execution: phases, tool calls, context updates |
 | AI Context Transparency | Entity badges showing what AI read/created during each step |
+| Entity Display Summarization | Bulk entities (inventory >5 items) collapsed to summary chip with VIEW link. See [spec](../specs/streaming-ux.md). |
+| Progressive Plan Reveal | Steps appear one-by-one as they execute, not all at once |
+| Collapsible Reasoning | Reasoning trace preserved in message bubble, collapsed by default |
 
 ### Future Capabilities
 

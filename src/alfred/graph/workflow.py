@@ -915,7 +915,8 @@ async def run_alfred_streaming(
             
             elif node_name == "act" and node_output:
                 current_index = node_output.get("current_step_index", 0)
-                think_output = node_output.get("think_output")
+                # Don't overwrite think_output - preserve the one from think node
+                # (act_node doesn't return think_output, so this would be None)
 
                 # Update registry reference from state (may be dict or object)
                 updated_registry = ensure_registry(node_output.get("id_registry"))

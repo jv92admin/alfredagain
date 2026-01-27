@@ -97,12 +97,13 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
                   latestActiveContext = data.active_context
                   setActiveContext(latestActiveContext)
                 }
-                // Final response - use latestActiveContext (local var) to avoid stale state
+                // Final response - include reasoning trace for collapsible display
                 const assistantMsg: Message = {
                   id: Date.now().toString(),
                   role: 'assistant',
                   content: data.response,
                   activeContext: latestActiveContext || undefined,
+                  reasoning: localPhaseState.steps.length > 0 ? localPhaseState : undefined,
                 }
                 setMessages((prev) => [...prev, assistantMsg])
                 setPhaseState(createInitialPhaseState())

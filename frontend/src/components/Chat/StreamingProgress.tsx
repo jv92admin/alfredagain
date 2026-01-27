@@ -8,8 +8,8 @@ interface ToolCall {
   count: number
 }
 
-// Phase-level state tracking
-interface PhaseState {
+// Phase-level state tracking (exported for collapsible reasoning)
+export interface PhaseState {
   understand: {
     complete: boolean
     context?: ActiveContext
@@ -124,13 +124,16 @@ export function StreamingProgress({ phase, mode }: StreamingProgressProps) {
         <PhaseHeader label="Working..." status="active" />
       )}
 
-      {/* Act Steps */}
-      {phase.steps.map((step) => (
-        <div key={step.index} className="space-y-1">
+      {/* Act Steps - rendered progressively with transitions */}
+      {/* filter(Boolean) handles sparse arrays from out-of-order events or stale data */}
+      {phase.steps.filter(Boolean).map((step) => (
+        <div
+          key={step.index}
+          className="space-y-1 transition-all duration-200 ease-in-out opacity-100"
+        >
           <PhaseHeader
-            label={`Step ${step.index + 1}`}
+            label={step.description || `Step ${step.index + 1}`}
             status={step.status}
-            detail={step.description}
           />
           {step.toolCalls && step.toolCalls.length > 0 && (
             <ToolCallDisplay toolCalls={step.toolCalls} />
@@ -196,29 +199,38 @@ export function updatePhaseState(
       break
 
     case 'plan':
-      // Also marks understand as complete
+      // Marks understand as complete, stores goal and step count
+      // But does NOT populate steps[] - steps appear progressively via step events
       newState.understand = { ...newState.understand, complete: true }
-      // Initialize steps from plan
-      const steps = (event.steps as string[]) || []
-      newState.steps = steps.map((desc, i) => ({
-        index: i,
-        description: desc,
-        status: 'pending' as const,
-      }))
+      newState.think = {
+        complete: true,
+        goal: event.goal as string || event.message as string,
+        stepCount: event.total_steps as number,
+      }
       break
 
-    case 'step':
-      // Step starting
+    case 'step': {
+      // Step starting - create entry progressively from event data
       const stepNum = (event.step as number) - 1
       newState.currentStepIndex = stepNum
-      if (newState.steps[stepNum]) {
-        newState.steps = [...newState.steps]
+      newState.steps = [...newState.steps]
+
+      if (!newState.steps[stepNum]) {
+        // Create step entry from event data (progressive reveal)
+        newState.steps[stepNum] = {
+          index: stepNum,
+          description: event.description as string,
+          status: 'active',
+        }
+      } else {
+        // Update existing step to active
         newState.steps[stepNum] = {
           ...newState.steps[stepNum],
           status: 'active',
         }
       }
       break
+    }
 
     case 'step_complete':
       // Step completed

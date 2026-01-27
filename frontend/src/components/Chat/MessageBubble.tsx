@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MentionCard } from './MentionCard'
 import { ActiveContextDisplay } from './ActiveContextDisplay'
+import { StreamingProgress, type PhaseState } from './StreamingProgress'
 import type { ActiveContext, ActiveContextEntity } from '../../types/chat'
 
 // Re-export for consumers
@@ -12,11 +13,38 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   activeContext?: ActiveContext
+  reasoning?: PhaseState
 }
 
 interface MessageBubbleProps {
   message: Message
   onOpenFocus: (item: { type: string; id: string }) => void
+}
+
+// Collapsible reasoning trace component
+function CollapsibleReasoning({ reasoning }: { reasoning: PhaseState }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const completedSteps = reasoning.steps.filter((s) => s && s.status === 'completed').length
+
+  return (
+    <div className="mt-2 border-t border-[var(--color-border)] pt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+      >
+        <span>{expanded ? '▼' : '▶'}</span>
+        <span>{expanded ? 'Hide' : 'Show'} reasoning</span>
+        <span className="opacity-60">({completedSteps} steps completed)</span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2">
+          <StreamingProgress phase={reasoning} mode="plan" />
+        </div>
+      )}
+    </div>
+  )
 }
 
 // Parse inline mentions: @[Label](type:id)
@@ -84,6 +112,11 @@ export function MessageBubble({ message, onOpenFocus }: MessageBubbleProps) {
         <div className="text-sm leading-relaxed whitespace-pre-wrap">
           {parseContent(message.content, onOpenFocus)}
         </div>
+
+        {/* Collapsible reasoning trace - only show when there were actual steps */}
+        {!isUser && message.reasoning && message.reasoning.steps.length > 0 && (
+          <CollapsibleReasoning reasoning={message.reasoning} />
+        )}
 
         {/* V10: Active context display */}
         {!isUser && message.activeContext && (
