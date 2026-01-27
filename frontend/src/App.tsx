@@ -13,8 +13,10 @@ import { IngredientsView } from './components/Views/IngredientsView'
 import { PreferencesView } from './components/Views/PreferencesView'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
+import { ResumePrompt } from './components/Chat/ResumePrompt'
 import { useAuth } from './hooks/useAuth'
 import { apiRequest } from './lib/api'
+import { SessionStatusResponse } from './types/session'
 
 // V3 Mode types
 export type Mode = 'quick' | 'plan'
@@ -32,6 +34,9 @@ function App() {
   const mode: Mode = 'plan' // Default to plan mode (toggle removed)
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
   const onboardingCheckedForUser = useRef<string | null>(null)
+  const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null)
+  const [showResumePrompt, setShowResumePrompt] = useState(false)
+  const sessionCheckedForUser = useRef<string | null>(null)
 
   useEffect(() => {
     checkAuth()
@@ -62,6 +67,42 @@ function App() {
     setNeedsOnboarding(false)
   }
 
+  // Check session status after auth and onboarding
+  useEffect(() => {
+    if (user && needsOnboarding === false && sessionCheckedForUser.current !== user.user_id) {
+      sessionCheckedForUser.current = user.user_id
+      checkSessionStatus()
+    }
+  }, [user, needsOnboarding])
+
+  const checkSessionStatus = async () => {
+    try {
+      const status = await apiRequest<SessionStatusResponse>('/api/conversation/status')
+      setSessionStatus(status)
+      if (status.status === 'stale') {
+        setShowResumePrompt(true)
+      }
+    } catch (error) {
+      console.error('Session status check failed:', error)
+      // Don't block on failure - treat as fresh session
+    }
+  }
+
+  const handleResumeSession = () => {
+    // Implicit resume - just dismiss the prompt, backend context preserved
+    setShowResumePrompt(false)
+  }
+
+  const handleStartFresh = async () => {
+    try {
+      await apiRequest('/api/chat/reset', { method: 'POST' })
+    } catch (error) {
+      console.error('Failed to reset session:', error)
+    }
+    setChatMessages([INITIAL_MESSAGE])
+    setShowResumePrompt(false)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[var(--color-bg-primary)]">
@@ -87,7 +128,13 @@ function App() {
     return <OnboardingFlow onComplete={handleOnboardingComplete} />
   }
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
+    try {
+      await apiRequest('/api/chat/reset', { method: 'POST' })
+    } catch (error) {
+      console.error('Failed to reset backend session:', error)
+      // Still clear UI even if backend fails
+    }
     setChatMessages([INITIAL_MESSAGE])
   }
 
@@ -112,6 +159,14 @@ function App() {
           type={focusItem.type}
           id={focusItem.id}
           onClose={() => setFocusItem(null)}
+        />
+      )}
+
+      {showResumePrompt && sessionStatus && (
+        <ResumePrompt
+          sessionStatus={sessionStatus}
+          onResume={handleResumeSession}
+          onStartFresh={handleStartFresh}
         />
       )}
     </>

@@ -26,6 +26,13 @@ from alfred.graph.workflow import run_alfred, run_alfred_streaming
 from alfred.memory.conversation import initialize_conversation
 from alfred.graph.state import ConversationContext
 from alfred.config import settings
+from alfred.web.session import (
+    get_session_status,
+    touch_session,
+    ensure_session_metadata,
+    create_fresh_session,
+    is_session_expired,
+)
 
 # Onboarding module (isolated from Alfred's graph)
 # Optional import - may not be available in all deployment environments
@@ -116,9 +123,20 @@ class ChatRequest(BaseModel):
 
 
 def get_user_conversation(user_id: str) -> dict[str, Any]:
-    """Get or create conversation state for a user."""
-    if user_id not in conversations:
-        conversations[user_id] = initialize_conversation()
+    """Get or create conversation state for a user.
+
+    Handles session expiration and ensures metadata is present.
+    """
+    if user_id in conversations:
+        conv = conversations[user_id]
+        # Check if session is expired (>24h)
+        if is_session_expired(conv):
+            conversations[user_id] = create_fresh_session()
+        else:
+            # Backfill metadata for existing sessions
+            ensure_session_metadata(conv)
+    else:
+        conversations[user_id] = create_fresh_session()
     return conversations[user_id]
 
 
@@ -169,7 +187,10 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
         
         # Get conversation from user's session
         conversation = get_user_conversation(user.id)
-        
+
+        # Touch session to update last_active_at
+        touch_session(conversation)
+
         # Convert ui_changes to dict format for workflow
         ui_changes_data = None
         if req.ui_changes:
@@ -207,10 +228,29 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
 async def reset_chat(user: AuthenticatedUser = Depends(get_current_user)):
     """Reset conversation history and prompt logging session."""
     from alfred.llm.prompt_logger import reset_session
-    
-    conversations[user.id] = initialize_conversation()
+
+    conversations[user.id] = create_fresh_session()
     reset_session()  # Start fresh prompt log session
     return {"success": True}
+
+
+@app.get("/api/conversation/status")
+async def get_conversation_status(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get current session status for resume prompt logic.
+
+    Returns:
+        - status: "none" | "active" | "stale"
+        - last_active_at: ISO timestamp or null
+        - preview: {last_message, message_count} or null
+    """
+    conv = conversations.get(user.id)
+
+    # Auto-clear expired sessions
+    if conv and is_session_expired(conv):
+        del conversations[user.id]
+        conv = None
+
+    return get_session_status(conv)
 
 
 @app.get("/api/debug/logging")
@@ -238,7 +278,10 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
             
             # Get conversation from user's session
             conversation = get_user_conversation(user.id)
-            
+
+            # Touch session to update last_active_at
+            touch_session(conversation)
+
             # Convert ui_changes to dict format for workflow
             ui_changes_data = None
             if req.ui_changes:

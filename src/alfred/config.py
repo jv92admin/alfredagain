@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # Skip auth for now, use this hardcoded user
     dev_user_id: str = "00000000-0000-0000-0000-000000000002"  # Alice
 
+    # Session management
+    session_active_timeout_minutes: int = 30  # Prompt to resume after this
+    session_expire_hours: int = 24  # Auto-clear session after this
+
     @property
     def is_development(self) -> bool:
         return self.alfred_env == "development"
