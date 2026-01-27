@@ -234,6 +234,51 @@ See [docs/architecture/context-and-session.md](../../docs/architecture/context-a
 
 ---
 
+## Mobile Responsiveness Patterns
+
+### Breakpoints
+
+Using Tailwind defaults: `sm` (640px), `md` (768px), `lg` (1024px)
+
+### Action Button Visibility
+
+Edit/Delete buttons use hover-reveal on desktop, always visible on mobile:
+
+```tsx
+className="md:opacity-0 md:group-hover:opacity-100 ..."
+```
+
+### Text Truncation in Flex Containers
+
+For flex items with variable-length text:
+
+```tsx
+<div className="flex items-center gap-3 min-w-0">     {/* min-w-0 allows shrinking */}
+  <span className="shrink-0 ...">Badge</span>          {/* Prevent badge shrinking */}
+  <span className="truncate ...">Long text here</span> {/* Truncate with ellipsis */}
+</div>
+```
+
+### Responsive Layouts
+
+Tables don't work well on mobile. Use dual layouts:
+
+```tsx
+{/* Mobile: Cards */}
+<div className="md:hidden space-y-3">
+  {items.map(item => <Card key={item.id} />)}
+</div>
+
+{/* Desktop: Table */}
+<div className="hidden md:block">
+  <table>...</table>
+</div>
+```
+
+Examples: `InventoryView.tsx`, `ShoppingView.tsx`
+
+---
+
 ## Commands
 
 ```bash

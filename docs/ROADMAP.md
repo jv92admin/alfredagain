@@ -1,6 +1,6 @@
 # Alfred Roadmap
 
-**Last Updated:** 2026-01-25
+**Last Updated:** 2026-01-26
 
 ---
 
@@ -15,6 +15,7 @@
 | [architecture/capabilities.md](architecture/capabilities.md) | User-facing capabilities | Feature changes |
 | [specs/context-api-spec.md](specs/context-api-spec.md) | Context builders | API changes |
 | [specs/onboarding-spec.md](specs/onboarding-spec.md) | User onboarding | Onboarding changes |
+| [specs/session-persistence-spec.md](specs/session-persistence-spec.md) | Session timeout, resume flow | Session changes |
 
 ---
 
@@ -29,6 +30,34 @@
 ---
 
 ## Recently Completed
+
+### 2026-01-26: Session Management Phase 1 - Timeout + Resume Prompt
+
+Session timeout and resume flow for returning users.
+
+- **Backend: Session Module** (`src/alfred/web/session.py`)
+  - `get_session_status()` - Returns active/stale/none based on timestamps
+  - `touch_session()` - Updates last_active_at on each chat request
+  - `create_fresh_session()` - Initializes conversation with session metadata
+  - `is_session_expired()` - Checks 24h expiration threshold
+
+- **Backend: New Endpoint**
+  - `GET /api/conversation/status` - Returns session status with preview
+  - Auto-clears expired sessions (>24h)
+
+- **Frontend: ResumePrompt Component**
+  - Dismissible modal shown after 30 min inactivity
+  - Shows last message preview and relative time
+  - [Resume] continues with backend context, [Start Fresh] resets
+
+- **Bug Fix: New Chat Button**
+  - `handleNewChat` now calls `/api/chat/reset` (was only clearing frontend)
+
+- **Configurable Timeouts** (`config.py`)
+  - `session_active_timeout_minutes: 30`
+  - `session_expire_hours: 24`
+
+- **Spec:** [specs/session-persistence-spec.md](specs/session-persistence-spec.md)
 
 ### 2026-01-25: Streaming Architecture Phase A - Active Context Events
 

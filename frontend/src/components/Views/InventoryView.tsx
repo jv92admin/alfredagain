@@ -218,7 +218,59 @@ export function InventoryView() {
           </motion.button>
         </div>
 
-        <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden">
+        {/* Mobile: Card layout */}
+        <div className="md:hidden space-y-3">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="group flex items-center gap-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-[var(--color-text-primary)] truncate">
+                  {item.name}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-1 text-sm text-[var(--color-text-muted)]">
+                  {/* Quantity - clickable for inline edit */}
+                  {editingId === item.id ? (
+                    <input
+                      autoFocus
+                      type="number"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={() => saveQuantity(item)}
+                      onKeyDown={(e) => handleKeyDown(e, item)}
+                      className="w-20 px-2 py-1 bg-[var(--color-bg-primary)] border border-[var(--color-accent)] rounded text-[var(--color-text-primary)] text-sm focus:outline-none"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => startEditing(item)}
+                      className="text-[var(--color-accent)] hover:underline"
+                    >
+                      {item.quantity} {item.unit || ''}
+                    </button>
+                  )}
+                  {item.location && <span>· {item.location}</span>}
+                  {item.expiry_date && <span>· Exp: {item.expiry_date}</span>}
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingItem(item)}
+                className="text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity px-2"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => deleteItem(item)}
+                className="text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity px-2"
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop: Table layout */}
+        <div className="hidden md:block bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden">
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--color-border)]">
@@ -292,7 +344,7 @@ export function InventoryView() {
           </table>
         </div>
 
-        <p className="mt-4 text-sm text-[var(--color-text-muted)] hidden md:block">
+        <p className="mt-4 text-sm text-[var(--color-text-muted)]">
           Click quantity to quick-edit.
         </p>
       </div>

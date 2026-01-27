@@ -62,6 +62,13 @@ DELETE /api/{entity_type}/{id}    # Delete
 | Meal Plans | `/api/meal-plans` |
 | Tasks | `/api/tasks` |
 
+### Session Endpoints
+
+```
+GET  /api/conversation/status    # Check session status (active/stale/none)
+POST /api/chat/reset             # Reset conversation and start fresh
+```
+
 ### Onboarding Endpoints
 
 ```
@@ -222,6 +229,7 @@ meal_plans                          inventory
 
 | Capability | Description |
 |------------|-------------|
+| Session Resume Prompt | After 30 min inactivity, prompt to resume or start fresh |
 | Inline Progress Display | Real-time visibility into AI execution: phases, tool calls, context updates |
 | AI Context Transparency | Entity badges showing what AI read/created during each step |
 
@@ -229,6 +237,8 @@ meal_plans                          inventory
 
 | Capability | Description |
 |------------|-------------|
+| Chat History on Resume | Load and display prior messages when resuming session |
+| Multi-Conversation History | Sidebar with conversation list, pins, search |
 | Persistent Context Bar | Always-visible context panel (current: inline per-message) |
 | Pin/Unpin Entities | User control over AI context retention |
 | Voice Input | Speak requests instead of typing |

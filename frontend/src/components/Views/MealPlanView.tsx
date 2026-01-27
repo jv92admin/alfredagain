@@ -247,11 +247,11 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
                       onClick={() => onOpenFocus({ type: 'meal_plan', id: plan.id })}
                       className="flex-1 flex items-center justify-between text-left"
                     >
-                      <div className="flex items-center gap-3">
-                        <span className="px-2 py-0.5 bg-[var(--color-accent-muted)] text-[var(--color-accent)] rounded-[var(--radius-sm)] text-sm capitalize">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="shrink-0 px-2 py-0.5 bg-[var(--color-accent-muted)] text-[var(--color-accent)] rounded-[var(--radius-sm)] text-sm capitalize">
                           {plan.meal_type}
                         </span>
-                        <span className="text-[var(--color-text-primary)]">
+                        <span className="truncate text-[var(--color-text-primary)]">
                           {display.text}
                         </span>
                         {display.isRecipe && (
@@ -260,7 +260,7 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
                               e.stopPropagation()
                               onOpenFocus({ type: 'recipe', id: display.recipeId! })
                             }}
-                            className="text-xs text-[var(--color-accent)] hover:underline cursor-pointer"
+                            className="shrink-0 text-xs text-[var(--color-accent)] hover:underline cursor-pointer"
                           >
                             View Recipe →
                           </span>
@@ -277,14 +277,14 @@ export function MealPlanView({ onOpenFocus }: MealPlanViewProps) {
                         e.stopPropagation()
                         setEditingPlan(plan)
                       }}
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity px-2"
+                      className="md:opacity-0 md:group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-opacity px-2"
                       title="Edit"
                     >
                       ✏️
                     </button>
                     <button
                       onClick={(e) => deletePlan(e, plan)}
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity px-2"
+                      className="md:opacity-0 md:group-hover:opacity-100 text-[var(--color-text-muted)] hover:text-[var(--color-error)] transition-opacity px-2"
                       title="Delete"
                     >
                       🗑️
