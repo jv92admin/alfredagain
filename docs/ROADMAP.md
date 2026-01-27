@@ -31,6 +31,40 @@
 
 ## Recently Completed
 
+### 2026-01-26: Recipe Import from URL
+
+Import recipes from external websites with LLM-powered ingredient parsing.
+
+- **Backend: Extraction Pipeline** (`src/alfred/recipe_import/`)
+  - `extract_recipe()` - Tries recipe-scrapers (400+ sites), falls back to JSON-LD
+  - `parse_and_link_ingredients()` - LLM parses raw strings into structured data
+  - Dynamic schema injection via `get_table_schema()` for future-proofing
+  - Auto-links parsed ingredients to master ingredients DB via `lookup_ingredient()`
+
+- **Backend: New Endpoints**
+  - `POST /api/recipes/import` - Extract recipe from URL, return preview
+  - `POST /api/recipes/import/confirm` - Save reviewed recipe to database
+
+- **Frontend: Import Wizard** (`frontend/src/components/Recipe/`)
+  - `RecipeImportModal` - URL input with extraction status
+  - `RecipePreviewForm` - Editable preview with structured ingredients
+  - `ImportFallback` - Chat fallback when extraction fails
+  - Responsive design: stacked layout on mobile, horizontal on desktop
+
+- **LLM Ingredient Parsing** (gpt-4.1-mini)
+  - Extracts: name (canonical), quantity, unit, notes (prep instructions), is_optional
+  - "to taste" NOT marked optional (flexible amount ≠ optional)
+  - Only explicit "optional", "if desired" triggers `is_optional: true`
+
+- **Context Injection Updates** (`injection.py`, `schema.py`)
+  - `source_url` now visible in recipe context
+  - `notes`, `is_optional` visible in recipe_ingredients context
+  - Semantic notes guide AI on proper ingredient handling
+
+- **Tests:** 35 unit tests for extraction and normalization
+
+- **Spec:** [ideas/Recipe Import Feature Specification.txt](ideas/Recipe%20Import%20Feature%20Specification.txt)
+
 ### 2026-01-26: Session Management Phase 1 - Timeout + Resume Prompt
 
 Session timeout and resume flow for returning users.
@@ -196,7 +230,6 @@ Full CRUD across all subdomains with AI context awareness.
 ### Medium Priority
 - [ ] Shopping list grouping by store section
 - [ ] Ingredient substitution suggestions
-- [ ] Recipe import from URL (parse external recipes)
 
 ### Low Priority / Ideas
 - [ ] Voice input support

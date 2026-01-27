@@ -77,6 +77,13 @@ POST /api/onboarding/step        # Submit step data
 POST /api/onboarding/complete    # Finalize preferences
 ```
 
+### Recipe Import Endpoints
+
+```
+POST /api/recipes/import          # Extract recipe from URL, return preview
+POST /api/recipes/import/confirm  # Save reviewed recipe to database
+```
+
 ---
 
 ## Capability 1: Direct CRUD via UI
@@ -213,6 +220,53 @@ meal_plans                          inventory
 
 ---
 
+## Capability 6: Recipe Import from URL
+
+Users can import recipes from external websites via URL.
+
+### Import Flow
+
+```
+1. User clicks "Import" on Recipes view
+2. User pastes URL (e.g., allrecipes.com/recipe/...)
+3. System extracts recipe data:
+   - Try recipe-scrapers (400+ sites)
+   - Fall back to JSON-LD/Schema.org
+4. Preview shown with editable fields
+5. User reviews/edits, clicks Save
+6. Recipe + ingredients saved to database
+```
+
+### LLM Ingredient Parsing
+
+Raw ingredient strings are parsed into structured data:
+
+| Raw String | Parsed Result |
+|------------|---------------|
+| "2 cloves garlic, minced" | name: garlic, qty: 2, unit: clove, notes: minced |
+| "salt, to taste" | name: salt, notes: to taste, is_optional: false |
+| "parsley (optional)" | name: parsley, notes: for garnish, is_optional: true |
+
+**Key Rules:**
+- "to taste" ≠ optional (flexible amount, still required)
+- Only explicit "optional", "if desired" triggers `is_optional: true`
+- Prep instructions (minced, diced) go in `notes`, not `name`
+
+### Ingredient Linking
+
+Parsed ingredients are linked to the master ingredients database:
+- `lookup_ingredient()` matches canonical names
+- `ingredient_id` stored for future nutrition/inventory integration
+- Unmatched ingredients saved without link (graceful degradation)
+
+### Fallback Behavior
+
+If extraction fails:
+- User sees fallback message with chat suggestion
+- User can paste recipe text in chat for manual parsing
+
+---
+
 ## Implementation Status
 
 | Capability | Status |
@@ -224,11 +278,13 @@ meal_plans                          inventory
 | Natural language interface | Complete |
 | Content generation | Complete |
 | Cross-entity intelligence | Complete |
+| Recipe import from URL | Complete |
 
 ### Recently Added
 
 | Capability | Description |
 |------------|-------------|
+| Recipe Import from URL | Import recipes from 400+ sites with LLM ingredient parsing |
 | Session Resume Prompt | After 30 min inactivity, prompt to resume or start fresh |
 | Inline Progress Display | Real-time visibility into AI execution: phases, tool calls, context updates |
 | AI Context Transparency | Entity badges showing what AI read/created during each step |
