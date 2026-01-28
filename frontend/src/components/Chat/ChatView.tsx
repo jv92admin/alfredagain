@@ -28,6 +28,8 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const { getAndClearUIChanges } = useChatContext()
+  // Track initial message count to avoid scrolling on mount
+  const initialMessageCount = useRef(messages.length)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -41,7 +43,9 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
   }
 
   useEffect(() => {
-    if (messages.length > 0 && isNearBottom()) {
+    // Only scroll when NEW messages are added after mount, not on initial render
+    // This prevents mobile Chrome from triggering address bar hide on load
+    if (messages.length > initialMessageCount.current && isNearBottom()) {
       scrollToBottom()
     }
   }, [messages, phaseState])
