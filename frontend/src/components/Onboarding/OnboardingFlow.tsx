@@ -2,16 +2,15 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiRequest } from '../../lib/api'
 import { ConstraintsStep } from './steps/ConstraintsStep'
-import { PantryStep } from './steps/PantryStep'
 import { CuisinesStep } from './steps/CuisinesStep'
-import { DiscoveryStep } from './steps/DiscoveryStep'
+import { StaplesStep } from './steps/StaplesStep'
 import { StyleInterviewStep } from './steps/StyleInterviewStep'
 
 interface OnboardingFlowProps {
   onComplete: () => void
 }
 
-type Step = 'constraints' | 'pantry' | 'cuisines' | 'discovery' | 'interview' | 'complete'
+type Step = 'constraints' | 'cuisines' | 'staples' | 'interview' | 'complete'
 
 interface OnboardingState {
   phase: string
@@ -21,10 +20,10 @@ interface OnboardingState {
   ingredient_preferences: { likes: number; dislikes: number }
 }
 
-// Note: pantry + discovery steps hidden until ingredient DB improvements
 const STEPS: { id: Step; label: string }[] = [
   { id: 'constraints', label: 'Basics' },
   { id: 'cuisines', label: 'Cuisines' },
+  { id: 'staples', label: 'Staples' },
   { id: 'interview', label: 'Style' },
 ]
 
@@ -46,15 +45,15 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       
       if (phase === 'CONSTRAINTS') {
         setCurrentStep('constraints')
-      } else if (phase === 'DISCOVERY') {
-        // Skipping pantry/discovery for now - go to cuisines or interview
+      } else if (phase === 'DISCOVERY' || phase === 'STAPLES') {
+        // DISCOVERY is legacy - both route to staples step
+        // Check if user has completed prior steps
         if (!data.constraints) {
           setCurrentStep('constraints')
         } else if (data.cuisine_preferences.length === 0) {
           setCurrentStep('cuisines')
         } else {
-          // Skip discovery, go straight to interview
-          setCurrentStep('interview')
+          setCurrentStep('staples')
         }
       } else if (phase === 'STYLE_RECIPES' || phase === 'STYLE_MEAL_PLANS' || phase === 'STYLE_TASKS' || phase === 'HABITS') {
         // All style-related phases go to interview step
@@ -76,8 +75,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   }
 
   const nextStep = async () => {
-    // Note: pantry + discovery steps hidden until ingredient DB improvements
-    const stepOrder: Step[] = ['constraints', 'cuisines', 'interview', 'complete']
+    const stepOrder: Step[] = ['constraints', 'cuisines', 'staples', 'interview', 'complete']
     const idx = stepOrder.indexOf(currentStep)
     if (idx < stepOrder.length - 1) {
       const next = stepOrder[idx + 1]
@@ -97,8 +95,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   }
 
   const prevStep = () => {
-    // Note: pantry + discovery steps hidden until ingredient DB improvements
-    const stepOrder: Step[] = ['constraints', 'cuisines', 'interview']
+    const stepOrder: Step[] = ['constraints', 'cuisines', 'staples', 'interview']
     const idx = stepOrder.indexOf(currentStep)
     if (idx > 0) {
       setCurrentStep(stepOrder[idx - 1])
@@ -194,14 +191,11 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
               {currentStep === 'constraints' && (
                 <ConstraintsStep onNext={nextStep} />
               )}
-              {currentStep === 'pantry' && (
-                <PantryStep onNext={nextStep} onBack={prevStep} />
-              )}
               {currentStep === 'cuisines' && (
                 <CuisinesStep onNext={nextStep} onBack={prevStep} />
               )}
-              {currentStep === 'discovery' && (
-                <DiscoveryStep onNext={nextStep} onBack={prevStep} />
+              {currentStep === 'staples' && (
+                <StaplesStep onNext={nextStep} onBack={prevStep} />
               )}
               {currentStep === 'interview' && (
                 <StyleInterviewStep onNext={nextStep} onBack={prevStep} />

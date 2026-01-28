@@ -84,20 +84,14 @@ class ConstraintsRequest(BaseModel):
     available_equipment: list[str] = Field(default_factory=list)
 
 
-class PantryRequest(BaseModel):
-    """Phase 2a: Initial pantry items."""
-    items: list[dict] = Field(default_factory=list)
-    # Each: {"name": str, "category": str | None}
-
-
-class DiscoverySelectionRequest(BaseModel):
-    """Phase 2b: Ingredient discovery round selection."""
-    selections: list[str] = Field(default_factory=list)  # Ingredient IDs
-
-
 class CuisineRequest(BaseModel):
     """Phase 2c: Cuisine selections."""
     cuisines: list[str] = Field(default_factory=list)
+
+
+class StaplesRequest(BaseModel):
+    """Phase 2d: Staples selection (ingredients user always keeps stocked)."""
+    ingredient_ids: list[str] = Field(default_factory=list)
 
 
 class StyleFeedbackRequest(BaseModel):
@@ -247,10 +241,9 @@ def get_completed_phases(state: OnboardingState) -> list[str]:
 async def get_onboarding_state(user: AuthenticatedUser = Depends(get_current_user)) -> StateResponse:
     """Get current onboarding progress."""
     from alfred.db.client import get_service_client
-    from .ingredient_discovery import get_user_preferences_summary
-    
+
     client = get_service_client()
-    
+
     # First check if user already completed onboarding
     completed = client.table("onboarding_data").select("user_id").eq("user_id", user.id).limit(1).execute()
     if completed.data:
@@ -259,23 +252,17 @@ async def get_onboarding_state(user: AuthenticatedUser = Depends(get_current_use
             user_id=user.id,
             current_phase="complete",
             phase="complete",
-            phases_completed=["constraints", "discovery", "style_recipes"],
+            phases_completed=["constraints", "cuisines", "staples", "style_recipes"],
             payload_preview={},
             constraints={},
             initial_inventory=[],
             cuisine_preferences=[],
             ingredient_preferences={"likes": 0, "dislikes": 0},
         )
-    
+
     # Check for in-progress session or create new one
     state = await get_or_create_session(user.id)
-    
-    # Get ingredient preferences summary
-    try:
-        prefs_summary = await get_user_preferences_summary(user.id)
-    except Exception:
-        prefs_summary = {"likes": 0, "dislikes": 0, "total": 0}
-    
+
     return StateResponse(
         user_id=state.user_id,
         current_phase=state.current_phase.value,
@@ -286,10 +273,7 @@ async def get_onboarding_state(user: AuthenticatedUser = Depends(get_current_use
         constraints=state.constraints if state.constraints else None,
         initial_inventory=state.pantry_items,
         cuisine_preferences=state.cuisine_selections,
-        ingredient_preferences={
-            "likes": prefs_summary.get("likes", 0),
-            "dislikes": prefs_summary.get("dislikes", 0),
-        },
+        ingredient_preferences={"likes": 0, "dislikes": 0},
     )
 
 
@@ -400,56 +384,8 @@ async def submit_constraints(request: ConstraintsRequest, user: AuthenticatedUse
 
 
 # =============================================================================
-# Endpoints: Phase 2 - Pantry, Cuisines & Ingredient Discovery
+# Endpoints: Phase 2 - Cuisines & Staples
 # =============================================================================
-
-
-# -----------------------------------------------------------------------------
-# Pantry Seeding
-# -----------------------------------------------------------------------------
-
-@router.get("/pantry/search")
-async def search_pantry_ingredients(q: str, limit: int = 10):
-    """Search ingredients for pantry seeding."""
-    from .pantry import search_ingredients
-    
-    results = await search_ingredients(q, limit=limit)
-    return {"results": results}
-
-
-@router.get("/pantry/staples")
-async def get_pantry_staples():
-    """Get common pantry staples for quick-add."""
-    from .pantry import get_common_staples
-    
-    staples = await get_common_staples()
-    return {"staples": staples}
-
-
-@router.post("/pantry", response_model=PhaseResponse)
-async def submit_pantry(request: PantryRequest, user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
-    """Submit initial pantry items."""
-    from .pantry import validate_pantry_items
-    
-    state = await get_or_create_session(user.id)
-    
-    # Validate items
-    valid_items, errors = validate_pantry_items(request.items)
-    if errors:
-        logger.warning(f"Pantry validation errors: {errors}")
-    
-    state.pantry_items = valid_items
-    state.payload_draft["initial_inventory"] = valid_items
-    
-    # Don't auto-advance - user controls when to move on
-    await save_session(state)
-    
-    return PhaseResponse(
-        success=True,
-        current_phase=state.current_phase.value,
-        next_phase=get_next_phase(state).value,
-        message=f"Pantry saved ({len(valid_items)} items)",
-    )
 
 
 # -----------------------------------------------------------------------------
@@ -492,213 +428,70 @@ async def submit_cuisines(request: CuisineRequest, user: AuthenticatedUser = Dep
 
 
 # -----------------------------------------------------------------------------
-# Ingredient Discovery (Likes/Dislikes)
+# Staples Selection (Phase 2b)
 # -----------------------------------------------------------------------------
 
-@router.get("/discovery/categories")
-async def get_discovery_categories():
-    """Get available categories for ingredient discovery."""
-    from .ingredient_discovery import get_discovery_categories
-    
-    return {"categories": get_discovery_categories()}
 
+@router.get("/staples/options")
+async def get_staples_options(
+    cuisines: str | None = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Get staples options grouped by parent_category.
 
-@router.get("/discovery/ingredients")
-async def get_discovery_ingredients(category: str | None = None, user: AuthenticatedUser = Depends(get_current_user)):
-    """
-    Get next batch of ingredients for discovery.
-    
-    Uses embeddings from user's liked ingredients (from pantry step) to seed
-    smarter suggestions. Falls back to random if no likes or embeddings fail.
-    
-    If category is provided, get ingredients from that category.
-    Otherwise, get next batch from rotating categories.
-    """
-    from .ingredient_discovery import (
-        get_ingredients_for_category,
-        get_next_discovery_batch,
-        get_user_preferences_count,
-    )
-    
-    state = await get_or_create_session(user.id)
-    
-    # Track shown ingredient IDs
-    shown_ids = state.payload_draft.get("_discovery_shown_ids", [])
-    
-    # Get liked ingredient IDs from pantry step (for embedding-based seeding)
-    liked_items = state.payload_draft.get("initial_inventory", [])
-    liked_ingredient_ids = []
-    
-    # Try to resolve ingredient names to IDs if we have names
-    if liked_items:
-        from alfred.db.client import get_service_client
-        client = get_service_client()
-        try:
-            names = [item.get("name") for item in liked_items if item.get("name")]
-            if names:
-                result = client.table("ingredients").select("id, name").in_("name", names).execute()
-                liked_ingredient_ids = [r["id"] for r in (result.data or [])]
-        except Exception as e:
-            logger.debug(f"Failed to resolve liked ingredient IDs: {e}")
-    
-    if category:
-        # Get from specific category, seeded by likes if available
-        ingredients = await get_ingredients_for_category(
-            category,
-            limit=8,
-            exclude_ids=shown_ids,
-            seed_from_likes=liked_ingredient_ids if liked_ingredient_ids else None,
-        )
-        prefs_count = await get_user_preferences_count(user.id)
-        
-        return {
-            "ingredients": ingredients,
-            "category": {"id": category},
-            "can_continue": prefs_count >= 20,
-            "total_preferences": prefs_count,
+    Query params:
+        cuisines: Comma-separated list of cuisine codes (e.g., "indian,thai")
+
+    Returns:
+        {
+            "categories": [...],
+            "pre_selected_ids": [...],
+            "cuisine_suggested_ids": [...]
         }
-    else:
-        # Get next batch from rotating categories
-        prefs_count = await get_user_preferences_count(user.id)
-        return await get_next_discovery_batch(shown_ids, prefs_count)
-
-
-class IngredientPreferenceRequest(BaseModel):
-    """Single ingredient preference."""
-    ingredient_id: str
-    preference: str  # "like" or "dislike"
-
-
-class IngredientPreferencesRequest(BaseModel):
-    """Batch of ingredient preferences."""
-    preferences: list[IngredientPreferenceRequest]
-
-
-@router.post("/discovery/preference")
-async def submit_ingredient_preference(
-    request: IngredientPreferenceRequest,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Submit a single ingredient preference (like/dislike)."""
-    from .ingredient_discovery import save_ingredient_preference, get_user_preferences_count
-    
-    state = await get_or_create_session(user.id)
-    
-    # Validate preference value
-    if request.preference not in ("like", "dislike"):
-        raise HTTPException(status_code=400, detail="Preference must be 'like' or 'dislike'")
-    
-    # Save preference to flavor_preferences table
-    success = await save_ingredient_preference(
-        user.id,
-        request.ingredient_id,
-        request.preference,
-    )
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save preference")
-    
-    # Track shown IDs
-    shown_ids = state.payload_draft.get("_discovery_shown_ids", [])
-    if request.ingredient_id not in shown_ids:
-        shown_ids.append(request.ingredient_id)
-        state.payload_draft["_discovery_shown_ids"] = shown_ids
-        await save_session(state)
-    
-    # Get updated count
-    prefs_count = await get_user_preferences_count(user.id)
-    
-    return {
-        "success": True,
-        "total_preferences": prefs_count,
-        "can_continue": prefs_count >= 20,
-    }
-
-
-@router.post("/discovery/preferences")
-async def submit_ingredient_preferences_batch(
-    request: IngredientPreferencesRequest,
-    user: AuthenticatedUser = Depends(get_current_user),
-):
-    """Submit multiple ingredient preferences at once."""
-    from .ingredient_discovery import (
-        save_ingredient_preferences_batch,
-        get_user_preferences_count,
-    )
-    
-    state = await get_or_create_session(user.id)
-    
-    # Validate preferences
-    valid_prefs = [
-        {"ingredient_id": p.ingredient_id, "preference": p.preference}
-        for p in request.preferences
-        if p.preference in ("like", "dislike")
-    ]
-    
-    # Save batch
-    saved_count = await save_ingredient_preferences_batch(user.id, valid_prefs)
-    
-    # Track shown IDs
-    shown_ids = state.payload_draft.get("_discovery_shown_ids", [])
-    for pref in valid_prefs:
-        if pref["ingredient_id"] not in shown_ids:
-            shown_ids.append(pref["ingredient_id"])
-    state.payload_draft["_discovery_shown_ids"] = shown_ids
-    await save_session(state)
-    
-    # Get updated count
-    prefs_count = await get_user_preferences_count(user.id)
-    
-    return {
-        "success": True,
-        "saved": saved_count,
-        "total_preferences": prefs_count,
-        "can_continue": prefs_count >= 20,
-    }
-
-
-@router.get("/discovery/summary")
-async def get_discovery_summary(user: AuthenticatedUser = Depends(get_current_user)):
-    """Get summary of user's ingredient preferences."""
-    from .ingredient_discovery import get_user_preferences_summary
-    
-    return await get_user_preferences_summary(user.id)
-
-
-@router.post("/discovery/complete", response_model=PhaseResponse)
-async def complete_discovery(user: AuthenticatedUser = Depends(get_current_user)) -> PhaseResponse:
     """
-    Mark ingredient discovery as complete and move to next phase.
-    
-    User can call this when ready to proceed (after 20+ preferences recommended).
+    from .staples import get_staples_options
+
+    # Parse cuisines from query param
+    cuisine_list = []
+    if cuisines:
+        cuisine_list = [c.strip() for c in cuisines.split(",") if c.strip()]
+
+    return await get_staples_options(cuisines=cuisine_list)
+
+
+@router.post("/staples", response_model=PhaseResponse)
+async def submit_staples(
+    request: StaplesRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> PhaseResponse:
     """
-    from .ingredient_discovery import get_user_preferences_summary
-    
+    Submit staples selection.
+
+    Saves selected ingredient IDs to state.staple_selections.
+    Advances phase to STYLE_RECIPES.
+    """
+    from .staples import validate_staple_selections
+
     state = await get_or_create_session(user.id)
-    
-    # Get summary for payload
-    summary = await get_user_preferences_summary(user.id)
-    
-    # Store summary in payload
-    state.payload_draft["ingredient_preferences"] = {
-        "total": summary["total"],
-        "likes": summary["likes"],
-        "dislikes": summary["dislikes"],
-    }
-    
-    # Mark discovery complete
-    state.ingredient_discovery.completed = True
-    
-    # Move to next phase (style discovery or skip to complete)
-    state.current_phase = OnboardingPhase.STYLE_RECIPES
-    
+
+    # Validate ingredient IDs
+    valid_ids = validate_staple_selections(request.ingredient_ids)
+
+    state.staple_selections = valid_ids
+
+    # Advance to next phase (STAPLES → STYLE_RECIPES)
+    state.current_phase = OnboardingPhase.STAPLES
+    next_phase = get_next_phase(state)
+    state.current_phase = next_phase
+
     await save_session(state)
-    
+
     return PhaseResponse(
         success=True,
         current_phase=state.current_phase.value,
         next_phase=get_next_phase(state).value,
-        message=f"Discovery complete! {summary['likes']} likes, {summary['dislikes']} dislikes",
+        message=f"Staples saved ({len(valid_ids)} selected)",
     )
 
 
@@ -1172,6 +965,7 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
             "available_equipment": prefs.get("available_equipment", []),
             "favorite_cuisines": payload_dict.get("cuisine_preferences", []),
             "subdomain_guidance": payload_dict.get("subdomain_guidance", {}),
+            "assumed_staples": payload_dict.get("assumed_staples", []),
         }
         
         client.table("preferences").upsert(
@@ -1222,19 +1016,23 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
     constraints = payload.get("constraints", {})
     
     # 2. Build preferences upsert
+    # Note: payload uses "preferences" key (from OnboardingPayload.preferences)
+    prefs = payload.get("preferences", constraints)  # Fallback to constraints for older payloads
     prefs_data = {
         "user_id": user.id,
         # Hard constraints
-        "dietary_restrictions": constraints.get("dietary_restrictions", []),
-        "allergies": constraints.get("allergies", []),
-        "cooking_skill_level": constraints.get("cooking_skill_level", "intermediate"),
-        "household_size": constraints.get("household_size", 1),
+        "dietary_restrictions": prefs.get("dietary_restrictions", []),
+        "allergies": prefs.get("allergies", []),
+        "cooking_skill_level": prefs.get("cooking_skill_level", "intermediate"),
+        "household_size": prefs.get("household_size", 1),
         # Equipment (used by recipes/meal_plans)
-        "available_equipment": constraints.get("available_equipment", []),
+        "available_equipment": prefs.get("available_equipment", []),
         # Taste preferences
         "favorite_cuisines": payload.get("cuisine_preferences", []),
         # Subdomain guidance (injected into Think/Act prompts)
         "subdomain_guidance": payload.get("subdomain_guidance", {}),
+        # Assumed staples (user-confirmed always-stocked ingredients)
+        "assumed_staples": payload.get("assumed_staples", []),
     }
     
     # 3. UPSERT to preferences table
@@ -1257,6 +1055,7 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
                 "available_equipment": prefs_data["available_equipment"],
                 "favorite_cuisines": prefs_data["favorite_cuisines"],
                 "subdomain_guidance_keys": list(prefs_data["subdomain_guidance"].keys()),
+                "assumed_staples_count": len(prefs_data["assumed_staples"]),
             },
         }
         

@@ -132,6 +132,9 @@ class OnboardingPayload:
     
     # Phase 2: Selected cuisines
     cuisine_preferences: list[str] = field(default_factory=list)
+
+    # Phase 2b: User-confirmed staples (ingredient UUIDs)
+    assumed_staples: list[str] = field(default_factory=list)
     
     # =========================================================================
     # STORED BUT NOT WIRED YET
@@ -166,6 +169,7 @@ class OnboardingPayload:
             # Wired later
             "stylistic_examples": self.stylistic_examples,
             "cuisine_preferences": self.cuisine_preferences,
+            "assumed_staples": self.assumed_staples,
             # Stored (not wired)
             "preference_interactions": {
                 k: v.to_dict() if isinstance(v, PreferenceInteraction) else v
@@ -225,6 +229,9 @@ def build_payload_from_state(state: "OnboardingState") -> OnboardingPayload:
     
     # Phase 2: Cuisines
     payload.cuisine_preferences = state.cuisine_selections
+
+    # Phase 2b: Staples
+    payload.assumed_staples = state.staple_selections
     
     # Phase 2: Ingredient discovery → ingredient_preferences
     if state.ingredient_discovery.preference_scores:

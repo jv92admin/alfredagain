@@ -15,7 +15,8 @@ import json
 class OnboardingPhase(Enum):
     """Onboarding flow phases."""
     CONSTRAINTS = "constraints"          # Phase 1: Hard constraints form
-    DISCOVERY = "discovery"              # Phase 2: Pantry + Cuisines + Ingredient preferences
+    DISCOVERY = "discovery"              # Phase 2: (Legacy) - now routes to STAPLES
+    STAPLES = "staples"                  # Phase 2b: Staples selection (NEW)
     STYLE_RECIPES = "style_recipes"      # Phase 3a: Recipe style discovery
     STYLE_MEAL_PLANS = "style_meal_plans"# Phase 3b: Meal plan style discovery
     STYLE_TASKS = "style_tasks"          # Phase 3c: Task style discovery
@@ -72,6 +73,9 @@ class OnboardingState:
         default_factory=IngredientDiscoveryState
     )
     cuisine_selections: list[str] = field(default_factory=list)
+
+    # Phase 2b: Staples selection (ingredient UUIDs user always keeps stocked)
+    staple_selections: list[str] = field(default_factory=list)
     
     # Phase 3: Style Discovery (one per domain)
     style_recipes: StyleDiscoveryState = field(
@@ -164,9 +168,13 @@ def get_next_phase(state: OnboardingState) -> OnboardingPhase:
             return OnboardingPhase.DISCOVERY
     
     elif phase == OnboardingPhase.DISCOVERY:
-        # Discovery is complete when user explicitly marks it
-        if state.ingredient_discovery.completed:
-            return OnboardingPhase.STYLE_RECIPES
+        # Legacy: Users stuck in DISCOVERY phase → route to STAPLES
+        # (Discovery is now skipped, cuisines go directly to staples)
+        return OnboardingPhase.STAPLES
+
+    elif phase == OnboardingPhase.STAPLES:
+        # Staples is complete, move to style interview
+        return OnboardingPhase.STYLE_RECIPES
     
     elif phase == OnboardingPhase.STYLE_RECIPES:
         if state.style_recipes.completed:
@@ -195,6 +203,7 @@ def can_skip_phase(phase: OnboardingPhase) -> bool:
     """Check if a phase can be skipped."""
     skippable = {
         OnboardingPhase.DISCOVERY,
+        OnboardingPhase.STAPLES,
         OnboardingPhase.STYLE_RECIPES,
         OnboardingPhase.STYLE_MEAL_PLANS,
         OnboardingPhase.STYLE_TASKS,
