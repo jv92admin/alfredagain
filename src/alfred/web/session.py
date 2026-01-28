@@ -187,6 +187,10 @@ def load_conversation_from_db(access_token: str, user_id: str) -> dict[str, Any]
             .execute()
         )
 
+        # Handle case where result is None (RLS or client error)
+        if result is None:
+            return None
+
         if result.data and result.data.get("state"):
             conv = result.data["state"]
             # Ensure metadata exists
