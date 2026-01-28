@@ -28,12 +28,11 @@ from alfred.graph.state import ConversationContext
 from alfred.config import settings
 from alfred.web.session import (
     get_session_status,
-    touch_session,
-    ensure_session_metadata,
+    _ensure_metadata,
     create_fresh_session,
     is_session_expired,
     load_conversation_from_db,
-    save_conversation_to_db,
+    commit_conversation,
     delete_conversation_from_db,
 )
 
@@ -141,7 +140,7 @@ def get_user_conversation(user_id: str, access_token: str | None = None) -> dict
     if user_id in conversations:
         conv = conversations[user_id]
         if not is_session_expired(conv):
-            ensure_session_metadata(conv)
+            _ensure_metadata(conv)
             return conv
         # Expired in cache - try DB before creating fresh
 
@@ -206,9 +205,6 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
         # Get conversation from user's session (with DB fallback)
         conversation = get_user_conversation(user.id, user.access_token)
 
-        # Touch session to update last_active_at
-        touch_session(conversation)
-
         # Convert ui_changes to dict format for workflow
         ui_changes_data = None
         if req.ui_changes:
@@ -223,13 +219,8 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
             ui_changes=ui_changes_data,
         )
 
-        # Update conversation state (memory cache)
-        # Touch session to ensure metadata is on the updated conversation
-        touch_session(updated_conversation)
-        conversations[user.id] = updated_conversation
-
-        # Persist to database (synchronous - guarantees durability)
-        save_conversation_to_db(user.access_token, user.id, updated_conversation)
+        # Single commit: stamp metadata + cache + persist to DB
+        commit_conversation(user.id, user.access_token, updated_conversation, conversations)
 
         # Get log directory
         log_dir = get_session_log_dir()
@@ -316,9 +307,6 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
             # Get conversation from user's session (with DB fallback)
             conversation = get_user_conversation(user.id, user.access_token)
 
-            # Touch session to update last_active_at
-            touch_session(conversation)
-
             # Convert ui_changes to dict format for workflow
             ui_changes_data = None
             if req.ui_changes:
@@ -333,12 +321,8 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                 ui_changes=ui_changes_data,
             ):
                 if update["type"] == "done":
-                    # Update conversation state (memory cache)
-                    # Touch session to ensure metadata is on the updated conversation
-                    touch_session(update["conversation"])
-                    conversations[user.id] = update["conversation"]
-                    # Persist to database (synchronous - guarantees durability)
-                    save_conversation_to_db(user.access_token, user.id, update["conversation"])
+                    # Single commit: stamp metadata + cache + persist to DB
+                    commit_conversation(user.id, user.access_token, update["conversation"], conversations)
                     # Get log directory
                     log_dir = get_session_log_dir()
                     yield {
@@ -349,8 +333,8 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                         }),
                     }
                 elif update["type"] == "context_updated":
-                    # Summarize completed async, update conversation
-                    conversations[user.id] = update["conversation"]
+                    # Summarize completed async - commit final conversation
+                    commit_conversation(user.id, user.access_token, update["conversation"], conversations)
                     yield {
                         "event": "context_updated",
                         "data": json.dumps({"status": "ready"}),

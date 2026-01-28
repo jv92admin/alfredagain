@@ -48,10 +48,11 @@ def _parse_iso(iso_str: str | None) -> datetime | None:
         return None
 
 
-def ensure_session_metadata(conv_state: dict[str, Any]) -> dict[str, Any]:
-    """Backfill session metadata for existing conversations.
+def _ensure_metadata(conv_state: dict[str, Any]) -> dict[str, Any]:
+    """Backfill session metadata for legacy conversations.
 
     Adds created_at and last_active_at if missing.
+    Private helper used on read paths only (load from DB, get from cache).
     Returns the same dict (mutated) for convenience.
     """
     now = _utc_now().isoformat()
@@ -59,16 +60,6 @@ def ensure_session_metadata(conv_state: dict[str, Any]) -> dict[str, Any]:
         conv_state["created_at"] = now
     if "last_active_at" not in conv_state:
         conv_state["last_active_at"] = now
-    return conv_state
-
-
-def touch_session(conv_state: dict[str, Any]) -> dict[str, Any]:
-    """Update last_active_at timestamp.
-
-    Call this on each chat request.
-    Returns the same dict (mutated) for convenience.
-    """
-    conv_state["last_active_at"] = _utc_now().isoformat()
     return conv_state
 
 
@@ -198,7 +189,7 @@ def load_conversation_from_db(access_token: str, user_id: str) -> dict[str, Any]
                 conv["created_at"] = result.data["created_at"]
             if result.data.get("last_active_at"):
                 conv["last_active_at"] = result.data["last_active_at"]
-            ensure_session_metadata(conv)
+            _ensure_metadata(conv)
             return conv
 
         return None
@@ -208,8 +199,29 @@ def load_conversation_from_db(access_token: str, user_id: str) -> dict[str, Any]
         return None
 
 
-def save_conversation_to_db(access_token: str, user_id: str, conv_state: dict[str, Any]) -> bool:
-    """Save conversation state to database (upsert).
+def commit_conversation(
+    user_id: str,
+    access_token: str,
+    conv_state: dict[str, Any],
+    cache: dict[str, dict[str, Any]],
+) -> None:
+    """Single point of mutation for all conversation state updates.
+
+    Handles: timestamp stamping + memory cache + DB persistence.
+    Every code path that changes conversation state MUST call this.
+    No other code should directly write to cache or call _save_to_db.
+    """
+    now = _utc_now().isoformat()
+    conv_state["last_active_at"] = now
+    if "created_at" not in conv_state:
+        conv_state["created_at"] = now
+
+    cache[user_id] = conv_state
+    _save_to_db(access_token, user_id, conv_state)
+
+
+def _save_to_db(access_token: str, user_id: str, conv_state: dict[str, Any]) -> bool:
+    """Save conversation state to database (upsert). Private - use commit_conversation().
 
     Args:
         access_token: User's JWT for authenticated DB access
