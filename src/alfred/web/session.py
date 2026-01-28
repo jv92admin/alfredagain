@@ -181,7 +181,7 @@ def load_conversation_from_db(access_token: str, user_id: str) -> dict[str, Any]
         client = get_authenticated_client(access_token)
         result = (
             client.table("conversations")
-            .select("state")
+            .select("state, created_at, last_active_at")
             .eq("user_id", user_id)
             .maybe_single()
             .execute()
@@ -191,9 +191,13 @@ def load_conversation_from_db(access_token: str, user_id: str) -> dict[str, Any]
         if result is None:
             return None
 
-        if result.data and result.data.get("state"):
-            conv = result.data["state"]
-            # Ensure metadata exists
+        if result.data:
+            conv = result.data.get("state") or {}
+            # Merge DB columns into state dict (timestamps are separate columns)
+            if result.data.get("created_at"):
+                conv["created_at"] = result.data["created_at"]
+            if result.data.get("last_active_at"):
+                conv["last_active_at"] = result.data["last_active_at"]
             ensure_session_metadata(conv)
             return conv
 
