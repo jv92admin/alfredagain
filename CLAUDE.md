@@ -34,6 +34,9 @@ All endpoints require valid JWT in `Authorization: Bearer <token>` header.
 - Never auto-save generated content without user confirmation
 - Never bypass RLS (always use `get_client()`, never raw DB access)
 - Never commit secrets (.env, credentials) to version control
+- Never duplicate state mutation logic — use single commit functions (`commit_conversation()`, `save_session()`)
+- Never write directly to shared caches — always go through the owning function
+- Review `skills/code-review-checklist.md` before proposing changes to state management or API contracts
 
 ---
 
