@@ -2,13 +2,18 @@
 Session management helpers for Alfred.
 
 Handles session timeout logic and metadata for conversation state.
+Database persistence for conversations (survives deployments/restarts).
 """
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict
 
 from alfred.config import get_settings
+from alfred.db.client import get_authenticated_client
 from alfred.memory.conversation import initialize_conversation
+
+logger = logging.getLogger(__name__)
 
 
 SessionStatus = Literal["active", "stale", "none"]
@@ -155,3 +160,92 @@ def is_session_expired(conv_state: dict[str, Any] | None) -> bool:
     hours_since_active = (now - last_active).total_seconds() / 3600
 
     return hours_since_active > expire_hours
+
+
+# =============================================================================
+# Database Persistence
+# =============================================================================
+
+
+def load_conversation_from_db(access_token: str, user_id: str) -> dict[str, Any] | None:
+    """Load conversation state from database.
+
+    Args:
+        access_token: User's JWT for authenticated DB access
+        user_id: User's UUID
+
+    Returns:
+        Conversation state dict, or None if not found
+    """
+    try:
+        client = get_authenticated_client(access_token)
+        result = (
+            client.table("conversations")
+            .select("state")
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+
+        if result.data and result.data.get("state"):
+            conv = result.data["state"]
+            # Ensure metadata exists
+            ensure_session_metadata(conv)
+            return conv
+
+        return None
+
+    except Exception as e:
+        logger.warning(f"Failed to load conversation from DB for user {user_id}: {e}")
+        return None
+
+
+def save_conversation_to_db(access_token: str, user_id: str, conv_state: dict[str, Any]) -> bool:
+    """Save conversation state to database (upsert).
+
+    Args:
+        access_token: User's JWT for authenticated DB access
+        user_id: User's UUID
+        conv_state: Full conversation state dict
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    try:
+        client = get_authenticated_client(access_token)
+
+        # Upsert: insert or update on conflict
+        client.table("conversations").upsert(
+            {
+                "user_id": user_id,
+                "state": conv_state,
+                "last_active_at": _utc_now().isoformat(),
+            },
+            on_conflict="user_id",
+        ).execute()
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to save conversation to DB for user {user_id}: {e}")
+        return False
+
+
+def delete_conversation_from_db(access_token: str, user_id: str) -> bool:
+    """Delete conversation from database (for reset).
+
+    Args:
+        access_token: User's JWT for authenticated DB access
+        user_id: User's UUID
+
+    Returns:
+        True if deleted successfully, False otherwise
+    """
+    try:
+        client = get_authenticated_client(access_token)
+        client.table("conversations").delete().eq("user_id", user_id).execute()
+        return True
+
+    except Exception as e:
+        logger.warning(f"Failed to delete conversation from DB for user {user_id}: {e}")
+        return False

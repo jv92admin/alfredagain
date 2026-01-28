@@ -32,6 +32,9 @@ from alfred.web.session import (
     ensure_session_metadata,
     create_fresh_session,
     is_session_expired,
+    load_conversation_from_db,
+    save_conversation_to_db,
+    delete_conversation_from_db,
 )
 
 # Onboarding module (isolated from Alfred's graph)
@@ -124,22 +127,35 @@ class ChatRequest(BaseModel):
 # AuthenticatedUser and get_current_user imported from alfred.web.auth
 
 
-def get_user_conversation(user_id: str) -> dict[str, Any]:
+def get_user_conversation(user_id: str, access_token: str | None = None) -> dict[str, Any]:
     """Get or create conversation state for a user.
 
+    Uses memory cache first, falls back to database, creates fresh if neither exists.
     Handles session expiration and ensures metadata is present.
+
+    Args:
+        user_id: User's UUID
+        access_token: User's JWT for DB access (optional for backward compat)
     """
+    # 1. Check memory cache
     if user_id in conversations:
         conv = conversations[user_id]
-        # Check if session is expired (>24h)
-        if is_session_expired(conv):
-            conversations[user_id] = create_fresh_session()
-        else:
-            # Backfill metadata for existing sessions
+        if not is_session_expired(conv):
             ensure_session_metadata(conv)
-    else:
-        conversations[user_id] = create_fresh_session()
-    return conversations[user_id]
+            return conv
+        # Expired in cache - try DB before creating fresh
+
+    # 2. Try loading from database
+    if access_token:
+        conv = load_conversation_from_db(access_token, user_id)
+        if conv and not is_session_expired(conv):
+            conversations[user_id] = conv  # Cache it
+            return conv
+
+    # 3. Create fresh session
+    conv = create_fresh_session()
+    conversations[user_id] = conv
+    return conv
 
 
 # =============================================================================
@@ -186,9 +202,9 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
         
         # Set request context for authenticated DB access
         set_request_context(access_token=user.access_token, user_id=user.id)
-        
-        # Get conversation from user's session
-        conversation = get_user_conversation(user.id)
+
+        # Get conversation from user's session (with DB fallback)
+        conversation = get_user_conversation(user.id, user.access_token)
 
         # Touch session to update last_active_at
         touch_session(conversation)
@@ -206,13 +222,16 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
             mode=req.mode,
             ui_changes=ui_changes_data,
         )
-        
-        # Update conversation state
+
+        # Update conversation state (memory cache)
         conversations[user.id] = updated_conversation
-        
+
+        # Persist to database (synchronous - guarantees durability)
+        save_conversation_to_db(user.access_token, user.id, updated_conversation)
+
         # Get log directory
         log_dir = get_session_log_dir()
-        
+
         return {
             "response": response_text,
             "conversation_turns": len(updated_conversation.get("recent_turns", [])),
@@ -231,8 +250,15 @@ async def reset_chat(user: AuthenticatedUser = Depends(get_current_user)):
     """Reset conversation history and prompt logging session."""
     from alfred.llm.prompt_logger import reset_session
 
+    # Clear from memory
     conversations[user.id] = create_fresh_session()
-    reset_session()  # Start fresh prompt log session
+
+    # Clear from database
+    delete_conversation_from_db(user.access_token, user.id)
+
+    # Start fresh prompt log session
+    reset_session()
+
     return {"success": True}
 
 
@@ -244,14 +270,21 @@ async def get_conversation_status(user: AuthenticatedUser = Depends(get_current_
         - status: "none" | "active" | "stale"
         - last_active_at: ISO timestamp or null
         - preview: {last_message, message_count} or null
+
+    Note: Does NOT delete expired sessions. Cleanup happens on next chat request.
+    This prevents the race condition where status returns "none" but chat still has context.
     """
+    # 1. Check memory cache
     conv = conversations.get(user.id)
 
-    # Auto-clear expired sessions
-    if conv and is_session_expired(conv):
-        del conversations[user.id]
-        conv = None
+    # 2. If not in cache, try loading from database
+    if not conv:
+        conv = load_conversation_from_db(user.access_token, user.id)
+        if conv:
+            conversations[user.id] = conv  # Cache it
 
+    # Return status without deleting (non-destructive check)
+    # Expired sessions will be replaced on next chat request
     return get_session_status(conv)
 
 
@@ -277,9 +310,9 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
             
             # Set request context for authenticated DB access
             set_request_context(access_token=user.access_token, user_id=user.id)
-            
-            # Get conversation from user's session
-            conversation = get_user_conversation(user.id)
+
+            # Get conversation from user's session (with DB fallback)
+            conversation = get_user_conversation(user.id, user.access_token)
 
             # Touch session to update last_active_at
             touch_session(conversation)
@@ -298,8 +331,10 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                 ui_changes=ui_changes_data,
             ):
                 if update["type"] == "done":
-                    # Update conversation state
+                    # Update conversation state (memory cache)
                     conversations[user.id] = update["conversation"]
+                    # Persist to database (synchronous - guarantees durability)
+                    save_conversation_to_db(user.access_token, user.id, update["conversation"])
                     # Get log directory
                     log_dir = get_session_log_dir()
                     yield {
