@@ -224,6 +224,8 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
         )
 
         # Update conversation state (memory cache)
+        # Touch session to ensure metadata is on the updated conversation
+        touch_session(updated_conversation)
         conversations[user.id] = updated_conversation
 
         # Persist to database (synchronous - guarantees durability)
@@ -332,6 +334,8 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
             ):
                 if update["type"] == "done":
                     # Update conversation state (memory cache)
+                    # Touch session to ensure metadata is on the updated conversation
+                    touch_session(update["conversation"])
                     conversations[user.id] = update["conversation"]
                     # Persist to database (synchronous - guarantees durability)
                     save_conversation_to_db(user.access_token, user.id, update["conversation"])
