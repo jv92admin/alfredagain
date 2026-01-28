@@ -26,14 +26,24 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
   // V10: Active context state - can be used in future for persistent context bar
   const [, setActiveContext] = useState<ActiveContext | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
   const { getAndClearUIChanges } = useChatContext()
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  const isNearBottom = () => {
+    const container = messagesContainerRef.current
+    if (!container) return true
+    const threshold = 100 // px from bottom
+    return container.scrollHeight - container.scrollTop - container.clientHeight < threshold
+  }
+
   useEffect(() => {
-    scrollToBottom()
+    if (messages.length > 0 && isNearBottom()) {
+      scrollToBottom()
+    }
   }, [messages, phaseState])
 
   const handleSend = async (e?: FormEvent) => {
@@ -153,7 +163,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
   return (
     <div className="h-full flex flex-col">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
         <div className="max-w-2xl mx-auto space-y-4">
           {messages.map((msg) => (
             <MessageBubble
