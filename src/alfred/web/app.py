@@ -22,7 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from alfred.db.client import get_service_client, get_authenticated_client
 from alfred.db.request_context import set_request_context, clear_request_context
-from alfred.graph.workflow import run_alfred, run_alfred_streaming
+from alfred.graph.workflow import run_alfred
 from alfred.memory.conversation import initialize_conversation
 from alfred.graph.state import ConversationContext
 from alfred.config import settings
@@ -355,15 +355,21 @@ async def debug_logging():
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    """Send a message to Alfred with streaming progress updates."""
-    from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
+    """Send a message to Alfred with streaming progress updates.
+
+    Phase 3: Workflow runs in a background task. The SSE stream is just an
+    observer reading from an asyncio.Queue. If the client disconnects, the
+    background task keeps running and stores the result in the jobs table.
+    """
+    from alfred.web.background_worker import run_workflow_background, job_event_queues
+    from alfred.llm.prompt_logger import get_session_log_dir
 
     # Convert ui_changes to dict format for workflow
     ui_changes_data = None
     if req.ui_changes:
         ui_changes_data = [c.model_dump() for c in req.ui_changes]
 
-    # Create and start job before entering the generator
+    # Create and start job
     job_id = create_job(user.access_token, user.id, {
         "message": req.message,
         "mode": req.mode,
@@ -372,46 +378,43 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
     if job_id:
         start_job(user.access_token, job_id)
 
+    # Create event queue for this job
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    if job_id:
+        job_event_queues[job_id] = queue
+
+    # Get conversation before launching background task
+    set_request_context(access_token=user.access_token, user_id=user.id)
+    conversation = get_user_conversation(user.id, user.access_token)
+
+    # Launch workflow in background task (survives client disconnect)
+    asyncio.create_task(run_workflow_background(
+        job_id=job_id,
+        event_queue=queue,
+        user_id=user.id,
+        access_token=user.access_token,
+        message=req.message,
+        mode=req.mode,
+        conversation=conversation,
+        ui_changes=ui_changes_data,
+        conversations_cache=conversations,
+        log_prompts=req.log_prompts,
+    ))
+
     async def event_generator():
         try:
-            # Enable prompt logging based on user preference
-            enable_prompt_logging(req.log_prompts)
+            while True:
+                try:
+                    update = await asyncio.wait_for(queue.get(), timeout=30)
+                except asyncio.TimeoutError:
+                    # Keep-alive ping to prevent proxy/browser timeout
+                    yield {"event": "ping", "data": ""}
+                    continue
 
-            # Set user ID for logging context
-            set_user_id(user.id)
-
-            # Set request context for authenticated DB access
-            set_request_context(access_token=user.access_token, user_id=user.id)
-
-            # Get conversation from user's session (with DB fallback)
-            conversation = get_user_conversation(user.id, user.access_token)
-
-            # Stream Alfred's progress (will use authenticated client via request context)
-            async for update in run_alfred_streaming(
-                user_message=req.message,
-                user_id=user.id,
-                conversation=conversation,
-                mode=req.mode,
-                ui_changes=ui_changes_data,
-            ):
-                if update["type"] == "done":
-                    # Get log directory
+                if update["type"] == "stream_end":
+                    break
+                elif update["type"] == "done":
                     log_dir = get_session_log_dir()
-
-                    # Complete job first, then commit conversation
-                    if job_id:
-                        try:
-                            complete_job(user.access_token, job_id, {
-                                "response": update["response"],
-                                "active_context": update.get("active_context"),
-                                "log_dir": str(log_dir) if log_dir else None,
-                            })
-                        except Exception as e:
-                            logger.error(f"Failed to complete job {job_id}: {e}")
-
-                    # Single commit: stamp metadata + cache + persist to DB
-                    commit_conversation(user.id, user.access_token, update["conversation"], conversations)
-
                     yield {
                         "event": "done",
                         "data": json.dumps({
@@ -421,28 +424,25 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                         }),
                     }
                 elif update["type"] == "context_updated":
-                    # Summarize completed async - commit final conversation
-                    # Job output stays as original response — context_updated is internal state only
-                    commit_conversation(user.id, user.access_token, update["conversation"], conversations)
                     yield {
                         "event": "context_updated",
                         "data": json.dumps({"status": "ready"}),
+                    }
+                elif update["type"] == "error":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"error": update.get("error", "Unknown error")}),
                     }
                 else:
                     yield {
                         "event": "progress",
                         "data": json.dumps(update),
                     }
-        except Exception as e:
-            logger.exception("Stream chat error")
-            if job_id:
-                fail_job(user.access_token, job_id, str(e))
-            yield {
-                "event": "error",
-                "data": json.dumps({"error": str(e)}),
-            }
+        except asyncio.CancelledError:
+            # Client disconnected — that's fine, background task continues.
+            # Response will be recoverable via GET /api/jobs/active
+            logger.info(f"Client disconnected for job {job_id}, workflow continues in background")
         finally:
-            # Clear request context
             clear_request_context()
 
     return EventSourceResponse(event_generator())

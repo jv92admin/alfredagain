@@ -316,15 +316,18 @@ POST /api/conversations/:id/archive -- Archive conversation
 - [x] Multiple browser tabs: Same conversation state (DB-backed)
 - [x] Concurrent users: No state leakage (RLS enforced)
 
-### Phase 2.5 (Planned)
+### Phase 2.5 + 3 ✅
 
-- [ ] Jobs table created with RLS
-- [ ] Chat endpoints wrapped with job lifecycle
-- [ ] Disconnect recovery: `GET /api/jobs/active` returns missed response
-- [ ] Frontend polls running jobs on reconnect
-- [ ] Frontend acknowledges received responses
+- [x] Jobs table created with RLS
+- [x] Chat endpoints wrapped with job lifecycle
+- [x] Disconnect recovery: `GET /api/jobs/active` returns missed response
+- [x] Frontend polls running jobs on reconnect
+- [x] Frontend acknowledges received responses
+- [x] Workflow runs in background task (`asyncio.create_task`)
+- [x] SSE stream is observer (reads from queue), not executor
+- [x] Client disconnect handled gracefully (`CancelledError`)
 
-### Phase 3 (Future)
+### Phase 4 (Future)
 
 - [ ] Resume shows actual prior messages in UI
 - [ ] Sidebar shows conversation list
@@ -357,7 +360,7 @@ POST /api/conversations/:id/archive -- Archive conversation
 | Prompt logging session leak | `_session_id` in prompt_logger is module-level, shared across concurrent users. Each user should have isolated logging sessions. | Future |
 | ~~In-memory state lost on restart~~ | ~~Current Phase 1 stores conversation in dict; server restart loses all sessions.~~ | ✅ Phase 2 |
 | No message history UI | Resume shows fresh UI even though backend has context. User can't see prior conversation. | Phase 3 |
-| Response lost on disconnect | Phone lock or network blip during SSE stream loses the response forever. | Phase 2.5 |
+| ~~Response lost on disconnect~~ | ~~Phone lock or network blip during SSE stream loses the response forever.~~ | ✅ Phase 3 |
 
 ---
 

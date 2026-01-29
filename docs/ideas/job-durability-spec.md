@@ -134,7 +134,7 @@ Not like:
 - `commit_conversation()` as single point of mutation
 - Foundation for job state
 
-### Phase 2.5 🚧 In Progress: Job Wrapper
+### Phase 2.5 ✅ Complete + Phase 3 ✅ Complete: Background Execution
 **Goal:** Jobs complete even if client disconnects, but no fancy checkpointing yet.
 
 ```python

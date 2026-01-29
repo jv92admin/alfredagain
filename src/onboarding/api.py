@@ -438,14 +438,14 @@ async def get_staples_options(
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Get staples options grouped by parent_category.
+    Get curated staple essentials for the onboarding checklist.
 
     Query params:
         cuisines: Comma-separated list of cuisine codes (e.g., "indian,thai")
 
     Returns:
         {
-            "categories": [...],
+            "essentials": [...],
             "pre_selected_ids": [...],
             "cuisine_suggested_ids": [...]
         }
@@ -457,7 +457,14 @@ async def get_staples_options(
     if cuisines:
         cuisine_list = [c.strip() for c in cuisines.split(",") if c.strip()]
 
-    return await get_staples_options(cuisines=cuisine_list)
+    # Read dietary restrictions from onboarding state (set in Phase 1)
+    state = await get_or_create_session(user.id)
+    dietary_restrictions = state.constraints.get("dietary_restrictions", [])
+
+    return await get_staples_options(
+        cuisines=cuisine_list,
+        dietary_restrictions=dietary_restrictions,
+    )
 
 
 @router.post("/staples", response_model=PhaseResponse)
@@ -973,9 +980,43 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
             on_conflict="user_id"
         ).execute()
         
+        # 3. Seed inventory from staple selections (cold-start fix)
+        if state.staple_selections:
+            try:
+                ing_result = client.table("ingredients").select(
+                    "id, name, default_unit, parent_category"
+                ).in_("id", state.staple_selections).execute()
+
+                if ing_result.data:
+                    inventory_records = [
+                        {
+                            "user_id": user.id,
+                            "name": ing["name"],
+                            "ingredient_id": ing["id"],
+                            "quantity": 1,
+                            "unit": ing.get("default_unit") or "unit",
+                            "location": (
+                                "fridge"
+                                if ing.get("parent_category") in ("dairy", "produce", "protein")
+                                else "pantry"
+                            ),
+                        }
+                        for ing in ing_result.data
+                    ]
+                    client.table("inventory").upsert(
+                        inventory_records,
+                        on_conflict="user_id,ingredient_id",
+                    ).execute()
+                    logger.info(
+                        f"Seeded {len(inventory_records)} inventory items for user {user.id}"
+                    )
+            except Exception as seed_err:
+                # Non-fatal: preferences are already saved, inventory seeding is best-effort
+                logger.warning(f"Inventory seeding failed for user {user.id}: {seed_err}")
+
         logger.info(f"Onboarding completed and applied for user {user.id}")
-        
-        # 3. Clear session (onboarding complete)
+
+        # 4. Clear session (onboarding complete)
         await clear_session(user.id)
         
         return {

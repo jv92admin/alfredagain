@@ -23,11 +23,35 @@
 
 | Area | Status | Description | Spec |
 |------|--------|-------------|------|
-| Phase 2.5: Job Durability | 🚧 In Progress | Jobs table for disconnect recovery — agent completes even if client disconnects | [ideas/job-durability-spec.md](ideas/job-durability-spec.md) |
+| — | — | — | — |
+
+*No active projects. Add items here when starting new work.*
 
 ---
 
 ## Recently Completed
+
+### 2026-01-28: Job Durability Phase 2.5 + 3 — Background Execution
+
+Workflows survive client disconnects. Phone lock, network blip, or app switch no longer kills Alfred mid-response.
+
+- **Phase 2.5: Jobs Table** (`migrations/030_jobs_table.sql`, `src/alfred/web/jobs.py`)
+  - `jobs` table tracks request lifecycle (pending → running → complete → failed)
+  - Single-owner module: `create_job`, `start_job`, `complete_job`, `fail_job`, `acknowledge_job`
+  - Recovery endpoints: `GET /api/jobs/active`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/ack`
+
+- **Phase 3: Background Execution** (`src/alfred/web/background_worker.py`)
+  - Workflow runs in `asyncio.create_task` — decoupled from SSE request lifecycle
+  - SSE stream is an observer reading from `asyncio.Queue`, not the executor
+  - `CancelledError` handler: client disconnect logs info, background task continues
+  - Events relayed via queue; if queue fills (client too slow), events dropped gracefully
+
+- **Frontend Recovery**
+  - `App.tsx`: checks `GET /api/jobs/active` on load, recovers missed responses
+  - `ChatView.tsx`: tracks `job_id` from SSE, polls on disconnect, acknowledges on receive
+  - "Alfred is still working..." indicator during job recovery
+
+- **Spec:** [ideas/job-durability-spec.md](ideas/job-durability-spec.md)
 
 ### 2026-01-27: Session Persistence Phase 2 — Database Persistence
 

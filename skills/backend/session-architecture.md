@@ -120,13 +120,30 @@ Onboarding writes to `preferences` table on completion. Chat reads from `prefere
 
 ---
 
+## Background Execution (Phase 3)
+
+The streaming chat endpoint (`POST /api/chat/stream`) decouples the workflow from the request lifecycle:
+
+1. **SSE endpoint** creates a job, an `asyncio.Queue`, and launches the workflow via `asyncio.create_task`
+2. **Background worker** (`background_worker.py`) runs `run_alfred_streaming()`, relays events to the queue, and stores the result in the jobs table
+3. **SSE generator** reads from the queue and yields events to the client
+4. **On client disconnect**: `CancelledError` is caught, background task continues, result stored in jobs table
+5. **On reconnect**: Frontend calls `GET /api/jobs/active` to recover the missed response
+
+**Key invariant:** The background worker calls `commit_conversation()` and `complete_job()` regardless of client connection state.
+
+---
+
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `src/alfred/web/session.py` | All session functions: commit, load, delete, status, expiry |
+| `src/alfred/web/jobs.py` | Job lifecycle: create, start, complete, fail, acknowledge, get |
+| `src/alfred/web/background_worker.py` | Background workflow execution, event queue relay |
 | `src/alfred/web/app.py` | Chat endpoints, `get_user_conversation()`, `conversations` cache |
 | `src/onboarding/state.py` | `OnboardingState` dataclass and phase logic |
 | `src/onboarding/api.py` | Onboarding endpoints and `save_session()` |
 | `migrations/026_onboarding_tables.sql` | Onboarding DB schema |
 | `migrations/029_conversations_table.sql` | Conversation DB schema |
+| `migrations/030_jobs_table.sql` | Jobs table for background execution |
