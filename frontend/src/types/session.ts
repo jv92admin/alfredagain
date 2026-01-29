@@ -11,4 +11,6 @@ export interface SessionStatusResponse {
   status: SessionStatus
   last_active_at: string | null
   preview: SessionPreview | null
+  messages: Array<{ id: string; role: 'user' | 'assistant'; content: string }>
+  active_job: { id: string; status: string } | null
 }

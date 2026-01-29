@@ -16,13 +16,12 @@ interface ChatViewProps {
   setMessages: Dispatch<SetStateAction<Message[]>>
   onOpenFocus: (item: { type: string; id: string }) => void
   mode: Mode
-  activeJobId: string | null
   setActiveJobId: Dispatch<SetStateAction<string | null>>
   jobLoading: boolean
   setJobLoading: Dispatch<SetStateAction<boolean>>
 }
 
-export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId: _activeJobId, setActiveJobId, jobLoading, setJobLoading }: ChatViewProps) {
+export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJobId, jobLoading, setJobLoading }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   // V10: Phase-based progress tracking
@@ -34,10 +33,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
   const { getAndClearUIChanges } = useChatContext()
   // Track initial message count to avoid scrolling on mount
   const initialMessageCount = useRef(messages.length)
-  // Track current streaming job ID for visibility change recovery
-  const streamingJobIdRef = useRef<string | null>(null)
-  // AbortController for killing SSE stream when visibility handler recovers
-  const abortControllerRef = useRef<AbortController | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -57,37 +52,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
       scrollToBottom()
     }
   }, [messages, phaseState])
-
-  // Recover completed jobs when returning to a backgrounded tab
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      const jobId = streamingJobIdRef.current
-      if (document.visibilityState === 'visible' && jobId && loading) {
-        try {
-          const { job } = await apiRequest<{ job: any }>(`/api/jobs/${jobId}`)
-          if (job?.status === 'complete' && job.output?.response) {
-            // Abort SSE stream to prevent duplicate done message
-            abortControllerRef.current?.abort()
-            // Job finished while tab was backgrounded — recover it
-            const recoveredMsg: Message = {
-              id: `recovered-${job.id}`,
-              role: 'assistant',
-              content: job.output.response,
-            }
-            setMessages((prev) => [...prev, recoveredMsg])
-            setPhaseState(createInitialPhaseState())
-            setLoading(false)
-            streamingJobIdRef.current = null
-            apiRequest(`/api/jobs/${job.id}/ack`, { method: 'POST' }).catch(() => {})
-          }
-        } catch {
-          // Ignore — SSE might still be working
-        }
-      }
-    }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [loading, setMessages])
 
   const handleSend = async (e?: FormEvent) => {
     e?.preventDefault()
@@ -109,8 +73,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
 
     let currentJobId: string | null = null
     let receivedDone = false
-    const controller = new AbortController()
-    abortControllerRef.current = controller
 
     try {
       // Get and clear UI changes to include with this message
@@ -118,7 +80,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
 
       const res = await apiStream('/api/chat/stream', {
         method: 'POST',
-        signal: controller.signal,
         body: JSON.stringify({
           message: userMessage,
           log_prompts: true,
@@ -152,7 +113,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
               if (currentEvent === 'job_started') {
                 // Capture job_id early so we can poll on disconnect
                 currentJobId = data.job_id
-                streamingJobIdRef.current = data.job_id
               } else if (currentEvent === 'done') {
                 receivedDone = true
                 // Track job_id from done event (fallback if job_started missed)
@@ -202,13 +162,8 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
         await recoverFromJob(currentJobId)
       }
     } catch (err) {
-      // Intentional abort from visibility recovery — already handled
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        return
-      }
       // Stream disconnected — try to recover via job polling if we have a job_id
-      // The job_id may not be available yet if disconnect happened before any events
-      // In that case, the active job check on next page load will recover it
+      // If no job_id yet, next page load will recover via loadConversation()
       if (currentJobId) {
         await recoverFromJob(currentJobId)
       } else {
@@ -222,8 +177,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
       }
     } finally {
       setLoading(false)
-      streamingJobIdRef.current = null
-      abortControllerRef.current = null
     }
   }
 

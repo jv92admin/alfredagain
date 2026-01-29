@@ -288,15 +288,16 @@ async def reset_chat(user: AuthenticatedUser = Depends(get_current_user)):
 
 @app.get("/api/conversation/status")
 async def get_conversation_status(user: AuthenticatedUser = Depends(get_current_user)):
-    """Get current session status for resume prompt logic.
+    """Get session status, message history, and active job info.
 
     Returns:
         - status: "none" | "active" | "stale"
         - last_active_at: ISO timestamp or null
         - preview: {last_message, message_count} or null
+        - messages: list of {id, role, content} from recent_turns
+        - active_job: {id, status} or null
 
     Note: Does NOT delete expired sessions. Cleanup happens on next chat request.
-    This prevents the race condition where status returns "none" but chat still has context.
     """
     # 1. Check memory cache
     conv = conversations.get(user.id)
@@ -307,9 +308,24 @@ async def get_conversation_status(user: AuthenticatedUser = Depends(get_current_
         if conv:
             conversations[user.id] = conv  # Cache it
 
-    # Return status without deleting (non-destructive check)
-    # Expired sessions will be replaced on next chat request
-    return get_session_status(conv)
+    # Build message history from recent_turns
+    messages = []
+    if conv:
+        for i, turn in enumerate(conv.get("recent_turns", [])):
+            messages.append({"id": f"u{i}", "role": "user", "content": turn["user"]})
+            messages.append({"id": f"a{i}", "role": "assistant", "content": turn["assistant"]})
+
+    # Check for active job (unacknowledged running/complete)
+    active_job_data = get_active_job(user.access_token, user.id)
+
+    return {
+        **get_session_status(conv),
+        "messages": messages,
+        "active_job": {
+            "id": active_job_data["id"],
+            "status": active_job_data["status"],
+        } if active_job_data else None,
+    }
 
 
 # =============================================================================

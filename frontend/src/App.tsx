@@ -17,7 +17,6 @@ import { ResumePrompt } from './components/Chat/ResumePrompt'
 import { useAuth } from './hooks/useAuth'
 import { apiRequest, pollJob } from './lib/api'
 import { SessionStatusResponse } from './types/session'
-import type { ActiveJobResponse } from './types/jobs'
 
 // V3 Mode types
 export type Mode = 'quick' | 'plan'
@@ -38,7 +37,7 @@ function App() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null)
   const [showResumePrompt, setShowResumePrompt] = useState(false)
   const sessionCheckedForUser = useRef<string | null>(null)
-  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [, setActiveJobId] = useState<string | null>(null)
   const [jobLoading, setJobLoading] = useState(false)
 
   useEffect(() => {
@@ -70,59 +69,48 @@ function App() {
     setNeedsOnboarding(false)
   }
 
-  // Check session status after auth and onboarding
+  // Load conversation history and check session status after auth and onboarding
   useEffect(() => {
     if (user && needsOnboarding === false && sessionCheckedForUser.current !== user.user_id) {
       sessionCheckedForUser.current = user.user_id
-      checkSessionStatus()
+      loadConversation()
     }
   }, [user, needsOnboarding])
 
-  const checkSessionStatus = async () => {
+  const loadConversation = async () => {
     try {
-      const status = await apiRequest<SessionStatusResponse>('/api/conversation/status')
-      setSessionStatus(status)
-      if (status.status === 'stale') {
+      const data = await apiRequest<SessionStatusResponse>('/api/conversation/status')
+      setSessionStatus(data)
+
+      // 1. Load message history from recent_turns
+      if (data.messages && data.messages.length > 0) {
+        setChatMessages([INITIAL_MESSAGE, ...data.messages])
+      }
+
+      // 2. Handle session status (resume prompt)
+      if (data.status === 'stale') {
         setShowResumePrompt(true)
       }
-    } catch (error) {
-      console.error('Session status check failed:', error)
-    }
 
-    // Check for active jobs (missed responses from disconnect)
-    try {
-      const { job: activeJob } = await apiRequest<ActiveJobResponse>('/api/jobs/active')
-      if (activeJob) {
-        if (activeJob.status === 'complete' && activeJob.output) {
-          // Alfred finished while user was away — show recovered response
-          const recoveredMsg: Message = {
-            id: `recovered-${activeJob.id}`,
-            role: 'assistant',
-            content: activeJob.output.response,
-          }
-          setChatMessages((prev) => [...prev, recoveredMsg])
-          // Acknowledge so it doesn't show again
-          await apiRequest(`/api/jobs/${activeJob.id}/ack`, { method: 'POST' })
-        } else if (activeJob.status === 'running') {
-          // Job still in progress — poll until complete
-          setActiveJobId(activeJob.id)
-          setJobLoading(true)
-          const finishedJob = await pollJob(activeJob.id)
-          if (finishedJob.status === 'complete' && finishedJob.output) {
-            const recoveredMsg: Message = {
-              id: `recovered-${finishedJob.id}`,
-              role: 'assistant',
-              content: finishedJob.output.response,
-            }
-            setChatMessages((prev) => [...prev, recoveredMsg])
-            await apiRequest(`/api/jobs/${finishedJob.id}/ack`, { method: 'POST' })
-          }
-          setJobLoading(false)
-          setActiveJobId(null)
+      // 3. Handle active job
+      if (data.active_job?.status === 'running') {
+        setJobLoading(true)
+        const finished = await pollJob(data.active_job.id)
+        if (finished.status === 'complete' && finished.output) {
+          setChatMessages(prev => [...prev, {
+            id: `a-${finished.id}`,
+            role: 'assistant' as const,
+            content: finished.output.response,
+          }])
+          await apiRequest(`/api/jobs/${finished.id}/ack`, { method: 'POST' })
         }
+        setJobLoading(false)
+      } else if (data.active_job?.status === 'complete') {
+        // Job complete but unacked — messages already in history, just ack
+        await apiRequest(`/api/jobs/${data.active_job.id}/ack`, { method: 'POST' })
       }
     } catch (error) {
-      console.error('Active job check failed:', error)
+      console.error('Failed to load conversation:', error)
     }
   }
 
@@ -180,7 +168,7 @@ function App() {
     <>
       <AppShell user={user} onNewChat={handleNewChat}>
         <Routes>
-          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} activeJobId={activeJobId} setActiveJobId={setActiveJobId} jobLoading={jobLoading} setJobLoading={setJobLoading} />} />
+          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} setActiveJobId={setActiveJobId} jobLoading={jobLoading} setJobLoading={setJobLoading} />} />
           <Route path="/recipes" element={<RecipesView onOpenFocus={setFocusItem} />} />
           <Route path="/meals" element={<MealPlanView onOpenFocus={setFocusItem} />} />
           <Route path="/inventory" element={<InventoryView />} />
