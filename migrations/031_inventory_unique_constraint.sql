@@ -4,14 +4,21 @@
 -- Postgres treats NULLs as distinct in unique constraints, so rows with
 -- ingredient_id IS NULL are unaffected.
 
--- Deduplicate any existing rows before adding constraint
--- (keeps the row with the latest updated_at)
-DELETE FROM inventory a
-USING inventory b
-WHERE a.user_id = b.user_id
-  AND a.ingredient_id = b.ingredient_id
-  AND a.ingredient_id IS NOT NULL
-  AND a.updated_at < b.updated_at;
+-- Deduplicate existing rows: keep the one with the latest updated_at per
+-- (user_id, ingredient_id) pair. Uses ctid to break ties when timestamps match.
+DELETE FROM inventory
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY user_id, ingredient_id
+                   ORDER BY updated_at DESC, created_at DESC, id DESC
+               ) AS rn
+        FROM inventory
+        WHERE ingredient_id IS NOT NULL
+    ) ranked
+    WHERE rn > 1
+);
 
 ALTER TABLE inventory
   ADD CONSTRAINT inventory_user_ingredient_unique

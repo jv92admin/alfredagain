@@ -260,9 +260,8 @@ async def dedupe_ingredients(dry_run: bool = True):
     supabase = get_client()
     openai = get_openai_client()
 
-    # Fetch all ingredients
-    result = supabase.table("ingredients").select("id, name, aliases").execute()
-    ingredients = result.data
+    # Fetch all ingredients (paginated)
+    ingredients = fetch_all_ingredients(supabase, "id, name, aliases")
     print(f"Loaded {len(ingredients)} ingredients")
 
     # Group by first letter for batching
@@ -313,7 +312,15 @@ async def dedupe_ingredients(dry_run: bool = True):
     if dry_run:
         print("\n[DRY RUN] Would merge:")
         for group in all_merge_groups:
-            print(f"  → Keep '{group['canonical']}', merge: {group['merge_ids']} ({group['reason']})")
+            canonical = group.get('canonical', '?')
+            merge_ids = group.get('merge_ids', [])
+            reason = group.get('reason', '')
+            try:
+                print(f"  -> Keep '{canonical}', merge: {merge_ids} ({reason})")
+            except UnicodeEncodeError:
+                # Fallback for terminals that can't handle accented chars
+                safe_name = canonical.encode('ascii', errors='replace').decode('ascii')
+                print(f"  -> Keep '{safe_name}', merge: {merge_ids} ({reason})")
     else:
         print("\nApplying merges...")
         for group in all_merge_groups:

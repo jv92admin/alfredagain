@@ -1,0 +1,382 @@
+
+======================================================================
+DEDUPLICATION
+======================================================================
+Loaded 2942 ingredients
+
+Processing '1' (2 ingredients)...
+
+Processing 'a' (166 ingredients)...
+  Found 30 merge groups
+
+Processing 'b' (288 ingredients)...
+  Found 19 merge groups
+
+Processing 'c' (384 ingredients)...
+  Found 43 merge groups
+
+Processing 'd' (119 ingredients)...
+  Found 7 merge groups
+
+Processing 'e' (44 ingredients)...
+  Found 6 merge groups
+
+Processing 'f' (123 ingredients)...
+  Found 19 merge groups
+
+Processing 'g' (141 ingredients)...
+  Found 12 merge groups
+
+Processing 'h' (74 ingredients)...
+  Found 8 merge groups
+
+Processing 'i' (30 ingredients)...
+  Found 4 merge groups
+
+Processing 'j' (38 ingredients)...
+  Found 3 merge groups
+
+Processing 'k' (68 ingredients)...
+  Found 5 merge groups
+
+Processing 'l' (118 ingredients)...
+  Found 10 merge groups
+
+Processing 'm' (194 ingredients)...
+  Found 22 merge groups
+
+Processing 'n' (24 ingredients)...
+  Found 4 merge groups
+
+Processing 'o' (53 ingredients)...
+  Found 6 merge groups
+
+Processing 'p' (275 ingredients)...
+  Error: Unterminated string starting at: line 367 column 9 (char 10821)
+
+Processing 'q' (26 ingredients)...
+  Found 4 merge groups
+
+Processing 'r' (126 ingredients)...
+  Found 12 merge groups
+
+Processing 's' (319 ingredients)...
+  Found 38 merge groups
+
+Processing 't' (132 ingredients)...
+  Found 15 merge groups
+
+Processing 'u' (18 ingredients)...
+  Found 2 merge groups
+
+Processing 'v' (28 ingredients)...
+  Found 3 merge groups
+
+Processing 'w' (104 ingredients)...
+  Found 6 merge groups
+
+Processing 'x' (3 ingredients)...
+
+Processing 'y' (35 ingredients)...
+  Found 11 merge groups
+
+Processing 'z' (6 ingredients)...
+  Found 4 merge groups
+
+
+Total merge groups found: 293
+
+[DRY RUN] Would merge:
+  -> Keep 'acai berry', merge: ['7b09844a-5cd3-4677-84c4-6240f0cbd7ac', '8146957e-436c-461e-8808-3abe7f631998'] (regional name/spelling variant (acai vs acaí berries))
+  -> Keep 'apricot', merge: ['abe906e4-f961-45e6-83c1-a5500a272899', '12a743a5-d858-4520-ba2d-b3a50747843a'] (singular/plural variant)
+  -> Keep 'adzuki beans', merge: ['c1e6441f-4747-4f6e-95a5-71b1cb4573cb', '3a7cb36d-18af-44f7-80c3-6694c386aba3'] (regional name variant (adzuki vs azuki beans))
+  -> Keep 'almond', merge: ['98f152de-314e-4411-a3bc-c6bd963e524e', 'f2d1247f-2ecd-4731-9f65-afb103dcca24'] (singular/plural variant)
+  -> Keep 'almond flour', merge: ['4cac7c73-4ae9-4b4f-96d0-48bc36cf7fd9'] (singular/plural/alias variant (almond meal, ground almonds))
+  -> Keep 'almond oil', merge: ['6a0e4b84-b794-44fd-93c4-09950c9e6f98'] (singular/plural/alias variant (almond cooking oil, sweet almond oil))
+  -> Keep 'almond extract', merge: ['40724674-04e7-4b6c-beaa-0c208b6db5ca'] (singular/plural/alias variant (almond essence, almond flavoring))
+  -> Keep 'almond butter', merge: ['23945c14-7b6d-4ff7-b55c-be15a92d6547'] (singular/plural/alias variant (almond spread))
+  -> Keep 'almond-cashew butter', merge: ['32769f0b-f996-4d9b-8bf2-08b291ef926a'] (singular/plural/alias variant (almond cashew blend))
+  -> Keep 'agar agar', merge: ['ea70102c-6090-4fb6-b9fa-6ba2548c67a7', 'af783c8d-c12f-415e-bd14-d19e5e09835a'] (regional name/spelling variant (agar-agar vs agar agar))
+  -> Keep 'amaranth', merge: ['60c535bf-110e-4242-a802-305dccc9415a', '2deda804-ee0c-455b-8c5e-908cf4c468d4'] (singular/plural/alias variant (amaranth grain, amaranth seeds))
+  -> Keep 'amaranth greens', merge: ['a579361b-9456-42cd-94ab-a6f06f70a381', '16870949-11f9-425a-bd6d-39ac7d7cfbef'] (regional name/alias variant (callaloo, amaranth leaves))
+  -> Keep 'amaranth flour', merge: ['cfcf9ab1-ce9f-4cf1-b368-0351905e4238'] (singular/plural/alias variant (ground amaranth))
+  -> Keep 'anchovy', merge: ['a208f7bf-5f4b-41d5-9f7c-0e9cfbe34663', '128a15fb-0aff-4598-bc2b-d9a09a12e2d3'] (singular/plural/alias variant (anchovies, anchovy fillet))
+  -> Keep 'anise', merge: ['9c8403a1-7c37-4212-9bbd-1bef1ef5f54d', '5e8745e2-3736-473b-8deb-7d035e9bfb14'] (singular/plural/alias variant (anise powder, anise seeds, aniseed))
+  -> Keep 'anise extract', merge: ['6e2fc617-cbef-40fa-afda-6fbd25878bf1'] (singular/plural/alias variant (anise flavoring, anise essence))
+  -> Keep 'apple', merge: ['495c7720-25ac-48a1-972e-32526d1140fc'] (singular/plural/alias variant (apples, eating apple, cooking apple))
+  -> Keep 'apple sauce', merge: ['57e38d2d-32d9-4992-bd26-e7719888e1c4', '4d0af908-f2c5-4ac2-9789-954c208b2409'] (regional name/alias variant (applesauce, apple puree))
+  -> Keep 'arrowroot', merge: ['59e4ca25-8450-4651-8ac2-f231e36ab632', '42d78ee4-ab48-43c2-995b-07fd3475c452', 'c12180e5-67a3-4c10-98b5-89fe12462028'] (singular/plural/alias variant (arrowroot powder, arrowroot flour, arrowroot starch))
+  -> Keep 'asiago', merge: ['97a9284e-202f-4f37-91f5-beece16e794f', '978df479-c369-43d6-aba7-def995b534f6', '1aa088fb-7d87-4b5a-af71-3219530b3ae2'] (singular/plural/alias variant (aged asiago, asiago wedge))
+  -> Keep 'aged cheddar', merge: ['da7b0f6c-9308-4ac6-b432-6067346e892a', 'ae03a7e5-5fd4-4d75-950b-49a2b1651c3d', '0cb897cb-e80b-43af-9c2d-fc9c4e41d4dd'] (singular/plural/alias variant (aged cheddar block, cheddar slices, aged cheddar sliced))
+  -> Keep 'aged gouda', merge: ['55ffc3cb-6f95-4d5a-a772-89d5b1eda78c', '4bb7bfc1-0560-4c0b-9f51-e5b24df5af01'] (singular/plural/alias variant (aged gouda wedge, gouda wedge))
+  -> Keep 'aged swiss cheese', merge: ['9be7695f-f8fe-431d-8935-8fddddf08247', 'd1deab0e-c8fe-4239-9d07-529871707d05'] (regional/alias variant (aged swiss, swiss cheese, baby swiss, jarlsberg))
+  -> Keep 'aged appenzeller', merge: ['93b4ab81-7fca-443a-943c-e16154f0122a', '70df0092-1bde-4295-bafb-94b7243101e2'] (singular/plural/alias variant (appenzeller, appenzeller cheese, aged appenzeller))
+  -> Keep 'akawi cheese', merge: ['014ade64-ee4f-44f2-baac-7e4138dce3b2', '36aa0be6-0863-4663-b2c6-3a9627e34688'] (regional/alias variant (akawi, akkawi, akawi cheese, akkawi cheese))
+  -> Keep 'aji panca', merge: ['60a4772e-813e-4253-b597-501085f2f002', 'ff520236-25a8-4e69-adff-2c5b96b49f70'] (regional/alias variant (ají panca, aji panca pepper, Peruvian panca pepper))
+  -> Keep 'amchur', merge: ['50504e5b-92db-47cf-bc4b-7df79fe1049d', '67988e2b-397d-437b-bd6e-1c757e16470a'] (regional/alias variant (amchoor, amchur powder, dry mango powder, dried mango powder))
+  -> Keep 'ancho chili', merge: ['050c9b8b-11c6-4545-a19f-8295251e0679', '47897b23-4776-41d8-aa7c-a8040fe35f16', '2d398994-e48a-4d9c-822c-019e2f175098'] (regional/alias variant (ancho chile, ancho pepper, ancho chili powder, ground ancho chile))
+  -> Keep 'annatto', merge: ['14fc13ec-b279-4d61-a75e-b49d1603c0db', 'f06e7a24-ded9-4f59-bf5b-ae3942bc9c7c', '695ddef9-45d8-4611-b53f-5b20578668d4'] (regional/alias variant (annatto, annatto seeds, achiote, achiote seeds, achiote paste))
+  -> Keep 'artichoke', merge: ['098402ab-5758-4899-bb82-6cacf9b5f493', 'b8c3db7a-5a24-4511-a562-6dfc6b911eb8'] (singular/plural/alias variant (artichoke, artichoke hearts, globe artichoke, French artichoke, canned artichoke hearts, artichoke bottoms))
+  -> Keep 'blueberry', merge: ['10a16615-1932-42c8-875c-630fb006669b', '2dfa6c12-b1df-4fa2-8492-63e55798bdd1'] (singular/plural variant)
+  -> Keep 'blackberry', merge: ['3902d6ad-f68f-4aa9-ac0e-00db6a1c6b81', '54c610f3-d528-4193-a74b-d23c1b1f7500'] (singular/plural variant)
+  -> Keep 'boysenberry', merge: ['2ebf9d76-5fac-4e59-9af7-c167edfa5db2', '3e6628ce-3016-46e9-9275-14ae77f6c50d'] (singular/plural variant)
+  -> Keep 'barberry', merge: ['9b002da6-13f1-42f5-b373-b1cf66d7d3e9', 'bdf3a3bc-06c5-44d8-90d1-b72981c0e2df'] (singular/plural variant)
+  -> Keep 'bilberry', merge: ['025c7744-64c1-41d4-af3c-330495aceca7', '8d1fe517-64a1-4334-afb2-fe9bf8562106'] (singular/plural variant)
+  -> Keep 'bay leaf', merge: ['0f226345-d4b5-45ab-ae0d-4ce142404240', '66edf312-fea8-4953-a9d0-ecc361a30ff5'] (singular/plural variant)
+  -> Keep 'bao', merge: ['462f3093-d9bb-4a4a-8b76-9d6f41740ad5', 'f96226e2-d8b2-4ad2-beac-4c6ae94f0b1f'] (regional/abbreviated variant)
+  -> Keep 'broccoli rabe', merge: ['36e0e897-0490-4e6c-b189-7a6936f7ee8b', 'bcb206ea-9e39-4c26-a7e9-20c1dbd04451'] (regional name variant (rapini/broccoflower confusion, but 'broccoflower' is a hybrid; if intended as broccoli rabe/rapini, otherwise skip))
+  -> Keep 'black-eyed peas', merge: ['5c73c949-5d28-415c-9caa-91dc9d9c2f1b', 'd196a730-a02e-4d53-a6ba-13ac4257f731'] (singular/plural variant)
+  -> Keep 'beet', merge: ['1ec84a84-89f4-4ce6-a840-708dc4da812e', '730ad668-9767-4577-9c00-a1c9602f15d9'] (regional name variant (beet/beetroot))
+  -> Keep 'brisket', merge: ['029a844b-d967-46ea-8473-15fccb19810e', '07cfb8a8-7224-4cf6-a5ad-b0c07b76b7a7'] (regional/abbreviated variant)
+  -> Keep 'brisket flat', merge: ['f3995631-9956-4150-a5a4-98a7b43e5bbd', '85423dcd-e908-4fb7-9d6f-1e10a48468b9', 'a80faefa-e5e6-4798-b72f-110a370bebc4'] (regional/abbreviated variant)
+  -> Keep 'brisket point', merge: ['b510b9a7-86b8-4928-9fff-c091d8143f96', 'a234bfba-e4dc-4fd5-93be-5a70f4f8bd94', 'd2b9f682-f65c-434c-af00-da919e3cc3de'] (regional/abbreviated variant)
+  -> Keep 'beef bone', merge: ['d8c6feed-e971-4325-b6b8-6e25fd25f027', 'c2b03fd4-d022-40f8-ae64-92d7e3d98af2', '37a1fe6f-3dee-4f13-9243-d8901cb51aa5'] (regional/abbreviated variant)
+  -> Keep 'beef fat', merge: ['35f32571-68b2-4a29-8292-123a1d16b5a6', 'b47d7600-4e1b-4eda-a33a-02d79733ec3f', 'a92dc1ca-766c-4306-8276-ab1ea747ccc9'] (regional/abbreviated variant)
+  -> Keep 'beef ribs', merge: ['306a8b35-23fd-42ad-8b6d-5c73595c433c', '4c51f78d-c0c6-4f40-946a-d729375c1e56'] (regional/abbreviated variant)
+  -> Keep 'beef short ribs', merge: ['f3f62ae5-d427-432d-b730-cc36b0d53501', 'cd2aadde-d81d-4ec6-85bf-9b2cfd7628bd'] (regional/abbreviated variant)
+  -> Keep 'barbecue sauce', merge: ['4e9850d2-0a76-4344-9aa9-b172f1da13e2', '4c7845af-8b66-4ca5-90cc-bd247ae5d71e'] (regional/abbreviated variant)
+  -> Keep 'bulgur', merge: ['4287604b-d40c-42e8-b5c0-1fe9a917fa92', 'fb852198-f049-478f-bcee-7e5336467916'] (regional/abbreviated variant)
+  -> Keep 'chicken breast', merge: ['45decb14-a74d-42f7-a54d-9d8389de6906', '19ff29da-8fb7-42ab-9cd2-e97536933e1f'] (singular/plural and cutlet variant)
+  -> Keep 'carrot', merge: ['89c2b25f-0d58-465e-be45-a2cb56aeed98', '743fd21e-08ee-4741-b48f-d2f4254bd45c'] (singular/plural variant)
+  -> Keep 'cheddar', merge: ['e2816e2d-3a20-40ce-bf5f-12de2df17559', '25355d42-bd01-4960-9ef0-9753ba542446'] (regional/alias variant (cheese type as alias))
+  -> Keep 'cucumber', merge: ['55c89395-f484-45dc-858f-41754a51240b', '9fc79391-8e5b-44a5-89d2-8cbbb8079107'] (singular/plural and regional variant)
+  -> Keep 'canned tomatoes', merge: ['1b01decc-dc4c-42d7-bab6-872e348c2b2f', '2296b013-927e-4b2f-b811-3ef718ef1cbc'] (singular/plural and regional variant)
+  -> Keep 'crème fraîche', merge: ['c48e6303-96b6-4dc5-83a3-0fec17387a68'] (canonical French spelling; no direct duplicate but aliases cover variants)
+  -> Keep 'cayenne pepper', merge: ['005ab669-855b-42dd-9a2a-d9f4e9256511', 'f4f1c1d1-4cc1-44c8-b2fb-758be92a4c6a', 'f73c2c76-eab4-4f86-b853-ffac5ed8d861'] (regional/alias and powder form)
+  -> Keep 'cabbage', merge: ['06f80469-fe66-41f5-9996-6ea34252bc19'] (no direct duplicate, but aliases cover regional variants)
+  -> Keep 'chipotle', merge: ['c3f484ff-e9a5-451b-b511-8ffaf5545b31', '2b2e79e4-1de1-4b2a-83cd-206288b96381', '01631ed5-3cc8-4c5e-96b8-3ef623af4b3c'] (regional/alias and chili/pepper variant)
+  -> Keep 'cumin', merge: ['b4e52464-20b9-4f05-8ce5-e787503d0bbb', '68840a64-e1ae-4964-9699-43c7d27f4430'] (whole/ground and regional/alias variant)
+  -> Keep 'coriander', merge: ['f62c0585-e6de-41ca-88f2-a4c4732c4398', 'b1cf7f6f-d763-404d-a583-ed906c00f819', 'd5ef5c77-f0d3-4329-94cb-27a67ec7db47', '242ea54f-b094-4f2f-96ea-4cedb264276f', 'a5fcd6ca-fb1c-404f-9883-4e708e290d57'] (regional/alias and powder/seed/leaf variants)
+  -> Keep 'cilantro', merge: ['1e76171c-708d-4238-9da7-0ad3eeb9e831'] (regional name for coriander leaves)
+  -> Keep 'chicken gizzard', merge: ['edec8de6-ef98-4fad-9284-01a07d57b1ad', '9f4f83eb-49ec-45fd-9ff6-10981ff7b8d8'] (singular/plural and regional/alias variant)
+  -> Keep 'chicken heart', merge: ['69c629fe-06e4-421d-a8fc-980e7968a21d', '222f4bdd-ffee-4340-950f-93b0980c80da'] (singular/plural variant)
+  -> Keep 'chicken thighs', merge: ['45b2df0d-b200-465e-bdef-bf66f44e3505', '31ae185b-8ca5-43d8-8e45-536ae17ce9f2'] (singular/plural and bone-in/boneless variant)
+  -> Keep 'chicken egg', merge: ['106e0ba6-f105-4384-b46d-fe46c4781558', 'd46de838-fac6-4e3c-8d22-afda548cb2e5'] (singular/plural variant)
+  -> Keep 'cranberry', merge: ['0a6551a7-387e-43b1-bc68-3cfa491b55dc', 'fa516b65-eb16-4df4-973c-0ce50168f95c'] (singular/plural variant)
+  -> Keep 'cloudberry', merge: ['c8dbba91-f895-45d7-82af-28076659d9d4', '372fe121-6c0c-4b98-a209-1a75cabb07f7'] (singular/plural variant)
+  -> Keep 'chokeberry', merge: ['5e640953-41e7-4094-a647-13a3782c1fc8', '243b99d0-248c-401b-be4a-5b4752d1e85d'] (singular/plural variant)
+  -> Keep 'currant', merge: ['1441a1d0-c09f-4cae-8278-8826e29c9ed1', '9b55ac2f-7b89-420d-845c-e3ebb6847849'] (singular/plural variant)
+  -> Keep 'corn', merge: ['9c18367b-936c-4936-9cd7-9a59f34fa7a3', '15d48fcb-978e-44cd-8ef0-b12a4380f999', '6ba15abe-34c4-40c6-9bfc-bd503d9812a4'] (whole/part/variant (kernels/cob/corn))
+  -> Keep 'corn tortilla', merge: ['eace42ff-a615-4103-822c-365725b48d1c', '4d59a1c8-df43-4bd5-8d6e-5bbbda084bc4'] (singular/plural variant)
+  -> Keep 'coconut', merge: ['b1745253-61bf-4a1e-9767-214fd4ebaeb8'] (singular/plural variant covered in aliases)
+  -> Keep 'cashew nuts', merge: ['83fb329d-d516-4f3b-8851-59f295cb13a1', '02499482-a810-4a85-abcb-89cc6d16d57e'] (singular/plural and regional/alias variant)
+  -> Keep 'coriander seeds', merge: ['d5ef5c77-f0d3-4329-94cb-27a67ec7db47', '242ea54f-b094-4f2f-96ea-4cedb264276f'] (singular/plural variant)
+  -> Keep 'caraway seed', merge: ['4e0031e7-7585-4fc2-ab3d-a44892e43b05', '73959493-abb4-4a4e-9e0d-77afbcd7dc56'] (singular/plural variant)
+  -> Keep 'cassia', merge: ['eaf38816-554d-47e5-8ae8-7158244c9c5f', 'cad2747b-23f1-4252-82ee-fa4176dd1953', 'e184ab33-4c24-4c84-aeaa-1a26a6353e0f'] (regional/alias and stick/bark/cinnamon variant)
+  -> Keep 'cinnamon', merge: ['0730e737-42c0-4706-ab88-00dad1d140a0', 'fd3bdd68-9944-4d24-b2b3-fdac6337b50c', '276c65ee-bcdd-4003-818d-72e0e444bafe'] (regional/alias and ceylon/canela/ground variant)
+  -> Keep 'cinnamon stick', merge: ['d57d102c-3773-4422-bea7-7df62e143574', 'c12c624a-5530-4ef2-8056-dcc5c6f68cb2'] (singular/plural and regional/alias variant)
+  -> Keep 'clove', merge: ['c64e4222-74b3-4202-8148-89dc7c8151fd', '424d066f-fb06-4ea2-b3c4-e4c01dbc75ef'] (singular/plural variant)
+  -> Keep 'chive', merge: ['4364646d-84fa-43d2-aefd-dcf649ba5bed', '2277fe96-cacf-4958-ab6b-43eff9dfd725'] (singular/plural and regional/alias variant)
+  -> Keep 'cherry tomato', merge: ['d6b76daf-83fe-4f58-abec-98cd91a04613', 'e80d70b5-89ae-4b50-8190-ce8a1ef607b5'] (singular/plural and regional/alias variant)
+  -> Keep 'cherry', merge: ['e60bc0ac-0d7a-411b-b80d-86c239007107'] (singular/plural variant covered in aliases)
+  -> Keep 'canned tuna', merge: ['9248e1e3-62f9-42ef-af13-f5490b376a31', '0b22d146-75a0-4cd4-901e-0a8f1a3fd23d'] (regional/alias and oil-packed variant)
+  -> Keep 'chickpea', merge: ['183c06d8-4013-406b-85ff-a361507aab53', '4882880c-fc0d-42f2-b8d6-859372ed6880'] (singular/plural and regional/alias variant)
+  -> Keep 'canned chickpeas', merge: ['67661bf5-88de-4b8f-b601-5b97b5e8a8a4'] (singular/plural variant covered in aliases)
+  -> Keep 'cornstarch', merge: ['144eae27-ded1-4a63-9435-6bf6cfd20715'] (regional/alias variant (cornflour UK))
+  -> Keep 'coconut oil', merge: ['4fc8718b-1aa6-4963-b113-cd6acadf5f12'] (regional/alias variant (virgin/refined))
+  -> Keep 'coconut milk', merge: ['3ad40db7-d14d-4c25-ad2c-ae3e33375df4'] (regional/alias variant (canned/unsweetened))
+  -> Keep 'coconut flour', merge: ['08d17925-e841-4d86-a7ae-6481d47a05c4'] (regional/alias variant)
+  -> Keep 'coconut sugar', merge: ['305c10be-d25a-4357-996c-c4da35c2937e'] (regional/alias variant)
+  -> Keep 'cheese', merge: ['e2816e2d-3a20-40ce-bf5f-12de2df17559'] (umbrella term; aliases include types)
+  -> Keep 'Cornish hen', merge: ['66ae76f2-120d-4f68-bfe4-fad79918b4af', 'df4cb485-8a16-429a-8b32-77b39f73e222'] (regional/alias variant)
+  -> Keep 'date', merge: ['b2274da7-b072-42b7-8944-1baf6f1b39fd', 'd52097bc-761c-477f-99c1-4c1ee80ceb3e'] (singular/plural variant and overlapping aliases (dates, medjool, deglet noor))
+  -> Keep 'dried apricot', merge: ['0c478a02-1783-473c-a2f4-76ec32736601', '5849a485-3aa0-46d9-a19e-4abfb0504673'] (singular/plural variant and overlapping aliases)
+  -> Keep 'dried lime', merge: ['0e596269-2914-469b-943e-62757397669f', '8bcd3150-9dd2-40b3-919e-c8d353219d14'] (singular/plural variant and regional name overlap (loomi, black lime, noomi basra, limu omani))
+  -> Keep 'duck egg', merge: ['887d505b-d0ee-45c9-b793-3708be9b8ba9', 'f9a1b8ef-adcb-4c5e-97f4-5bb66a33b52b'] (singular/plural variant)
+  -> Keep 'dried ginger', merge: ['2ddefe5f-8662-4985-8f95-0724de573ecd', '11cbc544-6ef7-4860-a598-a739c21ec5fe'] (regional/alias overlap (whole dried ginger, sonth/soonth, ginger root dried, gan jiang))
+  -> Keep 'daikon', merge: ['9c2aab8e-708f-462c-ae18-17d2f4773be7', 'e2682adb-1987-4a3b-9307-cf290e790ac5'] (regional name overlap (daikon, daikon radish, white radish, mooli))
+  -> Keep 'dried chilies', merge: ['10fe61d5-17c4-485c-adf4-0b60a5851932', '1afde346-333f-43bb-9222-f2d18ce75c67', 'ab1ea900-6d69-4d0a-b055-688744311ded', '9c327c4d-a2ac-428e-8a84-4c116dfe5c9c', 'fad3708a-292a-4338-a2b4-42ad80c54da0'] (regional/plural/alias overlap (dried chilies, dried red chilies, dried chili peppers, whole dried chili, dried red pepper, dried hot pepper, whole dried red pepper, chile seco, whole chili pepper, prik haeng, dried Thai chili, gan la jiao))
+  -> Keep 'eggs', merge: ['2f95bbd8-3845-4f61-96fd-ad4d76aaa137', '3c57141a-705d-4542-95b5-a9e8f4d51b4c'] (singular/plural variant and regional/alias overlap)
+  -> Keep 'egg yolk', merge: ['d547cda4-aa52-4067-947e-fea20970699d', '9d977c7c-36bd-46d0-aba7-7f3f96f27313'] (singular/plural variant)
+  -> Keep 'egg white', merge: ['b00638c9-b0cf-4edb-b37e-c149e9ae2ec4', '0ba93143-b0ef-4b97-92e4-b8f3a1dcf7e7'] (singular/plural variant)
+  -> Keep 'elderberry', merge: ['96b0d487-ca87-453a-ac42-cea1be39e40e', 'de3661f2-255b-4555-b6aa-c8c6e421aca3'] (singular/plural variant)
+  -> Keep 'emmental', merge: ['64953556-c00b-401a-b8a1-0f59fc240b2d', 'cf943582-47b3-41e7-9e51-cc43f5a9738e'] (regional name variant and alternate spelling)
+  -> Keep 'enoki mushroom', merge: ['143dc6e9-7bb4-4995-a75f-02c0d7ae1148', '6442e2ca-cb6d-438d-8493-e88cb7239c8f'] (singular/plural variant and regional/alias overlap)
+  -> Keep 'filets de maquereaux', merge: ['1e20c7cd-6eb1-4f5c-97e6-c66e09ca94ef', 'f0b2829e-9aff-4f95-a04f-2982163450fb', '8893144a-a194-45e7-84fa-f5b3756c39da', '4c9c9084-8c7b-4543-951c-8247eb3570d3', '67aae911-18ca-42e3-ad9c-c3b675842f32'] (singular/plural and preparation variants of mackerel fillets)
+  -> Keep 'flour', merge: ['6d7be92f-1439-4bbd-9294-3ca11b2cd5dc'] (aliases cover all-purpose and regional variants)
+  -> Keep 'fingerling potato', merge: ['4f66d9bc-59f0-4ce3-b3a8-7670bfd54735'] (singular/plural and alternate names)
+  -> Keep 'fennel', merge: ['b564456d-5619-4c49-b37c-14c3b586ef30', 'ad002064-a6bd-4163-b11f-140a047632c5'] (regional and alternate names (finocchio, fennel bulb))
+  -> Keep 'fuyu persimmon', merge: ['13caecb0-16e5-4528-93c4-d8745893a4f5'] (singular/plural and alternate names)
+  -> Keep 'fuji apple', merge: ['507fb2e5-1cc5-4399-804b-e020b6272481'] (singular/plural)
+  -> Keep 'fried onions', merge: ['5eaf9ded-ec92-4732-bda2-1e687b17c2ba', '62f21f7d-4c57-49c1-91fe-219c28d00705'] (singular/plural and alternate names)
+  -> Keep 'feta cheese', merge: ['2d244347-ba62-40a7-b5db-16f7dce55b85', 'c49cc46c-8374-4ed0-8b1d-372f3588403c'] (singular/plural and regional variants)
+  -> Keep 'fromage blanc', merge: ['7966bae4-9cf0-46d1-8d90-dd3728ddd229', 'e506f9e9-7cf5-4c6e-80dc-b4f5a8f1d759'] (nature/plain variant and alternate names)
+  -> Keep 'fennel seed', merge: ['7d1939f0-d2c8-4fad-8a4b-100ec9f732d6', 'ba1fb00b-89d6-4c4a-a3a9-04f71fc13504', '7e40ca06-b30c-415f-b5cd-d6cdeb1537f5'] (singular/plural and powder/whole/ground variants)
+  -> Keep 'fenugreek', merge: ['69c9d6ec-c9e8-48e1-89be-6ec5111eadfb', '91577a5d-ea60-41d2-ac1c-74445dd19657'] (whole and ground/powder variants)
+  -> Keep 'fenugreek seeds', merge: ['a48315ff-8c9a-40ba-92f9-f18352e0cb61'] (singular/plural and alternate names)
+  -> Keep 'fried shallots', merge: ['20a12c17-3695-4ae8-a53f-67a24725c28b', '1abe989f-caa7-4972-9d4d-cb8888389496'] (singular/plural and alternate names)
+  -> Keep 'fava beans', merge: ['6d4ede09-92e5-477a-b5c1-e3e310928cef', 'e8dae424-496a-4d82-b1b7-0bf2bcc1905a'] (singular/plural and alternate names)
+  -> Keep 'fermented bean curd', merge: ['46043e37-7e48-4d08-9d51-809c1cd5f9f0', '325860cb-5cd6-4ab4-bb0d-7aedee1cf18e'] (alternate names (fermented tofu, fuyu, fu ru, etc.))
+  -> Keep 'figs', merge: ['d6c6da25-8d56-401d-ba11-c704a30f3605', 'dcf231e9-7d50-4d77-82e7-29f459129404'] (singular/plural and fresh/dried variants)
+  -> Keep 'flax seeds', merge: ['aa11cbc3-db0c-4edf-814a-af3bbe994857'] (singular/plural and alternate names)
+  -> Keep 'flour tortilla', merge: ['994b3003-a5dd-4b15-9cf6-7c59d606c910', '30c51c1c-2bf0-4297-bd3b-9595a3698579'] (singular/plural and alternate names)
+  -> Keep 'fresh bay leaf', merge: ['2c87d40b-8a70-42b2-a87a-ab027d23c461', '69c134e3-720d-4f79-9a7a-adc795afc0f4'] (singular/plural and alternate names)
+  -> Keep 'green onion', merge: ['7fe8636c-807e-409c-b8c3-44ff12de33d4', 'b1a7ed6e-72e9-4f9d-83c9-f88d4e591f95'] (singular/plural variant and regional name variant (scallion, spring onion))
+  -> Keep 'gooseberry', merge: ['45a0b62e-e311-44ef-b6d9-de444751d82e', '4c77dbc5-5690-49c6-855d-55b130b2319f'] (singular/plural variant)
+  -> Keep 'goji berry', merge: ['ed60734d-2143-4490-9aae-8fc2f57b9b4b', 'eff3eaf9-819a-49a1-8768-d02963782cf0'] (singular/plural variant)
+  -> Keep 'green bean', merge: ['87af4a99-ac8b-49f7-80fe-1be2fe622d66', '5b8a04af-943e-44ce-a502-f98d3690fe40'] (singular/plural variant)
+  -> Keep 'goat cheese', merge: ['914cf325-f66d-48cd-a4a2-4637bd488812', '644e7a45-3c5e-428a-9a86-56ccf2c57ca0'] (regional name variant (chèvre, goat's milk cheese))
+  -> Keep 'garlic chives', merge: ['a59450ee-e7de-4de7-96ba-f0f4fd8ae4a2', '294c937f-d1fd-4c22-aa8c-4f2f3b00fad6'] (singular/plural variant and regional name variant (Chinese chives, Allium tuberosum))
+  -> Keep 'grape', merge: ['300b00cc-a651-4e69-b706-78cf9968f1b3', 'aac3c7c0-5780-4f60-8123-d85f8ad16632'] (singular/plural variant and subtype (green seedless grape is a type of grape))
+  -> Keep 'goat meat', merge: ['99d496b5-7858-4cbb-827e-bff841c85616', '57f53e9f-d766-4638-87bd-cd17943e13ad', '5eb4c039-a273-4ec9-ab6b-205119040474'] (regional name and cut variants (chevon, goat stew meat, goat leg))
+  -> Keep 'guajillo chili', merge: ['1d4c1fcb-364c-4ec9-8f32-ba22e4451d4b', 'd8e019fa-0e6e-43d1-ada9-c0150c86775c'] (regional name variant (guajillo chile, guajillo pepper))
+  -> Keep 'gorgonzola', merge: ['afe196b4-a61d-4731-b4ec-27ea86d2af67', 'f90a278d-a232-4118-9c4c-5c574bccdcae', '59c7d4df-528d-4604-91d6-279eddc90d5a'] (regional/subtype variant (gorgonzola dolce, gorgonzola piccante, gorgonzola cheese))
+  -> Keep 'garlic', merge: ['410fbfb8-476f-4fa3-a584-7eca3c000e49', '98b469f4-1c90-4a53-923f-382ebb7905bf'] (whole vs clove, but both refer to garlic as an ingredient)
+  -> Keep 'ginger', merge: ['7b4adc99-5a53-4153-8e24-4224beb953d2', '60e85370-b879-46b7-8262-2355f0e1e6ed'] (root vs ground, but both refer to ginger as an ingredient)
+  -> Keep 'huckleberry', merge: ['b82f8c4f-9e8c-40a8-bfc0-29ba952b3e8f', 'c58c61ba-509d-4b35-bf21-d1e9d231b47d'] (singular/plural variant)
+  -> Keep 'hazelnut butter', merge: ['b6b5b816-bf90-4d10-bcf7-99c29c4e69a1', '0f437973-5ba1-467b-9a84-50f0c9195d91'] (regional/brand name variant (hazelnut spread includes Nutella, but both refer to the same core product))
+  -> Keep 'halloumi', merge: ['681e9686-b2bf-4773-b092-a7ad81f2acb8', '5e41c734-4252-4c5e-9511-057ffd674ce9'] (regional name variant (halloumi cheese vs halloumi))
+  -> Keep 'harissa', merge: ['6b550388-0da5-47b8-af06-88b75f96dcbf', 'a6f484d1-a7ce-4a3b-85c1-4a8090477708'] (regional/brand name variant (harissa du cap-bon is a specific brand of harissa))
+  -> Keep 'harissa powder', merge: ['2f17a864-ec98-4838-bf21-66ef33c1524d', '62bfeb50-fbcb-47f2-aec3-b2baf603de26'] (regional/name variant (harissa powder vs harissa spice blend))
+  -> Keep 'horseradish', merge: ['245e5968-2332-48d5-99d5-facbf874d30f', 'e1e032c6-a158-407e-8c84-6e28544aff8a'] (regional/name variant (horseradish root vs horseradish))
+  -> Keep 'habanero', merge: ['8f3285bc-384c-4cb7-91a0-96e42b5513b1', 'dc8cf0ec-fb27-4878-8288-ec9c40371d2c'] (regional/name variant (habanero vs habanero pepper))
+  -> Keep 'haricots verts', merge: ['87e9c47b-5abc-44d7-b652-8921f3fedeb2', '8809976e-4bde-4ded-b74f-caf6ee249e71'] (regional/name variant (haricots verts extra-fins 1/2 is a type of haricots verts))
+  -> Keep 'Idiazabal cheese', merge: ['c673ae1a-64a2-4f15-85d4-c0eebb23a867', '8691687b-57ed-4001-9aaf-9c1a4863a7c5'] (regional name variant / exact duplicate (idiazabal vs idiazabal cheese))
+  -> Keep 'invert sugar syrup', merge: ['d3bf2471-55a1-41fc-87e4-84e6ef5b2da0', 'd128a3e2-7f64-463b-a222-c746042f62cf'] (regional name variant / abbreviated form (invert sugar vs invert sugar syrup))
+  -> Keep 'iceberg lettuce', merge: ['aa755c80-8ad5-43de-a70d-3aba7bcaa6c4', 'c74c9888-2046-4c35-830c-45025e9989b0'] (singular/plural/part variant (iceberg lettuce vs iceberg lettuce hearts))
+  -> Keep 'italian chopped tomatoes in tomato juice', merge: ['bba16614-2299-4a9b-b1db-f93468f71913', '58cbbc5f-a098-456e-a9bc-8db1a99a5001'] (singular/plural/ingredient variant (italian chopped tomatoes vs italian chopped tomatoes in tomato juice))
+  -> Keep 'jalapeño pepper', merge: ['74501917-ab82-4178-ae15-48cd0ddde4fa', 'ffd0a5f6-604a-48aa-a866-255bb0293e38', '1bb2e3c0-6a03-4aa9-bb6b-1e2159260f48'] (singular/plural variant, regional name variant, and aliases overlap)
+  -> Keep 'Japanese short-grain rice', merge: ['6d486bbd-8f5c-43d1-b708-6a841875a84b', 'bf827aac-8c13-455d-9943-2e0d613be9aa'] (regional name variant and aliases overlap)
+  -> Keep 'jollof rice', merge: ['a0530cc9-683a-47df-a272-fff3e3b5972d', 'da7a01c0-f9e1-463f-8ebd-8e7ac2f92c4d'] (regional name variant and blend variant)
+  -> Keep 'kiwi', merge: ['4ec2c240-1a6a-405a-a069-6678ad114ccc', '2949e9a9-6f3d-4ac3-beee-7ffcd26e49c0'] (regional name variants and singular/plural (kiwi, kiwifruit, kiwis, chinese gooseberry))
+  -> Keep 'kola nut', merge: ['82e031b8-7583-4cbb-990c-4ebbad483480', 'c18ead82-90e7-4468-872d-e262d9343c77'] (singular/plural variant and alternate spelling (kola nut, kola nuts, cola nut))
+  -> Keep 'kombu', merge: ['21c15c4a-d150-492a-93cb-d3b514f3c675', 'a7de8176-cf56-48fa-8efb-4deaf9d17c2f'] (regional/alternate names (kombu, kelp, dashima, sea kelp, dried kelp))
+  -> Keep 'king oyster mushroom', merge: ['4ac5d22b-b9f5-4235-a0d6-0114483f0e47', '8e5af42b-46db-4d7c-874c-c3c202a1f9a5'] (singular/plural variant and alternate names (king oyster mushroom, king oyster mushrooms, king trumpet mushroom, eryngii, pleurotus eryngii))
+  -> Keep 'kashk', merge: ['3e005927-202c-4fca-98e8-1fceae0ff0af', '9f28c59c-c5e7-449e-a875-18e23817eba7'] (regional/alternate names (kashk, kishk, fermented yogurt powder, jameed))
+  -> Keep 'lemon', merge: ['1b5359ce-d243-42b5-bdc3-cffd4531d156', '8e3a6569-6332-495b-b68e-1bed47ec5147'] (singular/plural variant)
+  -> Keep 'lime', merge: ['aa3c7453-23cf-4300-9c85-89eaf6902d45', '1638a96e-5363-48ce-b6b2-f432c8c26f7e'] (singular/plural variant and regional/varietal overlap)
+  -> Keep 'loganberry', merge: ['b52417a9-afe5-4042-91a1-ad716174f78b', '64a73d04-0ef3-4f5c-937f-74b2aac6a46f'] (singular/plural variant)
+  -> Keep 'lingonberry', merge: ['5523a94e-0b17-4bd4-97df-6afc52e1d13b', 'dc9214a0-e71c-4cfd-b2e0-d84ed7f40690'] (singular/plural variant)
+  -> Keep 'long bean', merge: ['777d4b2d-3af8-4a28-92d6-9603a2ea044a', '6598eb56-294e-435e-b16b-1eee9fec4c80'] (singular/plural variant)
+  -> Keep 'luffa', merge: ['a27988d3-13ab-4cfb-8821-f89b60323e0e', '8dc2f83a-20d4-4d38-af3c-7a9c49b44070'] (regional name variant)
+  -> Keep 'leek', merge: ['c2e85ad4-7dda-42b3-91c0-bb438b52cc20', '585ff1d2-38fa-47b4-9fa1-8854095ff457'] (singular/plural variant)
+  -> Keep 'lasagna', merge: ['de7eaef4-1321-4a90-91ec-6ccd980714b8', 'b57438fe-e72f-4814-a115-e2325c054a82'] (regional name variant and form (sheets vs dish))
+  -> Keep 'liquid egg', merge: ['f35f4843-350d-4df8-b55a-6c1c8a669e3d', 'f6dff3e3-4d17-42d8-975a-1cde55dfd9d7'] (singular/plural variant)
+  -> Keep 'lamb chop', merge: ['dc26d5ec-3e80-4eb6-86c6-cb3ce55118e0', 'eca9788f-b5f3-4319-b7ca-68a60cd625c1'] (singular/plural variant)
+  -> Keep 'marionberry', merge: ['bd25d3d3-86a9-4559-b7fc-61d81c5356ea', 'a2dcf410-ea8f-43c2-8af1-7f33ea96b16a'] (singular/plural variant and shared aliases)
+  -> Keep 'mulberry', merge: ['be88c824-7a80-4ddc-9c65-2eebdef5030c', 'cac4ccfd-2986-452f-a7e3-2c57c555de7b'] (singular/plural variant and shared aliases)
+  -> Keep 'maqui berry', merge: ['a42dc515-a19e-44f4-ac8c-519d7dd95c38', '0b3cf9d2-063b-4df2-b13f-99e3b717c452'] (singular/plural variant and shared aliases)
+  -> Keep 'malabar chestnut', merge: ['76638e8d-1157-4b37-bcde-ee09d1f0669e', 'b03b346e-f552-4ca3-a608-85d32700bb7c'] (singular/plural variant and shared aliases)
+  -> Keep 'malabar spinach', merge: ['0f799c3a-2909-4b3b-8156-0f571fd9c93e', 'fee6e3c8-0f2a-495d-b1d7-c824e720a5a7'] (leaves vs plant, but same ingredient and shared aliases)
+  -> Keep 'macadamia nuts', merge: ['258b4a2a-b566-4203-8cb2-45302031320d', 'bb17bc60-da33-42d2-8b0a-f8f65b71f1a4'] (nut vs flour/meal, but flour is ground nuts; consider merging or linking)
+  -> Keep 'macadamia nut oil', merge: ['7f2c3f68-944a-4f08-9d91-e883c23e0e14', '8c71782d-28ec-40a7-b671-b2d21925ff72'] (exact duplicate via aliases)
+  -> Keep 'macadamia nut butter', merge: ['e0c5da66-93e7-4555-ae8e-31384a2281e7'] (no direct duplicate, but related to macadamia nuts)
+  -> Keep 'mee kia', merge: ['6f65f7ff-1cc4-40c1-aedc-0b64eaeccbc5', '1b619c68-94db-4e87-a4f1-38154c3cdb4d'] (exact duplicate via aliases)
+  -> Keep 'mee pok', merge: ['f1eb9be9-0b30-4f89-8974-fe15fbe6e3db', '038c417e-e48c-4deb-8d05-40cd688fde0d'] (exact duplicate via aliases)
+  -> Keep 'mizithra cheese', merge: ['59a1a600-d2e7-4741-a40f-8427999f5ea7', '4b77a278-3091-479c-a65a-fe597df91884'] (exact duplicate via aliases)
+  -> Keep 'mahlab', merge: ['b690583c-ef11-4fa1-b376-ef1c1bc1cd8f', '0156a1d9-8652-4097-a6ed-c45d95409a31'] (exact duplicate via aliases)
+  -> Keep 'miracle fruit', merge: ['d559dce0-e707-491e-b7d2-9bc6a6a83f52', '17731f72-37df-41f5-8f1d-f3dd8cf1edad', '75c83d64-7760-4b11-a9c5-043a4601c179'] (regional/synonym/alias variants)
+  -> Keep 'mustard powder', merge: ['a05eddea-d82e-4ddf-8383-ca96369711701', 'bdd634da-7af2-4a41-b123-602f21fe7aae'] (abbreviated form ('imp' for imported), otherwise same ingredient)
+  -> Keep 'mustard spinach', merge: ['f9689b6e-6caa-4369-82a2-42a071c17d1e', '0bc1afa8-db2d-407a-858c-bb5c69711701'] (regional/synonym/alias variants)
+  -> Keep 'mushroom', merge: ['916750be-5ee5-4787-bc9d-3d4c1389b92d', '2516d30b-2712-4a7a-85ec-07b67d1be101'] (singular/plural variant and shared aliases)
+  -> Keep 'marrowfat peas', merge: ['49178536-0dbc-4f6b-8e95-ae9b5111a6be', 'bc12c93a-2d64-4607-acd1-baff961ead69'] (regional/synonym/alias variants)
+  -> Keep 'mustard seeds', merge: ['d58c7673-9316-4c7a-8f90-bdcc1036324b'] (no direct duplicate, but covers all mustard seed types)
+  -> Keep 'marrow', merge: ['0ec72dbc-d690-4af1-b5c4-107e5916be99'] (no direct duplicate, but related to marrowfat peas/beans)
+  -> Keep 'manchego', merge: ['166a5d3d-a627-4133-a6fc-494799aa93f0', '493a5a3b-1173-44e4-86ca-720513bddc7a'] (exact duplicate via aliases)
+  -> Keep 'mahon', merge: ['7e5c84fc-fc18-4b6b-a967-64febddca530', 'f588586d-261d-419a-b3e0-ef6e16340d93', '5b40cc69-482c-4607-9e16-2d9b9deed2fa'] (regional/synonym/alias variants (Mahon, Mahon cheese, Mahon curado))
+  -> Keep 'mung dal', merge: ['3137fbc1-e9c4-4c33-86bc-139610bae12c', '3dfd57b5-c26d-4028-a1e5-f58df8e19bdc'] (regional/synonym/alias variants (moong dal, split mung beans))
+  -> Keep 'neufchatel', merge: ['89291f24-97bd-408d-b778-d152e99acaa8', 'ec82271f-9540-4202-81e3-d6ff9cbd8b05'] (regional name variants (French neufchatel, American neufchatel, neufchâtel cheese); near-duplicate with overlapping aliases)
+  -> Keep 'new potato', merge: ['2d9047d4-a870-4b1b-ba11-8984aac5b0fb'] (singular/plural variant covered by aliases ('new potatoes', 'early potato', 'baby potatoes'))
+  -> Keep 'navel orange', merge: ['f4cd4412-9f77-4a99-8f0a-2043a4519cf7'] (singular/plural variant covered by aliases ('orange', 'navel oranges', 'seedless orange'))
+  -> Keep 'nectarine', merge: ['43b48548-c3bd-40e7-a7cd-daf0b9e3de6c'] (singular/plural variant covered by aliases ('nectarines', etc.))
+  -> Keep 'olive oil', merge: ['fc98b53e-9a7d-45a6-a3a3-1c211acd82e1', '33419382-1f34-4fd6-8776-ef0f85345888', 'e1856dc6-46af-4d01-90a6-3d24f5e8c62c'] (regional/linguistic variants and abbreviations (olive oil, olio extravergine di oliva, olio extra vergine di oliva))
+  -> Keep 'onion', merge: ['0e0892c5-880a-4ca8-b9e7-1eb9f1b69e6a', '5b53a769-589a-43b9-968f-d792a07611d7'] (singular/plural variant)
+  -> Keep 'olive', merge: ['bd306bef-cc19-4d55-85ca-8a370643e2f5', '3c783b81-f292-4745-9185-854915c06f1a'] (singular/plural variant)
+  -> Keep 'Old Bay', merge: ['53b448c2-d448-49ab-abc3-2eea87296f96', 'bba95888-7004-4d5c-aa99-b64ae11cb16f'] (abbreviation and alternate spelling (Old Bay, Old Bay seasoning))
+  -> Keep 'ostrich egg', merge: ['1c0ad1ac-99c2-4ea9-8e3c-c03705a8b990', 'a8b74bee-63f6-4690-ab8e-7b7b68ee8dd9'] (singular/plural variant)
+  -> Keep 'oregano', merge: ['e55cfe70-8cd7-4d3f-b686-32b1826d4009', 'e99a900e-4ae1-4a72-87da-c5d15fbd89e1'] (regional variant (oregano, Mexican oregano))
+  -> Keep 'quail egg', merge: ['0f85463c-6cf8-4f92-8e8c-bd5730040cdd', '0b3eb7c5-9318-40b5-ab3c-81db93dfeafc'] (singular/plural variant)
+  -> Keep 'quail whole', merge: ['d36a6334-6d4b-4f89-99c8-8ed7048b6c2e', '78763c52-ac39-4611-9870-4c3954b28a0f'] (regional name variant and alias overlap ('quail', 'whole quail'))
+  -> Keep 'queso blanco', merge: ['a3b972cf-ac41-43e5-a0ba-6de8ef8ed095', '65a7f14a-1c60-4c2f-8419-a30f28d6ba33'] (regional name variant and alias overlap ('queso fresco', 'queso blanco'))
+  -> Keep 'queso manchego', merge: ['ca17b1a0-d543-4007-85fc-05460713f620', '3b491f28-bd3b-4a70-b278-41fbb077a6ce'] (regional name variant and alias overlap ('manchego cheese', 'Spanish fresh cheese'))
+  -> Keep 'romaine lettuce', merge: ['8adb93b1-33a2-4d8b-8619-d13924cad9b3'] (canonical includes all major aliases (cos lettuce, romaine, hearts of romaine))
+  -> Keep 'ramps', merge: ['e48f346c-4871-43ef-8ad8-f98bf3bdaa4f', 'a95c22b9-0961-4d6e-8cc2-95c8687183e7'] (singular/plural variant and regional name variant (ramp, ramps, wild leek, wild leeks, Allium tricoccum))
+  -> Keep 'rainbow chard', merge: ['e66aa64b-ed1e-453f-8673-49f3467aba9b', 'bcae3123-f5f6-4f14-8f49-d736edd7c244'] (regional/varietal overlap (rainbow chard, red chard, ruby chard, multicolored chard); consider if red chard is distinct, but often grouped)
+  -> Keep 'raspberry', merge: ['c799bb54-77fb-40d3-92b5-c6d37b85e300', 'd58a390d-f319-4bdb-a175-7604e2503fb8'] (singular/plural variant and color/variety overlap (raspberry, raspberries, red/black/golden raspberries))
+  -> Keep 'rowan berry', merge: ['07b161ef-e788-4fca-a54f-80f6fc247a80', '42bdf473-0c52-491a-adcd-48f9c3bf99b0', '068ca4a7-3de1-4e5c-a071-8af0a8bed4bb'] (singular/plural/regional variant (rowan berry, rowan berries, rowanberry))
+  -> Keep 'red onion', merge: ['0f9eca0f-b88f-4526-bd97-24912c9ba0e6', '3e71c347-e580-49a3-aa36-6aca507a65ad'] (singular/plural variant (red onion, red onions, purple onion))
+  -> Keep 'rose water', merge: ['ecf01923-2c84-4e8d-b20c-9474cc6b179a', '8f82add4-6697-45d3-815a-fc30577613ac'] (regional/spelling variant (rose water, rosewater, gulab jal, maward, ward water, rosa water))
+  -> Keep 'razor clam', merge: ['cc03eb07-da41-49f6-98be-b273de082baa', '60a45869-7a28-4b73-8610-c7f6f25efcd2'] (singular/plural variant (razor clam, razor clams, Pacific/Atlantic razor clams))
+  -> Keep 'romanesco', merge: ['da918af1-a540-44f6-8dd7-b2773da6188b', '8dbc3d38-cd49-4c99-aaf2-412050d1430b'] (regional/varietal/alias overlap (romanesco, romanesco broccoli, roman cauliflower, romanesco cauliflower, broccoflower))
+  -> Keep 'rice noodles', merge: ['12f721fb-f87f-44f7-b37a-5ed2a070b993', 'c0b1a012-9f96-411a-9729-d5d3fc100a17'] (regional/alias overlap (rice noodles, rice vermicelli, bun, bee hoon, banh pho, sen lek, rice sticks))
+  -> Keep 'red kidney beans', merge: ['c5823c1b-72b4-491d-9d81-a71388501d88', 'ea69bfa8-f118-4a52-b61e-7e671c5d28d8'] (regional/alias overlap (red kidney beans, kidney beans, red beans, small red beans, Louisiana red beans, gungo peas))
+  -> Keep 'rice vinegar', merge: ['54244f7b-06ca-4b21-8cc0-9e933a0e1dd0', '4e2cd544-16e1-415b-90d5-2e8b2428a60d'] (regional/alias overlap (rice vinegar, rice wine vinegar, seasoned rice vinegar, sushi vinegar, aji-mirin, komesu, su, Japanese rice vinegar))
+  -> Keep 'strawberry', merge: ['352f8c21-34d7-4437-a31b-e802d92bb870', '7c680949-381a-4a1c-a2e0-13e25b30dfa9'] (singular/plural variant)
+  -> Keep 'sun-dried tomato', merge: ['51250bc5-49a8-4580-b260-b82024175768', '6b19b773-cdc8-4239-ad23-55614e3768d6'] (singular/plural variant)
+  -> Keep 'scallion', merge: ['7ef6255b-a764-4097-a251-6c10ecaaad70', '664295b6-22e9-4368-bf30-4a7de90ceab7'] (regional name variant (scallion/green onion/spring onion))
+  -> Keep 'snap pea', merge: ['6ba09fc5-c9cb-43db-bea4-8fd6ce7bb7af', '61f639d9-d635-4906-a31c-8ee8bb0c04ed', '560c810c-e7ab-4119-b6bf-40016e6c269f'] (singular/plural and regional name variants (snap pea/sugar snap pea))
+  -> Keep 'snow pea', merge: ['acc0b49e-c42b-442f-8a55-0463889ce933', '67b6ae3f-20b5-4205-a2f8-b87307788023'] (singular/plural and regional name variants (snow pea/mangetout))
+  -> Keep 'serviceberry', merge: ['2bfd76bf-2af2-4a3c-bd77-b06d0a4ed2dd', '5dc9368d-2d8f-4923-a567-da399540d16e'] (singular/plural variant)
+  -> Keep 'salmonberry', merge: ['0186c003-095c-4b51-8eb1-57b13f7c0441', 'd88d1c2c-1f86-435c-9b48-52eb87e893a4'] (singular/plural variant)
+  -> Keep 'shiso', merge: ['e8aef642-447c-4ab4-ac92-0607a483e53e', '3d7caee5-da76-4dd7-95d1-86a68e9b0771', 'a937799a-6d7f-4a9b-b357-fd15c7d8c847'] (regional and form variants (shiso/shiso leaf/shiso leaves/perilla))
+  -> Keep 'shiitake mushroom', merge: ['779adcd0-d360-411b-86ec-e0c7b3b7bd5c', '576a61bf-25b8-4311-9d38-af54644cf4b1'] (singular/plural variant)
+  -> Keep 'shimeji mushroom', merge: ['59bc9fad-1609-4d82-885e-75793fc52886', '8b2a013b-d8d8-485d-bf27-ce8496229892'] (singular/plural variant)
+  -> Keep 'scotch bonnet pepper', merge: ['b0c9034c-da37-4d4f-ac06-a712cfa19893', '739e02a4-a88a-45a5-89bb-b2a306f8c109'] (regional name variant (scotch bonnet/scotch bonnet pepper))
+  -> Keep 'shallot', merge: ['890b1797-0d8c-47aa-85eb-aa9f0a2848da', 'a863e80d-4bac-472d-bc62-2efdc9afa457'] (singular/plural variant)
+  -> Keep 'sofrito', merge: ['d737188e-47ad-4add-be06-593f7348c8d1', '8dc32d66-da9f-4a11-a1f4-a4825a17350e', 'bf3e3a2f-3647-4e20-bfdb-24a8d408563f'] (regional/abbreviated variants (sofrito/sofrito base/sofrito base ingredients))
+  -> Keep 'sardine', merge: ['f44eb200-ac4a-420c-9ebc-9ff757a5efce', 'df1ea10d-c173-4738-a091-43586c9b2db5'] (singular/plural variant)
+  -> Keep 'sea buckthorn berry', merge: ['bbcad5e9-72e4-4c8a-bb2b-950ba67db0be', '64356a40-4379-4b13-8c2f-dd00dbc620e5'] (singular/plural and regional name variant (sea buckthorn berry/sea buckthorn berries))
+  -> Keep 'star fruit', merge: ['5b119d5e-cc66-46c5-b44d-a6eef5cdc4c3', 'e5342c14-e34c-4949-8df2-50498a6a6d75'] (singular/plural and regional name variant (star fruit/starfruit/carambola))
+  -> Keep 'salted duck egg', merge: ['f4587725-0a4e-457c-b1b9-8cb07e650730', '2828321c-4a53-4df8-8818-dd7c03d9b924'] (singular/plural variant)
+  -> Keep 'sumac', merge: ['b574c39b-0fe6-46b5-a279-3f712d1e8fcd', 'd7514dd8-37d4-457e-872a-9d9036f42448'] (whole/ground and regional variant (sumac/sumac berries))
+  -> Keep 'saffron', merge: ['a6eb985d-b48b-4d50-9c2a-a2f2713f3c0f', 'aa6ffe6b-493a-4e4a-af3d-2fe0717acae6'] (form variant (saffron/saffron threads))
+  -> Keep 'sazon', merge: ['96de4948-7eab-4316-b827-9c1b3ce15172', '0191611b-0abe-4a32-9a30-bd137b520e0c'] (spelling/diacritic variant (sazon/sazón))
+  -> Keep 'shawarma seasoning', merge: ['a17b6dfb-410d-4534-9689-9248113c3ff5', 'ff8a3bee-2a76-487b-a536-f105899a8f5f', 'b6d8ba3f-de23-438c-82c9-a6bbf0155a06', 'db8ba22a-15ce-4c87-8e36-2b260e950a7e'] (regional/spelling/abbreviated variants (shawarma/sha(w)arma/shwarma seasoning/spice blend))
+  -> Keep 'spelt', merge: ['b9aac719-f174-41c0-87ae-621b6e1a73a1', 'dfdc4f43-747e-4612-bb75-1dbe23c44cbd'] (whole vs flour (spelt/spelt flour), but may be kept separate if needed)
+  -> Keep 'semolina', merge: ['ce166f4e-5db7-4006-9fef-08eef372f532', 'c727c0d6-0622-47ed-9378-23cd8435d274'] (form variant (semolina/semolina flour))
+  -> Keep 'soybean', merge: ['d6bc8a84-30b2-450c-9ef0-9ce1e07b94b3', 'cd76c39e-9b59-4c18-ae8b-40be59442746'] (whole/bean vs sprout (soybean/soybean sprouts), but may be kept separate if needed)
+  -> Keep 'somen noodles', merge: ['3009aca6-5e45-4822-8281-a5bc81b5ff3e', '1f8c6a49-ff67-4a85-a2c6-7831295af23e'] (spelling/spacing variant (somen noodles/somennoodles))
+  -> Keep 'scallop', merge: ['928316db-01f9-4d61-8bd8-a0a56cf55c96', 'e3231c2a-b591-4d21-9ae1-9034fd30b014'] (singular/plural and regional variant (scallop/scallops/sea scallops))
+  -> Keep 'sacha inchi', merge: ['5e188f0b-a676-4ef1-8b49-3e7c572e25ee', '96f0fff2-9815-4c7b-a6ee-29ff50e7f721'] (seed/nut variant (sacha inchi nuts/seeds))
+  -> Keep 'sweetened condensed milk', merge: ['fa2ffa61-5bc5-43c8-ba18-a07603d2aee7', '488a1d0f-6a11-4ddf-beb9-4c360897e0d0'] (base/plant-based variant (sweetened condensed milk/sweetened condensed coconut milk))
+  -> Keep 'shallot', merge: ['890b1797-0d8c-47aa-85eb-aa9f0a2848da', 'a4ed8a94-efbc-4248-8e41-448d4291f0c6'] (form variant (shallot/shallot, minced))
+  -> Keep 'shrimp', merge: ['bd3e2a26-984d-465b-9f92-eda374b6e4b2', '15e37316-eb59-4fe4-82ab-74e3da13e0b1', 'd74efce2-d67c-444a-8973-701b598f23bc'] (size/form variant (shrimp/small shrimp/shell-on shrimp))
+  -> Keep 'salt cod', merge: ['a716ad20-0870-46b0-a248-ec147a12d483', '4ae0f1ec-3344-41c3-85ba-c3eb07d3c1e1'] (regional name variant (salt cod/saltfish/bacalao))
+  -> Keep 'sour orange', merge: ['91867f94-ed92-47aa-8a49-f31483bd4e3c', 'f1ba3a09-8447-4d8c-be30-5d167ea721dc'] (regional name variant (sour orange/Seville orange/bitter orange))
+  -> Keep 'split peas', merge: ['3422a0a7-a834-45f9-b33b-8fdf17966b64', '88bb9d20-f463-440c-8d4e-88b8435a1b12', '44c919a1-95e3-4c05-bb24-d6732d4b39d7'] (singular/plural and color variant (split peas/split green peas/split yellow peas))
+  -> Keep 'squid', merge: ['68ab044e-7e6f-413e-8047-644d101026dc', '9963ada2-a58f-420e-ab7f-7d462bbf0cbb', 'a33a431d-46fb-4253-b7eb-8e8eca02d18d', 'bca1e83b-2bb1-4aaf-90e5-d06e0d732a0c'] (form variant (squid/squid tubes/squid tentacles/squid rings))
+  -> Keep 'sesame paste', merge: ['dd929e29-f999-44ed-a540-cc58f514c08f', '9728dcac-9f2e-4a28-9ba1-9e4b6439d340', '33bdebfc-ac2d-43bd-817a-5620c4b33b78'] (regional/form variant (sesame paste/sesame seed paste/sesame butter/tahini))
+  -> Keep 'sea salt', merge: ['602be12d-4e18-4c20-b7c5-a048fe8ef21d', 'e089cf4e-1f3f-412f-9bd2-14dac0e5a646'] (form variant (sea salt/smoked salt))
+  -> Keep 'skyr', merge: ['cb63ea7f-06a8-4845-8758-e920b3139fc8', 'eddb22e3-4c2b-4023-aad3-8379b815c3a0'] (form/fat content variant (skyr/skyr nature 0%))
+  -> Keep 'short grain rice', merge: ['969caafe-7c71-4723-acff-de0c94751c8f', 'e4b46b93-2391-410b-b165-821044a9e69b'] (regional/varietal variant (short grain rice/short-grain rice))
+  -> Keep 'taleggio', merge: ['eb748a7a-e4c0-429a-9705-4651073af7fe', 'ed6015ee-b92f-42fa-9096-b450447e83bf'] (regional name/alias variant (telaggio is a misspelling/variant of taleggio))
+  -> Keep 'turkey broth', merge: ['0090f5fe-423e-48ec-96fd-170be1d7e904', 'b8a8961d-4224-4678-92fe-139a3831de4f'] (regional name/alias variant (turkey broth and turkey stock are used interchangeably))
+  -> Keep 'turkey egg', merge: ['43f9cae4-c3ac-491b-aaeb-dcc8742f51ae', 'bdaf3ea8-d79a-499e-b110-040706d8dfc0'] (singular/plural variant)
+  -> Keep 'turnip', merge: ['0e63720f-786c-4f2d-8752-99a3fee35158', '0f2a44bc-5c4f-43bc-b29e-03dee52005eb'] (regional name/alias variant (turnip and navet/French turnip))
+  -> Keep 'tayberry', merge: ['94edb096-8010-40e2-bc2d-ee75533a0a50', 'cf38c977-6bcc-4506-bd39-91f9e5abd606'] (singular/plural variant)
+  -> Keep 'tapioca flour', merge: ['68bf64d6-2911-4bb5-b432-4ae0da93901f', 'ab6bc122-a3ad-4289-941e-505c0acea13e'] (regional name/alias variant (tapioca flour and tapioca starch))
+  -> Keep 'turmeric root', merge: ['27292627-bf7c-4fe9-a7c4-b9ec5003a063', 'e7d687e0-ceff-47d8-9659-9c1466d15a89'] (regional name/alias variant (turmeric root and tumeric root/fresh turmeric))
+  -> Keep 'turmeric', merge: ['55d07bdc-c25a-4ea9-91cb-f018e79f33ed', '83c83197-1a2e-48e9-b0ee-605dfa71af33'] (regional name/alias variant (turmeric and turmeric powder/haldi))
+  -> Keep 'taro', merge: ['49068e8f-5577-42e0-81eb-c2d8373f9a67', 'dfb4159f-2627-48c4-b7db-d929fa4cb845'] (regional name/alias variant (taro and taro root/dasheen/eddo))
+  -> Keep 'tomato puree', merge: ['c3647d84-b659-47db-812b-242b0764d58d', 'c9ef30c0-3221-4bb7-b465-54c5825059aa'] (regional name/alias variant (tomato puree, purée de tomate, tomato sauce))
+  -> Keep 'tomato', merge: ['8033c840-6c65-458e-b31f-0a023ea891b0', 'b76a06a5-4f15-4b1d-8510-252096026d37'] (singular/plural variant)
+  -> Keep 'turkey sausage', merge: ['b26346ea-5ff0-45a6-9aab-e61ed8895147'] (singular/plural variant)
+  -> Keep 'thai chili', merge: ['ca80d03c-2072-4352-85a4-c9d68d83ffcb', '933af903-6f84-46f5-9b2a-7127e784230b', '40d58238-4d90-4155-b534-55d54ed08999'] (regional name/alias variant (thai chili, Thai chilis, thai bird's eye chilis, bird's eye chili, prik kee noo))
+  -> Keep 'triple cream cheese', merge: ['42c076ca-9325-429b-80eb-941ebf15668c', 'd814a316-69c0-4d0d-92f9-c54177ed032a'] (regional name/alias variant (triple cream cheese, triple cream brie))
+  -> Keep 'tiger nut', merge: ['bba9e196-971e-4713-b5cb-1ae893b6cd83', '787e753c-88f9-4b9c-8c5b-0f34c21a231a'] (singular/plural variant)
+  -> Keep 'udon noodles', merge: ['6716be78-fdf7-40af-a4c0-6390bb479b59', '793792ed-c4a2-4cde-b504-cbef8cc90ef4'] (singular/plural variant and form variant (fresh vs frozen udon); both refer to udon noodles, with 'udon (frozen)' as a subtype)
+  -> Keep 'ugu leaf', merge: ['c1bb09df-e291-4a9f-9530-798b2f06f634', '34be42fd-1b1f-48b3-9698-2ca7d0d9e339'] (regional name and plural/singular variant; both refer to fluted pumpkin leaves (ugu/ugwu))
+  -> Keep 'vermicelli', merge: ['40408bad-ac6c-496d-ab92-77f80c2d0325', '1a7d15f8-1c8d-4308-af54-c63ce35a3132'] (regional/alternate name variants and form (vermicelli vs vermicelli noodles, vermicelli pasta, fine noodles, thin spaghetti, angel hair))
+  -> Keep 'venison tenderloin', merge: ['ff6fc3d7-dc1c-4b05-95f9-b52543843a30', 'df3ba132-703c-4d85-85d9-585ed89c0b7f'] (regional/alternate name variants and cut overlap (venison tenderloin, backstrap, venison loin, deer loin, venison fillet))
+  -> Keep 'vegetable broth', merge: ['5bacbdec-5764-41ac-8f88-05771dfff70f', 'd0ad34d0-aeeb-4c37-a1f2-f8bce9e358e5'] (regional/alternate name variants and form (vegetable broth, vegetable stock, veggie broth, bouillon cube, vegetarian stock cube))
+  -> Keep 'wineberry', merge: ['6fbd4173-cda9-4dff-b0e8-c671b90ce051', '75e15cdf-e900-4f21-a7e8-0199caf7ef84'] (singular/plural variant and shared aliases)
+  -> Keep 'wasabi', merge: ['a18aad20-423c-479c-840d-0a1e82b20990', 'e307d7a6-c7c2-4aa0-a04b-177d6ff1cb99'] (regional/alternate name and alias overlap (wasabi root, Japanese horseradish))
+  -> Keep 'white pepper', merge: ['a824a991-2a71-4460-b782-b73d646b4155', 'f50b3b33-556d-43cc-9802-5c2cbae66787', '7ee62c8c-901d-4813-9048-1c14a2949c30'] (formulation/abbreviation overlap (peppercorn, powder, ground) and shared aliases)
+  -> Keep 'wax bean', merge: ['b0336292-4846-4089-9205-bf356d420e49', '86a57fb7-b8e0-4ab0-b4f2-ed496059f123'] (singular/plural variant and shared aliases (yellow bean/beans))
+  -> Keep 'water chestnut', merge: ['f5dadced-8fc5-4091-afec-ef55bd0dc1eb', 'ef651260-ad70-46db-a31c-7508e8cbef9a'] (singular/plural variant and shared aliases)
+  -> Keep 'wood ear mushroom', merge: ['e9897c0d-f762-4afa-8aa7-756243e5127f', '3813b488-c02b-4126-92a4-616996a42013'] (singular/plural variant and shared aliases (cloud ear, black fungus, mu er))
+  -> Keep 'yogurt', merge: ['5bb677a7-8339-4f75-947b-2d74a1c84c34', 'e8311bbc-70ba-42be-9093-4860df1e2800'] (yogurt cheese (labneh) is a strained form of yogurt; could be considered a subtype, but often merged in ingredient lists)
+  -> Keep 'Yukon Gold potato', merge: ['fbbec10d-d148-4972-ad0f-b74cb939abb9'] (singular/plural variant in aliases)
+  -> Keep 'yam', merge: ['57fb08aa-a18e-4a40-9e9e-0e961af8a52d', '048bdf5b-e6c1-4a22-83f1-af5561c30f79'] (singular/plural variant and regional name overlap (African yam, white yam, etc.))
+  -> Keep 'yellow tomato', merge: ['3f302291-f91b-4539-b853-467a62ec0eb2'] (singular/plural variant in aliases)
+  -> Keep 'yardlong bean', merge: ['7355d855-e515-44be-9ad7-8bfe5541368a', '0b063544-6618-42cb-9e8a-260121f19a0d'] (singular/plural variant and regional name overlap (Chinese long bean, asparagus bean/beans))
+  -> Keep 'yellow lentils', merge: ['42a69120-aaf8-4d35-be76-99bcc83b226d', 'ddbd7e08-7f77-47da-ba9d-223d960c2ef4'] (regional name overlap (moong dal split/yellow split mung beans/yellow mung dal))
+  -> Keep 'yellow peas', merge: ['732aa8da-d170-4dd4-b636-48e0a2b9f00d', '1cfb17ef-ede1-45fa-8994-10fe0aab7a0b'] (regional name overlap and singular/plural variant (yellow split peas, yellow peas split, toor dal, chana dal))
+  -> Keep 'yellow mustard seeds', merge: ['04078412-72e3-42f1-9aad-893561120ab5'] (singular/plural variant in aliases)
+  -> Keep 'yellow mustard', merge: ['f37ada65-434d-45d0-8cb9-c4f20b23d06e', '09111bf0-e331-4e77-b5a5-e4fb045b6736'] (prepared mustard vs powder; could be considered subtypes, but often merged in ingredient lists)
+  -> Keep 'yuzu', merge: ['e2b52edd-5327-4f3f-bd8b-0a868d858a5a', '450752cf-addc-4fb4-99f9-24bb5476133a'] (yuzu fruit and yuzu juice; often merged in ingredient lists)
+  -> Keep 'yardlong bean', merge: ['7355d855-e515-44be-9ad7-8bfe5541368a', '0b063544-6618-42cb-9e8a-260121f19a0d'] (singular/plural variant and regional name overlap)
+  -> Keep 'zopf bread', merge: ['cf5f3b19-6b7d-4f65-b42d-3fc581617fe1'] (regional name variants and abbreviations in aliases (Swiss zopf, zopf, Swiss braid bread))
+  -> Keep 'zucchini', merge: ['77931ced-0f2a-4de7-af3e-1b8d2876ab40'] (regional name variants in aliases (courgette, baby marrow, green zucchini))
+  -> Keep 'za'atar', merge: ['1ad0aee2-50ef-487f-978a-11f8228a8226'] (spelling variants in aliases (zaatar, za'atar powder))
+  -> Keep 'ziti', merge: ['2214bd79-ad92-4fe8-97be-e5352a80f9d4'] (abbreviated form in aliases (baked ziti))
