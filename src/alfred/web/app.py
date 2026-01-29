@@ -35,6 +35,15 @@ from alfred.web.session import (
     commit_conversation,
     delete_conversation_from_db,
 )
+from alfred.web.jobs import (
+    create_job,
+    start_job,
+    complete_job,
+    fail_job,
+    acknowledge_job,
+    get_job,
+    get_active_job,
+)
 
 # Onboarding module (isolated from Alfred's graph)
 # Optional import - may not be available in all deployment environments
@@ -191,24 +200,33 @@ async def get_me(user: AuthenticatedUser = Depends(get_current_user)):
 async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """Send a message to Alfred."""
     from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
-    
+
+    # Convert ui_changes to dict format for workflow
+    ui_changes_data = None
+    if req.ui_changes:
+        ui_changes_data = [c.model_dump() for c in req.ui_changes]
+
+    # Create and start job
+    job_id = create_job(user.access_token, user.id, {
+        "message": req.message,
+        "mode": req.mode,
+        "ui_changes": ui_changes_data,
+    })
+    if job_id:
+        start_job(user.access_token, job_id)
+
     try:
         # Enable prompt logging based on user preference
         enable_prompt_logging(req.log_prompts)
-        
+
         # Set user ID for logging context
         set_user_id(user.id)
-        
+
         # Set request context for authenticated DB access
         set_request_context(access_token=user.access_token, user_id=user.id)
 
         # Get conversation from user's session (with DB fallback)
         conversation = get_user_conversation(user.id, user.access_token)
-
-        # Convert ui_changes to dict format for workflow
-        ui_changes_data = None
-        if req.ui_changes:
-            ui_changes_data = [c.model_dump() for c in req.ui_changes]
 
         # Run Alfred (will use authenticated client via request context)
         response_text, updated_conversation = await run_alfred(
@@ -219,19 +237,32 @@ async def chat(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_u
             ui_changes=ui_changes_data,
         )
 
-        # Single commit: stamp metadata + cache + persist to DB
-        commit_conversation(user.id, user.access_token, updated_conversation, conversations)
-
         # Get log directory
         log_dir = get_session_log_dir()
+
+        # Complete job first, then commit conversation
+        if job_id:
+            try:
+                complete_job(user.access_token, job_id, {
+                    "response": response_text,
+                    "log_dir": str(log_dir) if log_dir else None,
+                })
+            except Exception as e:
+                logger.error(f"Failed to complete job {job_id}: {e}")
+
+        # Single commit: stamp metadata + cache + persist to DB
+        commit_conversation(user.id, user.access_token, updated_conversation, conversations)
 
         return {
             "response": response_text,
             "conversation_turns": len(updated_conversation.get("recent_turns", [])),
             "log_dir": str(log_dir) if log_dir else None,
+            "job_id": job_id,
         }
     except Exception as e:
         logger.exception("Chat error")
+        if job_id:
+            fail_job(user.access_token, job_id, str(e))
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         # Clear request context
@@ -281,6 +312,40 @@ async def get_conversation_status(user: AuthenticatedUser = Depends(get_current_
     return get_session_status(conv)
 
 
+# =============================================================================
+# Job Recovery Endpoints
+# =============================================================================
+
+@app.get("/api/jobs/active")
+async def get_active_job_endpoint(user: AuthenticatedUser = Depends(get_current_user)):
+    """Get the user's most recent unacknowledged running/complete job.
+
+    Frontend calls this on reconnect/page load to recover missed responses.
+    Returns null if no active job exists.
+    """
+    job = get_active_job(user.access_token, user.id)
+    return {"job": job}
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job_endpoint(job_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    """Get a specific job by ID."""
+    job = get_job(user.access_token, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job": job}
+
+
+@app.post("/api/jobs/{job_id}/ack")
+async def acknowledge_job_endpoint(job_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    """Mark a job as acknowledged (client received the response).
+
+    Prevents showing stale responses on next load.
+    """
+    acknowledge_job(user.access_token, job_id)
+    return {"success": True}
+
+
 @app.get("/api/debug/logging")
 async def debug_logging():
     """Check current logging status (for debugging)."""
@@ -292,25 +357,34 @@ async def debug_logging():
 async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """Send a message to Alfred with streaming progress updates."""
     from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id, get_session_log_dir
-    
+
+    # Convert ui_changes to dict format for workflow
+    ui_changes_data = None
+    if req.ui_changes:
+        ui_changes_data = [c.model_dump() for c in req.ui_changes]
+
+    # Create and start job before entering the generator
+    job_id = create_job(user.access_token, user.id, {
+        "message": req.message,
+        "mode": req.mode,
+        "ui_changes": ui_changes_data,
+    })
+    if job_id:
+        start_job(user.access_token, job_id)
+
     async def event_generator():
         try:
             # Enable prompt logging based on user preference
             enable_prompt_logging(req.log_prompts)
-            
+
             # Set user ID for logging context
             set_user_id(user.id)
-            
+
             # Set request context for authenticated DB access
             set_request_context(access_token=user.access_token, user_id=user.id)
 
             # Get conversation from user's session (with DB fallback)
             conversation = get_user_conversation(user.id, user.access_token)
-
-            # Convert ui_changes to dict format for workflow
-            ui_changes_data = None
-            if req.ui_changes:
-                ui_changes_data = [c.model_dump() for c in req.ui_changes]
 
             # Stream Alfred's progress (will use authenticated client via request context)
             async for update in run_alfred_streaming(
@@ -321,19 +395,34 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                 ui_changes=ui_changes_data,
             ):
                 if update["type"] == "done":
-                    # Single commit: stamp metadata + cache + persist to DB
-                    commit_conversation(user.id, user.access_token, update["conversation"], conversations)
                     # Get log directory
                     log_dir = get_session_log_dir()
+
+                    # Complete job first, then commit conversation
+                    if job_id:
+                        try:
+                            complete_job(user.access_token, job_id, {
+                                "response": update["response"],
+                                "active_context": update.get("active_context"),
+                                "log_dir": str(log_dir) if log_dir else None,
+                            })
+                        except Exception as e:
+                            logger.error(f"Failed to complete job {job_id}: {e}")
+
+                    # Single commit: stamp metadata + cache + persist to DB
+                    commit_conversation(user.id, user.access_token, update["conversation"], conversations)
+
                     yield {
                         "event": "done",
                         "data": json.dumps({
                             "response": update["response"],
                             "log_dir": str(log_dir) if log_dir else None,
+                            "job_id": job_id,
                         }),
                     }
                 elif update["type"] == "context_updated":
                     # Summarize completed async - commit final conversation
+                    # Job output stays as original response — context_updated is internal state only
                     commit_conversation(user.id, user.access_token, update["conversation"], conversations)
                     yield {
                         "event": "context_updated",
@@ -346,6 +435,8 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                     }
         except Exception as e:
             logger.exception("Stream chat error")
+            if job_id:
+                fail_job(user.access_token, job_id, str(e))
             yield {
                 "event": "error",
                 "data": json.dumps({"error": str(e)}),
@@ -353,7 +444,7 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
         finally:
             # Clear request context
             clear_request_context()
-    
+
     return EventSourceResponse(event_generator())
 
 

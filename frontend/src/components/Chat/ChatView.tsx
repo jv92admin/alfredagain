@@ -7,7 +7,7 @@ import {
   updatePhaseState,
 } from './StreamingProgress'
 import { Mode } from '../../App'
-import { apiStream } from '../../lib/api'
+import { apiStream, apiRequest, pollJob } from '../../lib/api'
 import { useChatContext } from '../../context/ChatContext'
 import type { ActiveContext } from '../../types/chat'
 
@@ -16,9 +16,13 @@ interface ChatViewProps {
   setMessages: Dispatch<SetStateAction<Message[]>>
   onOpenFocus: (item: { type: string; id: string }) => void
   mode: Mode
+  activeJobId: string | null
+  setActiveJobId: Dispatch<SetStateAction<string | null>>
+  jobLoading: boolean
+  setJobLoading: Dispatch<SetStateAction<boolean>>
 }
 
-export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewProps) {
+export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId: _activeJobId, setActiveJobId, jobLoading, setJobLoading }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   // V10: Phase-based progress tracking
@@ -52,7 +56,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
 
   const handleSend = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (!input.trim() || loading) return
+    if (!input.trim() || loading || jobLoading) return
 
     const userMessage = input.trim()
     setInput('')
@@ -68,6 +72,9 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
     }
     setMessages((prev) => [...prev, userMsg])
 
+    let currentJobId: string | null = null
+    let receivedDone = false
+
     try {
       // Get and clear UI changes to include with this message
       const uiChanges = getAndClearUIChanges()
@@ -77,7 +84,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
         body: JSON.stringify({
           message: userMessage,
           log_prompts: true,
-          mode: mode, // V3: Pass mode to backend
+          mode: mode,
           ui_changes: uiChanges.length > 0 ? uiChanges : undefined,
         }),
       })
@@ -87,7 +94,6 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
       let buffer = ''
       let currentEvent = 'progress'
       let latestActiveContext: ActiveContext | null = null
-      // Track phase state locally to avoid React state timing issues
       let localPhaseState = createInitialPhaseState()
 
       while (reader) {
@@ -106,12 +112,15 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
               const data = JSON.parse(line.slice(6))
 
               if (currentEvent === 'done') {
-                // Update active context if included in done event
+                receivedDone = true
+                // Track job_id from done event
+                if (data.job_id) {
+                  currentJobId = data.job_id
+                }
                 if (data.active_context) {
                   latestActiveContext = data.active_context
                   setActiveContext(latestActiveContext)
                 }
-                // Final response - include reasoning trace for collapsible display
                 const assistantMsg: Message = {
                   id: Date.now().toString(),
                   role: 'assistant',
@@ -121,22 +130,21 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
                 }
                 setMessages((prev) => [...prev, assistantMsg])
                 setPhaseState(createInitialPhaseState())
+                // Acknowledge the job
+                if (currentJobId) {
+                  apiRequest(`/api/jobs/${currentJobId}/ack`, { method: 'POST' }).catch(() => {})
+                }
               } else if (currentEvent === 'error') {
                 throw new Error(data.error)
               } else {
-                // V10: Handle all events through phase state machine
                 const eventData = {
                   type: data.type || currentEvent,
                   ...data,
                 }
-
-                // Update active context tracking
                 if (eventData.type === 'active_context') {
                   latestActiveContext = data.data || data
                   setActiveContext(latestActiveContext)
                 }
-
-                // Update phase state
                 localPhaseState = updatePhaseState(localPhaseState, eventData)
                 setPhaseState(localPhaseState)
               }
@@ -146,16 +154,51 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
           }
         }
       }
-    } catch (err) {
-      const errorMsg: Message = {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: `Sorry, something went wrong: ${err instanceof Error ? err.message : 'Unknown error'}`,
+
+      // If stream ended without a done event, try to recover via job polling
+      if (!receivedDone && currentJobId) {
+        await recoverFromJob(currentJobId)
       }
-      setMessages((prev) => [...prev, errorMsg])
-      setPhaseState(createInitialPhaseState())
+    } catch (err) {
+      // Stream disconnected — try to recover via job polling if we have a job_id
+      // The job_id may not be available yet if disconnect happened before any events
+      // In that case, the active job check on next page load will recover it
+      if (currentJobId) {
+        await recoverFromJob(currentJobId)
+      } else {
+        const errorMsg: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `Sorry, something went wrong: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        }
+        setMessages((prev) => [...prev, errorMsg])
+        setPhaseState(createInitialPhaseState())
+      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const recoverFromJob = async (jobId: string) => {
+    try {
+      setActiveJobId(jobId)
+      setJobLoading(true)
+      const finishedJob = await pollJob(jobId)
+      if (finishedJob.status === 'complete' && finishedJob.output) {
+        const recoveredMsg: Message = {
+          id: `recovered-${finishedJob.id}`,
+          role: 'assistant',
+          content: finishedJob.output.response,
+        }
+        setMessages((prev) => [...prev, recoveredMsg])
+        await apiRequest(`/api/jobs/${finishedJob.id}/ack`, { method: 'POST' })
+      }
+      setPhaseState(createInitialPhaseState())
+    } catch {
+      // Recovery failed — response may be picked up on next page load
+    } finally {
+      setJobLoading(false)
+      setActiveJobId(null)
     }
   }
 
@@ -188,12 +231,24 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
           )}
 
           {/* Initial loading state before any events */}
-          {loading && !hasProgress && (
+          {loading && !hasProgress && !jobLoading && (
             <div className="py-2">
               <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[var(--color-accent)]">
                   <span className="w-4 text-center">●</span>
                   <span>{mode === 'quick' ? 'Working...' : 'Understanding...'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Job recovery: polling a running job */}
+          {jobLoading && (
+            <div className="py-2">
+              <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4">
+                <div className="flex items-center gap-2 text-sm text-[var(--color-accent)]">
+                  <span className="w-4 text-center">●</span>
+                  <span>Alfred is still working...</span>
                 </div>
               </div>
             </div>
@@ -210,7 +265,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode }: ChatViewP
             value={input}
             onChange={setInput}
             onSubmit={handleSend}
-            disabled={loading}
+            disabled={loading || jobLoading}
             placeholder="Ask Alfred anything..."
           />
         </div>

@@ -15,8 +15,9 @@ import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
 import { ResumePrompt } from './components/Chat/ResumePrompt'
 import { useAuth } from './hooks/useAuth'
-import { apiRequest } from './lib/api'
+import { apiRequest, pollJob } from './lib/api'
 import { SessionStatusResponse } from './types/session'
+import type { ActiveJobResponse } from './types/jobs'
 
 // V3 Mode types
 export type Mode = 'quick' | 'plan'
@@ -37,6 +38,8 @@ function App() {
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null)
   const [showResumePrompt, setShowResumePrompt] = useState(false)
   const sessionCheckedForUser = useRef<string | null>(null)
+  const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [jobLoading, setJobLoading] = useState(false)
 
   useEffect(() => {
     checkAuth()
@@ -84,7 +87,42 @@ function App() {
       }
     } catch (error) {
       console.error('Session status check failed:', error)
-      // Don't block on failure - treat as fresh session
+    }
+
+    // Check for active jobs (missed responses from disconnect)
+    try {
+      const { job: activeJob } = await apiRequest<ActiveJobResponse>('/api/jobs/active')
+      if (activeJob) {
+        if (activeJob.status === 'complete' && activeJob.output) {
+          // Alfred finished while user was away — show recovered response
+          const recoveredMsg: Message = {
+            id: `recovered-${activeJob.id}`,
+            role: 'assistant',
+            content: activeJob.output.response,
+          }
+          setChatMessages((prev) => [...prev, recoveredMsg])
+          // Acknowledge so it doesn't show again
+          await apiRequest(`/api/jobs/${activeJob.id}/ack`, { method: 'POST' })
+        } else if (activeJob.status === 'running') {
+          // Job still in progress — poll until complete
+          setActiveJobId(activeJob.id)
+          setJobLoading(true)
+          const finishedJob = await pollJob(activeJob.id)
+          if (finishedJob.status === 'complete' && finishedJob.output) {
+            const recoveredMsg: Message = {
+              id: `recovered-${finishedJob.id}`,
+              role: 'assistant',
+              content: finishedJob.output.response,
+            }
+            setChatMessages((prev) => [...prev, recoveredMsg])
+            await apiRequest(`/api/jobs/${finishedJob.id}/ack`, { method: 'POST' })
+          }
+          setJobLoading(false)
+          setActiveJobId(null)
+        }
+      }
+    } catch (error) {
+      console.error('Active job check failed:', error)
     }
   }
 
@@ -142,7 +180,7 @@ function App() {
     <>
       <AppShell user={user} onNewChat={handleNewChat}>
         <Routes>
-          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} />} />
+          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} activeJobId={activeJobId} setActiveJobId={setActiveJobId} jobLoading={jobLoading} setJobLoading={setJobLoading} />} />
           <Route path="/recipes" element={<RecipesView onOpenFocus={setFocusItem} />} />
           <Route path="/meals" element={<MealPlanView onOpenFocus={setFocusItem} />} />
           <Route path="/inventory" element={<InventoryView />} />

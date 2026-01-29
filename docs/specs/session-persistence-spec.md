@@ -24,11 +24,14 @@ Alfred needs session management to handle:
 │  PHASE 1: Session Timeout + Resume Prompt                    ✅ COMPLETE    │
 │  "Return within 30 min = seamless, after 30 min = prompt"                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  PHASE 2: Database Persistence + Chat History UI             📋 PLANNED    │
-│  "Messages survive restarts, UI shows prior conversation"                   │
+│  PHASE 2: Database Persistence                               ✅ COMPLETE    │
+│  "Conversation state survives restarts via commit_conversation()"           │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  PHASE 3: Multi-Conversation Support                         🔮 FUTURE     │
-│  "Sidebar with conversation list, pins, cross-conversation recall"          │
+│  PHASE 2.5: Job Durability                                   📋 PLANNED    │
+│  "Agent completes even if client disconnects, response recoverable"         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  PHASE 3: Multi-Conversation Support + Chat History UI       🔮 FUTURE     │
+│  "Sidebar with conversation list, message history, pins"                    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -36,13 +39,14 @@ Alfred needs session management to handle:
 
 ## Current State Comparison
 
-| Capability | Phase 1 (Now) | Phase 2 | Phase 3 |
+| Capability | Phase 1 | Phase 2 (Now) | Phase 2.5 | Phase 3 |
 |------------|---------------|---------|---------|
-| Backend context | ✅ Preserved (in-memory) | ✅ DB-persisted | ✅ DB-persisted |
-| UI messages | ❌ Fresh on reload | ✅ Loaded from DB | ✅ Loaded from DB |
-| Resume prompt | ✅ Shows after 30 min | ✅ Same | ✅ Same |
-| Server restart | ⚠️ Session lost | ✅ Survives | ✅ Survives |
-| Multiple conversations | ❌ | ❌ | ✅ Sidebar + history |
+| Backend context | ✅ Preserved (in-memory) | ✅ DB-persisted | ✅ DB-persisted | ✅ DB-persisted |
+| UI messages | ❌ Fresh on reload | ❌ Fresh on reload | ❌ Fresh on reload | ✅ Loaded from DB |
+| Resume prompt | ✅ Shows after 30 min | ✅ Same | ✅ Same | ✅ Same |
+| Server restart | ⚠️ Session lost | ✅ Survives | ✅ Survives | ✅ Survives |
+| Disconnect recovery | ❌ | ❌ | ✅ Jobs table | ✅ Jobs table |
+| Multiple conversations | ❌ | ❌ | ❌ | ✅ Sidebar + history |
 
 ---
 
@@ -190,107 +194,51 @@ const handleNewChat = async () => {
 |------|--------|
 | `src/alfred/config.py` | Added timeout constants |
 | `src/alfred/web/session.py` | **NEW** - Session logic module |
-| `src/alfred/web/app.py` | Added `/api/conversation/status`, `touch_session()` calls |
+| `src/alfred/web/app.py` | Added `/api/conversation/status`, `commit_conversation()` calls |
 | `frontend/src/types/session.ts` | **NEW** - TypeScript types |
 | `frontend/src/components/Chat/ResumePrompt.tsx` | **NEW** - Resume modal |
 | `frontend/src/App.tsx` | Session check + resume flow, fixed `handleNewChat` |
 
 ---
 
-## Phase 2: Database Persistence + Chat History UI 📋
+## Phase 2: Database Persistence ✅
 
-**Status:** Planned
+**Status:** Complete
 
 ### Goal
 
-When user returns and clicks "Resume":
-- UI shows their actual previous messages (not just welcome)
-- Conversation survives server restarts
+Conversation state survives server restarts via database persistence.
 
-### Database Schema
+### What Was Built
 
-**Table:** `conversations`
+- **`conversations` table** (`migrations/029_conversations_table.sql`) with JSONB state, timestamp columns, RLS, auto-update trigger
+- **`commit_conversation()`** — single point of mutation for all conversation state (timestamps + cache + DB save)
+- **`load_conversation_from_db()`** — loads state from DB, merges column timestamps into dict
+- **All chat endpoints** use `commit_conversation()` exclusively (no scattered mutations)
 
-```sql
-CREATE TABLE conversations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+### Architecture Decisions
 
-  -- Session metadata
-  created_at TIMESTAMPTZ DEFAULT now(),
-  last_active_at TIMESTAMPTZ DEFAULT now(),
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Mutation pattern | Single `commit_conversation()` function | Prevents scattered mutation bugs (see post-mortem in `skills/code-review-checklist.md`) |
+| Timestamp storage | DB columns + dict keys, merged on load | SQL queries use columns, in-memory checks use dict |
+| `touch_session()` | Removed entirely | Absorbed into `commit_conversation()` — failed requests shouldn't count as activity |
+| `_save_to_db()` | Private (underscore prefix) | Only `commit_conversation()` should call it |
+| Chat History UI | Deferred to Phase 3 | Separate concern from state persistence |
 
-  -- Conversation state (JSON blob, same as in-memory structure)
-  state JSONB NOT NULL DEFAULT '{}',
+### Files Changed (Phase 2)
 
-  -- For future Phase 3: titles and organization
-  title TEXT,  -- Auto-generated from first message
-  is_archived BOOLEAN DEFAULT false  -- Set when user clicks "Start Fresh"
-);
-
--- RLS: Users can only access their own conversations
-ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY conversations_user_policy ON conversations
-  FOR ALL USING (auth.uid() = user_id);
-
--- Index for quick lookup of active (non-archived) conversation
-CREATE INDEX conversations_user_active_idx
-  ON conversations(user_id, last_active_at DESC)
-  WHERE is_archived = false;
-```
-
-**Archive behavior:**
-- When user clicks "Start Fresh", the current conversation is marked `is_archived = true`
-- A new conversation row is created for the fresh session
-- Archived conversations remain queryable for Phase 3 history features
-
-### API Changes
-
-**New endpoint:**
-```
-GET /api/conversation/messages
-```
-
-Returns chat messages for UI display:
-```json
-{
-  "messages": [
-    {"id": "1", "role": "user", "content": "What's in my pantry?"},
-    {"id": "2", "role": "assistant", "content": "Looking at your inventory..."}
-  ]
-}
-```
-
-**Modified endpoints:**
-- `POST /api/chat` - Persist conversation state to DB after each turn
-- `POST /api/chat/reset` - Create new conversation row, archive old one
-
-### Frontend Changes
-
-**File:** `frontend/src/App.tsx`
-
-On resume:
-```typescript
-const handleResumeSession = async () => {
-  // Load prior messages from backend
-  const { messages } = await apiRequest<{messages: Message[]}>('/api/conversation/messages')
-  setChatMessages(messages.length > 0 ? messages : [INITIAL_MESSAGE])
-  setShowResumePrompt(false)
-}
-```
-
-### Migration Strategy
-
-1. Add `conversations` table (migration file)
-2. Update `app.py` to read/write from DB instead of in-memory dict
-3. Add `/api/conversation/messages` endpoint
-4. Update frontend to load messages on resume
-5. Backfill: On first request from existing user, migrate in-memory state to DB
+| File | Change |
+|------|--------|
+| `migrations/029_conversations_table.sql` | **NEW** - Conversations table with RLS |
+| `src/alfred/web/session.py` | Added `commit_conversation()`, `load_conversation_from_db()`. Removed `touch_session()`. Made `_save_to_db()` and `_ensure_metadata()` private. |
+| `src/alfred/web/app.py` | All chat endpoints use `commit_conversation()`. Removed scattered touch/save calls. |
+| `skills/backend/session-architecture.md` | **NEW** - Documents commit contract and common mistakes |
+| `skills/code-review-checklist.md` | **NEW** - Engineering checklist (DRY, single point of mutation, etc.) |
 
 ---
 
-## Phase 3: Multi-Conversation Support 🔮
+## Phase 3: Multi-Conversation Support + Chat History UI 🔮
 
 **Status:** Future
 
@@ -298,6 +246,8 @@ const handleResumeSession = async () => {
 
 | Feature | Description |
 |---------|-------------|
+| Chat History UI | Resume shows actual prior messages (not fresh UI) |
+| `/api/conversation/messages` | Endpoint to load chat messages for display |
 | Conversation sidebar | List of past conversations with titles |
 | Auto-titles | Generate title from first user message or goal |
 | Pins/favorites | Star important conversations for quick access |
@@ -359,15 +309,24 @@ POST /api/conversations/:id/archive -- Archive conversation
 - [x] After 24 hours: Session auto-cleared → treated as fresh user
 - [x] Dismiss modal (click outside/Escape): Implicit resume
 
-### Phase 2 (Future)
+### Phase 2 ✅
 
-- [ ] Server restart: Conversation state survives
-- [ ] Resume: UI shows actual prior messages
-- [ ] Multiple browser tabs: Same conversation state
-- [ ] Concurrent users: No state leakage (RLS enforced)
+- [x] Server restart: Conversation state survives
+- [x] Single point of mutation: `commit_conversation()` handles all state writes
+- [x] Multiple browser tabs: Same conversation state (DB-backed)
+- [x] Concurrent users: No state leakage (RLS enforced)
+
+### Phase 2.5 (Planned)
+
+- [ ] Jobs table created with RLS
+- [ ] Chat endpoints wrapped with job lifecycle
+- [ ] Disconnect recovery: `GET /api/jobs/active` returns missed response
+- [ ] Frontend polls running jobs on reconnect
+- [ ] Frontend acknowledges received responses
 
 ### Phase 3 (Future)
 
+- [ ] Resume shows actual prior messages in UI
 - [ ] Sidebar shows conversation list
 - [ ] Can switch between conversations
 - [ ] Pins persist across sessions
@@ -382,10 +341,12 @@ POST /api/conversations/:id/archive -- Archive conversation
 | Timeout storage | In conversation state | No new fields needed, works with existing structure |
 | Preview source | `recent_turns[-1]["assistant"]` | Most relevant context for user |
 | message_count | Computed from `len(recent_turns)` | No new field, always accurate |
-| Resume behavior | UI fresh, backend preserved | Phase 1 simplicity; Phase 2 adds message loading |
+| Resume behavior | UI fresh, backend preserved | Phase 2 simplicity; Phase 3 adds message loading |
 | Dismiss = Resume | Yes | Matches user mental model (came back = wants to continue) |
 | 30 min threshold | Configurable via config.py | Can tune based on usage patterns |
 | 24h expiration | Auto-clear | Prevents unbounded memory growth |
+| State mutation | Single `commit_conversation()` | Prevents scattered mutation bugs (Phase 2 lesson) |
+| `touch_session()` | Removed | Absorbed into `commit_conversation()` |
 
 ---
 
@@ -393,9 +354,10 @@ POST /api/conversations/:id/archive -- Archive conversation
 
 | Issue | Description | Phase |
 |-------|-------------|-------|
-| Prompt logging session leak | `_session_id` in prompt_logger is module-level, shared across concurrent users. Each user should have isolated logging sessions. | Phase 2 |
-| In-memory state lost on restart | Current Phase 1 stores conversation in dict; server restart loses all sessions. | Phase 2 |
-| No message history UI | Resume shows fresh UI even though backend has context. User can't see prior conversation. | Phase 2 |
+| Prompt logging session leak | `_session_id` in prompt_logger is module-level, shared across concurrent users. Each user should have isolated logging sessions. | Future |
+| ~~In-memory state lost on restart~~ | ~~Current Phase 1 stores conversation in dict; server restart loses all sessions.~~ | ✅ Phase 2 |
+| No message history UI | Resume shows fresh UI even though backend has context. User can't see prior conversation. | Phase 3 |
+| Response lost on disconnect | Phone lock or network blip during SSE stream loses the response forever. | Phase 2.5 |
 
 ---
 

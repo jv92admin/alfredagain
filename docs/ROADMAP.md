@@ -23,13 +23,36 @@
 
 | Area | Status | Description | Spec |
 |------|--------|-------------|------|
-| — | — | — | — |
-
-*No active projects. Add items here when starting new work.*
+| Phase 2.5: Job Durability | 🚧 In Progress | Jobs table for disconnect recovery — agent completes even if client disconnects | [ideas/job-durability-spec.md](ideas/job-durability-spec.md) |
 
 ---
 
 ## Recently Completed
+
+### 2026-01-27: Session Persistence Phase 2 — Database Persistence
+
+Conversation state now survives server restarts via DB persistence with single-point-of-mutation architecture.
+
+- **`commit_conversation()`** — Single function for all conversation state mutations (timestamps + cache + DB save)
+  - Replaced scattered `touch_session()` + cache write + `save_to_db()` calls across 4 endpoints
+  - `touch_session()` removed entirely (absorbed into `commit_conversation()`)
+  - `_save_to_db()` and `_ensure_metadata()` made private
+
+- **`conversations` table** (`migrations/029_conversations_table.sql`)
+  - JSONB state column + separate timestamp columns
+  - RLS enforced, auto-update trigger on `last_active_at`
+  - `load_conversation_from_db()` merges column timestamps into dict
+
+- **Bug Fixes**
+  - RLS edge case returning None (defensive check)
+  - `last_active_at` null from API (was only selecting JSONB, not columns)
+  - `context_updated` event overwriting state without save
+
+- **Engineering Skills Created**
+  - `skills/backend/session-architecture.md` — `commit_conversation()` contract
+  - `skills/code-review-checklist.md` — DRY, single point of mutation, schema sync
+
+- **Spec:** [specs/session-persistence-spec.md](specs/session-persistence-spec.md)
 
 ### 2026-01-26: Recipe Import from URL
 

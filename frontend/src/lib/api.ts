@@ -73,3 +73,26 @@ export async function apiStream(
 
   return response
 }
+
+/**
+ * Poll a job until it reaches a terminal state (complete or failed).
+ * Calls onUpdate with each poll result. Returns the final job.
+ */
+export async function pollJob(
+  jobId: string,
+  onUpdate?: (job: any) => void,
+  intervalMs: number = 2000,
+): Promise<any> {
+  while (true) {
+    const result = await apiRequest<{ job: any }>(`/api/jobs/${jobId}`)
+    const job = result.job
+
+    if (onUpdate) onUpdate(job)
+
+    if (job.status === 'complete' || job.status === 'failed') {
+      return job
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+}
