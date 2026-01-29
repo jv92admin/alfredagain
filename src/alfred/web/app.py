@@ -403,6 +403,13 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
 
     async def event_generator():
         try:
+            # Send job_id immediately so frontend can poll on early disconnect
+            if job_id:
+                yield {
+                    "event": "job_started",
+                    "data": json.dumps({"job_id": job_id}),
+                }
+
             while True:
                 try:
                     update = await asyncio.wait_for(queue.get(), timeout=30)

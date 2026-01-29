@@ -111,9 +111,12 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
             try {
               const data = JSON.parse(line.slice(6))
 
-              if (currentEvent === 'done') {
+              if (currentEvent === 'job_started') {
+                // Capture job_id early so we can poll on disconnect
+                currentJobId = data.job_id
+              } else if (currentEvent === 'done') {
                 receivedDone = true
-                // Track job_id from done event
+                // Track job_id from done event (fallback if job_started missed)
                 if (data.job_id) {
                   currentJobId = data.job_id
                 }
