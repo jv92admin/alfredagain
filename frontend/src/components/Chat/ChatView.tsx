@@ -34,6 +34,8 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
   const { getAndClearUIChanges } = useChatContext()
   // Track initial message count to avoid scrolling on mount
   const initialMessageCount = useRef(messages.length)
+  // Track current streaming job ID for visibility change recovery
+  const streamingJobIdRef = useRef<string | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -53,6 +55,35 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
       scrollToBottom()
     }
   }, [messages, phaseState])
+
+  // Recover completed jobs when returning to a backgrounded tab
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      const jobId = streamingJobIdRef.current
+      if (document.visibilityState === 'visible' && jobId && loading) {
+        try {
+          const { job } = await apiRequest<{ job: any }>(`/api/jobs/${jobId}`)
+          if (job?.status === 'complete' && job.output?.response) {
+            // Job finished while tab was backgrounded — recover it
+            const recoveredMsg: Message = {
+              id: `recovered-${job.id}`,
+              role: 'assistant',
+              content: job.output.response,
+            }
+            setMessages((prev) => [...prev, recoveredMsg])
+            setPhaseState(createInitialPhaseState())
+            setLoading(false)
+            streamingJobIdRef.current = null
+            apiRequest(`/api/jobs/${job.id}/ack`, { method: 'POST' }).catch(() => {})
+          }
+        } catch {
+          // Ignore — SSE might still be working
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [loading, setMessages])
 
   const handleSend = async (e?: FormEvent) => {
     e?.preventDefault()
@@ -114,6 +145,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
               if (currentEvent === 'job_started') {
                 // Capture job_id early so we can poll on disconnect
                 currentJobId = data.job_id
+                streamingJobIdRef.current = data.job_id
               } else if (currentEvent === 'done') {
                 receivedDone = true
                 // Track job_id from done event (fallback if job_started missed)
@@ -179,6 +211,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, activeJobId
       }
     } finally {
       setLoading(false)
+      streamingJobIdRef.current = null
     }
   }
 
