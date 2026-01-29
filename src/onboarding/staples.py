@@ -1,9 +1,10 @@
 """
 Staples Selection for Onboarding.
 
-Shows a curated set of tier-1 pantry essentials that users typically keep
-stocked. Selected items are seeded into the user's inventory at onboarding
-completion so Alfred has immediate context (cold-start fix).
+Shows a curated set of ~40 pantry essentials ranked by anchor-list matching,
+tier weight, and cuisine affinity. Selected items are seeded into the user's
+inventory at onboarding completion so Alfred has immediate context (cold-start
+fix).
 """
 
 import logging
@@ -13,6 +14,33 @@ logger = logging.getLogger(__name__)
 
 # Parent categories that qualify as "staples" (shelf-stable essentials)
 STAPLE_CATEGORIES = ["pantry", "spices", "grains", "baking", "dairy"]
+
+# Anchor names for universal pantry staples, split into two tiers.
+# CORE anchors (things nearly every kitchen has) get a full boost.
+# EXTRA anchors (common but not universal) get a smaller boost.
+# Items not in either list can still appear via tier + cuisine scoring.
+CORE_ANCHORS: set[str] = {
+    "salt", "black pepper", "olive oil",
+    "butter", "all-purpose flour",
+    "granulated sugar", "rice", "pasta", "soy sauce", "vinegar",
+    "baking powder", "baking soda", "garlic powder", "onion powder",
+    "paprika", "cumin", "cinnamon", "oregano", "chili powder",
+    "chicken broth", "canned tomatoes", "tomato paste", "tomato sauce",
+    "vegetable oil", "canola oil", "honey", "brown sugar", "vanilla extract",
+    "cornstarch", "milk", "eggs", "cheddar", "parmesan", "mozzarella",
+}
+
+EXTRA_ANCHORS: set[str] = {
+    "sesame oil", "coconut oil", "white vinegar", "apple cider vinegar",
+    "rice vinegar", "balsamic vinegar", "vegetable broth", "coconut milk",
+    "peanut butter", "hot sauce", "dijon mustard", "ketchup", "mayonnaise",
+    "Italian seasoning", "cayenne pepper", "turmeric", "smoked paprika",
+    "bay leaves", "thyme", "red pepper flakes",
+    "spaghetti", "bread", "oats", "rolled oats", "quinoa", "tortillas",
+    "maple syrup", "cocoa powder", "powdered sugar",
+    "yogurt", "cream cheese", "heavy cream", "sour cream",
+    "worcestershire sauce", "flour",
+}
 
 # Dietary restriction → exclusion rules (family values are lowercase, singular)
 DIETARY_EXCLUSIONS: dict[str, dict[str, list[str]]] = {
@@ -42,7 +70,7 @@ DIETARY_EXCLUSIONS: dict[str, dict[str, list[str]]] = {
 }
 
 # Cap on essentials returned
-MAX_ESSENTIALS = 40
+MAX_ESSENTIALS = 60
 
 
 def _compute_exclusions(
@@ -114,24 +142,56 @@ async def get_staples_options(
         # Apply dietary restriction filtering
         items = [row for row in result.data if not _is_excluded(row, excluded)]
 
-        # Sort: tier 1 first, then cuisine-matched tier 2, then remaining tier 2
-        # Within each group, sort alphabetically
-        def sort_key(ing: dict) -> tuple:
-            tier = ing.get("tier", 2)
-            name = ing.get("name", "").lower()
-            ing_cuisines = ing.get("cuisines") or []
-            is_cuisine_match = any(
-                c in cuisines_lower for c in [x.lower() for x in ing_cuisines]
-            )
-            if tier == 1:
-                return (0, name)
-            elif is_cuisine_match:
-                return (1, name)
-            else:
-                return (2, name)
+        # Build anchor lookups (lowercase for case-insensitive matching)
+        core_lower = {a.lower() for a in CORE_ANCHORS}
+        extra_lower = {a.lower() for a in EXTRA_ANCHORS}
 
-        items.sort(key=sort_key)
-        items = items[:MAX_ESSENTIALS]
+        # Score each ingredient:
+        #   anchor (0-0.5) + tier_weight (0.15) + cuisine_boost (0.1)
+        # Core anchors get 0.5, extra anchors get 0.3, non-anchors get 0.
+        cuisines_set = set(cuisines_lower)
+        scored = []
+        for ing in items:
+            name_lower = ing.get("name", "").lower()
+            if name_lower in core_lower:
+                anchor_score = 0.5
+            elif name_lower in extra_lower:
+                anchor_score = 0.3
+            else:
+                anchor_score = 0.0
+            tier_w = 1.0 if ing.get("tier") == 1 else 0.5
+            ing_cuisines = {c.lower() for c in (ing.get("cuisines") or [])}
+            cuisine_boost = 1.0 if cuisines_set & ing_cuisines else 0.0
+            score = anchor_score + tier_w * 0.15 + cuisine_boost * 0.1
+            scored.append((score, ing))
+
+        scored.sort(key=lambda x: (-x[0], x[1].get("name", "").lower()))
+
+        # Deduplicate by family: keep the highest-scored item per family.
+        # Prevents "parmesan" + "parmesan cheese" or 3x olive oil variants.
+        # Within each family, prefer anchor matches over non-anchors, then
+        # shorter names (more generic) over longer ones.
+        all_anchors = core_lower | extra_lower
+        family_best: dict[str, dict] = {}
+        for _score, ing in scored:
+            family = (ing.get("family") or ing.get("name", "")).lower().strip()
+            is_anchor = ing.get("name", "").lower() in all_anchors
+            if family not in family_best:
+                family_best[family] = ing
+            else:
+                prev = family_best[family]
+                prev_anchor = prev.get("name", "").lower() in all_anchors
+                # Prefer: anchor > non-anchor, then shorter name
+                if is_anchor and not prev_anchor:
+                    family_best[family] = ing
+                elif is_anchor == prev_anchor and len(ing.get("name", "")) < len(prev.get("name", "")):
+                    family_best[family] = ing
+
+        # Re-score with deduped items
+        deduped_set = set(id(v) for v in family_best.values())
+        scored = [(s, ing) for s, ing in scored if id(ing) in deduped_set]
+
+        items = [ing for _score, ing in scored[:MAX_ESSENTIALS]]
 
         # Build response
         essentials = []
