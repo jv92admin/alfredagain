@@ -33,7 +33,7 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
   }
 
   return (
-    <div className="h-screen bg-[var(--color-bg-primary)] flex overflow-hidden">
+    <div className="h-dvh bg-[var(--color-bg-primary)] flex overflow-hidden">
       {/* Desktop Sidebar - Fixed */}
       <aside className="hidden md:flex flex-col w-[var(--sidebar-width)] bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] flex-shrink-0">
         {/* Logo */}
