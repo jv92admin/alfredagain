@@ -1,69 +1,12 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 
-const features = [
-  {
-    icon: '💬',
-    title: 'Chat with Alfred',
-    description: 'Talk naturally — ask questions, give commands, or just brainstorm. Alfred understands context and remembers your conversation.',
-    examples: ['"What can I make with chicken and rice?"', '"Add eggs to my shopping list"', '"Plan meals for next week"'],
-  },
-  {
-    icon: '📦',
-    title: 'Inventory',
-    description: 'Track what\'s in your pantry and fridge. Alfred uses this to suggest recipes and knows when things might expire.',
-    examples: ['Add items manually or via chat', 'See what\'s running low', 'Match recipes to what you have'],
-  },
-  {
-    icon: '📖',
-    title: 'Recipes',
-    description: 'Save your favorite recipes or import them from the web. Alfred can parse 400+ recipe sites automatically.',
-    examples: ['Import from AllRecipes, NYT Cooking, etc.', 'Create recipes via chat', 'Scale ingredients up or down'],
-  },
-  {
-    icon: '📅',
-    title: 'Meal Plans',
-    description: 'Plan your week with linked recipes. Alfred can suggest plans based on your preferences and what\'s in stock.',
-    examples: ['"Plan dinners for this week"', 'Drag and drop to rearrange', 'Auto-generate shopping lists'],
-  },
-  {
-    icon: '🛒',
-    title: 'Shopping List',
-    description: 'Build shopping lists from recipes or add items directly. Check items off as you shop.',
-    examples: ['"Add ingredients for pasta carbonara"', 'Group by store section', 'Share lists with family'],
-  },
-  {
-    icon: '✅',
-    title: 'Tasks',
-    description: 'Kitchen to-dos beyond shopping — prep work, cleaning, restocking. Link tasks to meals or recipes.',
-    examples: ['"Remind me to defrost chicken tomorrow"', 'Meal prep checklists', 'Recurring tasks'],
-  },
-]
+const fadeIn = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0 },
+}
 
-const tips = [
-  {
-    emoji: '🎯',
-    tip: 'Use @mentions to reference specific items',
-    detail: 'Type @ in chat to search and select recipes, ingredients, or other items. Alfred gets the full context.',
-  },
-  {
-    emoji: '🔗',
-    tip: 'Import recipes from any URL',
-    detail: 'Click the import button on the Recipes page and paste a link. Works with most recipe sites.',
-  },
-  {
-    emoji: '🧠',
-    tip: 'Alfred remembers your preferences',
-    detail: 'Your dietary restrictions, favorite cuisines, and cooking style inform every suggestion.',
-  },
-  {
-    emoji: '⚡',
-    tip: 'Chat and UI work together',
-    detail: 'Make changes in the app, then ask Alfred about them. Or do everything through chat — your choice.',
-  },
-]
-
-const container = {
+const stagger = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
@@ -71,120 +14,243 @@ const container = {
   },
 }
 
-const item = {
-  hidden: { opacity: 0, y: 12 },
-  show: { opacity: 1, y: 0 },
-}
+const recentBuilds = [
+  {
+    title: 'Personalized onboarding',
+    detail: 'A short setup to shape Alfred around how you cook.',
+  },
+  {
+    title: '@ tagging',
+    detail: 'Reference specific recipes, ingredients, or meals so the system knows exactly what you\'re talking about.',
+  },
+  {
+    title: 'Recipe importing',
+    detail: 'Paste in a recipe link and turn it into something you can plan, edit, and reuse.',
+  },
+]
 
 export function AboutView() {
   return (
     <div className="min-h-full bg-[var(--color-bg-primary)]">
       {/* Hero */}
       <div className="bg-gradient-to-br from-[var(--color-accent)] to-[#a15d6b] text-white">
-        <div className="max-w-4xl mx-auto px-6 py-12 md:py-16">
+        <div className="max-w-3xl mx-auto px-6 py-12 md:py-16">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
             <h1 className="text-3xl md:text-4xl font-light tracking-wide mb-4">
-              Meet Alfred
+              Alfred
             </h1>
             <p className="text-lg md:text-xl opacity-90 max-w-2xl leading-relaxed">
-              Your AI kitchen assistant. Manage inventory, find recipes, plan meals, 
-              and build shopping lists — all through natural conversation or direct control.
+              A cooking and meal-planning app with an AI layer that helps with the logistics.
+              The app handles the structure. The AI helps connect things and fill in the gaps.
             </p>
           </motion.div>
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 py-10">
-        {/* Features Grid */}
+      <div className="max-w-3xl mx-auto px-6 py-10">
+        {/* Origin story */}
         <motion.section
-          variants={container}
           initial="hidden"
           animate="show"
-          className="mb-16"
+          variants={stagger}
+          className="mb-14"
         >
-          <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-6">
-            What Alfred Can Do
-          </h2>
-          <div className="grid gap-4 md:grid-cols-2">
-            {features.map((feature) => (
+          <motion.div variants={fadeIn} className="prose-section">
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              I built Alfred because I like cooking, but I kept running into the same problems.
+            </p>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              I wanted to cook more often, try new things, and make better use of what I already
+              had. What kept getting in the way wasn't recipes — it was planning. Figuring out
+              what to cook, whether I had the ingredients, what needed to be bought, and how it
+              all fit into a week.
+            </p>
+            <p className="text-[var(--color-text-primary)] leading-relaxed font-medium">
+              Alfred is the tool I ended up building for that.
+            </p>
+          </motion.div>
+        </motion.section>
+
+        {/* Creating Recipes */}
+        <motion.section
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: '-40px' }}
+          variants={stagger}
+          className="mb-14"
+        >
+          <motion.h2 variants={fadeIn} className="text-xl font-semibold text-[var(--color-text-primary)] mb-4">
+            Creating Recipes for Real Situations
+          </motion.h2>
+          <motion.div variants={fadeIn}>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              Most of the time, I'm not looking for "the best" recipe. I'm trying to cook
+              something that fits a specific moment — what I have on hand, how much time I have,
+              what I feel like eating, or what I've been cooking a lot lately.
+            </p>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              Alfred helps me create recipes based on:
+            </p>
+            <ul className="space-y-2 mb-4">
+              {['Ingredients I already have', 'My preferences', 'The context I\'m cooking in'].map((item) => (
+                <li key={item} className="flex items-center gap-3 text-[var(--color-text-secondary)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] flex-shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed">
+              I also import recipes from the web and adjust them. Over time, this turns into a
+              personal recipe collection that actually reflects how I cook.
+            </p>
+          </motion.div>
+        </motion.section>
+
+        {/* Meal Planning */}
+        <motion.section
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: '-40px' }}
+          variants={stagger}
+          className="mb-14"
+        >
+          <motion.h2 variants={fadeIn} className="text-xl font-semibold text-[var(--color-text-primary)] mb-4">
+            Meal Planning
+          </motion.h2>
+          <motion.div variants={fadeIn}>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              Meal planning is the part that makes everything else easier. When meals are planned,
+              shopping is easier. Prep is easier. Cooking feels calmer. I end up eating better
+              food more consistently.
+            </p>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              In Alfred, meals link directly to recipes. From there, shopping lists and prep tasks
+              fall out naturally. I can plan a few days or a full week and adjust things as plans change.
+            </p>
+            <p className="text-[var(--color-text-primary)] leading-relaxed font-medium">
+              For me, this has been the biggest unlock for cooking at home more often.
+            </p>
+          </motion.div>
+        </motion.section>
+
+        {/* AI */}
+        <motion.section
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: '-40px' }}
+          variants={stagger}
+          className="mb-14"
+        >
+          <motion.h2 variants={fadeIn} className="text-xl font-semibold text-[var(--color-text-primary)] mb-4">
+            How the AI Fits In
+          </motion.h2>
+          <motion.div variants={fadeIn}>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              The AI isn't there to chat for the sake of chatting. It's there to help with:
+            </p>
+            <ul className="space-y-2 mb-4">
+              {[
+                'Creating recipes from context',
+                'Adjusting plans',
+                'Filling in gaps when something changes',
+                'Reducing the manual work needed to keep things organized',
+              ].map((item) => (
+                <li key={item} className="flex items-center gap-3 text-[var(--color-text-secondary)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] flex-shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed">
+              The goal is for Alfred to remember enough context that you don't have to keep
+              restating things.
+            </p>
+          </motion.div>
+        </motion.section>
+
+        {/* Recent builds */}
+        <motion.section
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: '-40px' }}
+          variants={stagger}
+          className="mb-14"
+        >
+          <motion.h2 variants={fadeIn} className="text-xl font-semibold text-[var(--color-text-primary)] mb-4">
+            Things I've Built So Far
+          </motion.h2>
+          <motion.p variants={fadeIn} className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+            This project is still evolving. Some of the pieces I've added recently:
+          </motion.p>
+          <div className="space-y-3">
+            {recentBuilds.map((build) => (
               <motion.div
-                key={feature.title}
-                variants={item}
-                className="bg-[var(--color-bg-elevated)] rounded-[var(--radius-lg)] p-5 border border-[var(--color-border)] shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-md)] transition-shadow"
+                key={build.title}
+                variants={fadeIn}
+                className="bg-[var(--color-bg-elevated)] rounded-[var(--radius-lg)] p-4 border border-[var(--color-border)]"
               >
-                <div className="flex items-start gap-4">
-                  <span className="text-2xl">{feature.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-[var(--color-text-primary)] mb-1">
-                      {feature.title}
-                    </h3>
-                    <p className="text-sm text-[var(--color-text-secondary)] mb-3 leading-relaxed">
-                      {feature.description}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {feature.examples.map((ex, i) => (
-                        <span
-                          key={i}
-                          className="text-xs bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)] px-2 py-1 rounded-[var(--radius-sm)]"
-                        >
-                          {ex}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <h3 className="font-medium text-[var(--color-text-primary)] mb-0.5">
+                  {build.title}
+                </h3>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  {build.detail}
+                </p>
               </motion.div>
             ))}
           </div>
+          <motion.p variants={fadeIn} className="text-[var(--color-text-muted)] text-sm mt-4">
+            More experiments are ongoing.
+          </motion.p>
         </motion.section>
 
-        {/* Tips */}
+        {/* Where this is going */}
         <motion.section
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.4 }}
-          className="mb-16"
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: '-40px' }}
+          variants={stagger}
+          className="mb-14"
         >
-          <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-6">
-            Pro Tips
-          </h2>
-          <div className="bg-[var(--color-bg-secondary)] rounded-[var(--radius-lg)] border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-            {tips.map((t) => (
-              <div key={t.tip} className="p-4 flex items-start gap-3">
-                <span className="text-xl">{t.emoji}</span>
-                <div>
-                  <p className="font-medium text-[var(--color-text-primary)]">{t.tip}</p>
-                  <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">{t.detail}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          <motion.h2 variants={fadeIn} className="text-xl font-semibold text-[var(--color-text-primary)] mb-4">
+            Where This Is Going
+          </motion.h2>
+          <motion.div variants={fadeIn}>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              Right now, Alfred is focused on cooking and meal planning.
+            </p>
+            <p className="text-[var(--color-text-secondary)] leading-relaxed mb-4">
+              Longer term, it's also a way for me to explore what a personal assistant looks like
+              when it's built around real data and real tasks instead of isolated conversations.
+              Not just limited to cooking, but other aspects of my life too. There are more
+              efficient solutions out there, but this is just a hobby.
+            </p>
+            <p className="text-[var(--color-text-primary)] leading-relaxed font-medium">
+              For now, it's just a tool I use and keep improving.
+            </p>
+          </motion.div>
         </motion.section>
 
         {/* CTA */}
         <motion.section
           initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.2 }}
           className="text-center pb-8"
         >
           <div className="bg-[var(--color-accent-muted)] rounded-[var(--radius-xl)] p-8 border border-[var(--color-border-accent)]">
-            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-2">
-              Ready to get cooking?
-            </h2>
             <p className="text-[var(--color-text-secondary)] mb-5">
-              Head to Chat and tell Alfred what you need.
+              Want to try it out?
             </p>
             <Link
               to="/"
               className="inline-flex items-center gap-2 px-6 py-2.5 bg-[var(--color-accent)] text-white font-medium rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
             >
-              <span>💬</span>
-              <span>Start Chatting</span>
+              Start Chatting
             </Link>
           </div>
         </motion.section>
