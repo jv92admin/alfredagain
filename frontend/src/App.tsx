@@ -12,6 +12,7 @@ import { TasksView } from './components/Views/TasksView'
 import { IngredientsView } from './components/Views/IngredientsView'
 import { PreferencesView } from './components/Views/PreferencesView'
 import { AboutView } from './components/Views/AboutView'
+import { PublicHeader } from './components/Layout/PublicHeader'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
 import { ResumePrompt } from './components/Chat/ResumePrompt'
@@ -142,7 +143,12 @@ function App() {
   }
 
   if (!user) {
-    return <LoginPage onLogin={checkAuth} />
+    return (
+      <Routes>
+        <Route path="/about" element={<><PublicHeader /><AboutView /></>} />
+        <Route path="*" element={<LoginPage onLogin={checkAuth} />} />
+      </Routes>
+    )
   }
 
   // Show onboarding if needed (still checking = null, needs = true)

@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth, User } from '../../hooks/useAuth'
 import { BottomTabBar } from './BottomTabBar'
 import { BrowseDrawer } from './BrowseDrawer'
@@ -27,6 +28,7 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
   const { logout } = useAuth()
   const navigate = useNavigate()
   const [browseDrawerOpen, setBrowseDrawerOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const handleLogout = async () => {
     await logout()
@@ -106,18 +108,76 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
                 + New
               </button>
             )}
-            <NavLink
-              to="/preferences"
-              className={({ isActive }) =>
-                `text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                }`
-              }
-            >
-              Settings
-            </NavLink>
+            <div className="relative">
+              <button
+                onClick={() => setMenuOpen(!menuOpen)}
+                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+                aria-label="Menu"
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <line x1="3" y1="5" x2="17" y2="5" />
+                  <line x1="3" y1="10" x2="17" y2="10" />
+                  <line x1="3" y1="15" x2="17" y2="15" />
+                </svg>
+              </button>
+
+              <AnimatePresence>
+                {menuOpen && (
+                  <>
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.15 }}
+                      className="fixed inset-0 z-[var(--z-overlay)]"
+                      onClick={() => setMenuOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-[var(--shadow-lg)] z-[var(--z-modal)] overflow-hidden"
+                    >
+                      <NavLink
+                        to="/preferences"
+                        onClick={() => setMenuOpen(false)}
+                        className={({ isActive }) =>
+                          `block px-4 py-3 text-sm transition-colors ${
+                            isActive
+                              ? 'text-[var(--color-accent)] font-semibold bg-[var(--color-accent-muted)]'
+                              : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]'
+                          }`
+                        }
+                      >
+                        Settings
+                      </NavLink>
+                      <NavLink
+                        to="/about"
+                        onClick={() => setMenuOpen(false)}
+                        className={({ isActive }) =>
+                          `block px-4 py-3 text-sm transition-colors ${
+                            isActive
+                              ? 'text-[var(--color-accent)] font-semibold bg-[var(--color-accent-muted)]'
+                              : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]'
+                          }`
+                        }
+                      >
+                        About Alfred
+                      </NavLink>
+                      <div className="border-t border-[var(--color-border)]">
+                        <button
+                          onClick={() => { setMenuOpen(false); handleLogout() }}
+                          className="block w-full text-left px-4 py-3 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-error)] hover:bg-[var(--color-bg-secondary)] transition-colors"
+                        >
+                          Logout
+                        </button>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 
