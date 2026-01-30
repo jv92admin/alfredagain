@@ -1,117 +1,354 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiRequest } from '../../../lib/api'
+import { ChipQuestion } from './ChipQuestion'
+import { InterviewPageLayout } from './InterviewPageLayout'
 
 interface StyleInterviewStepProps {
   onNext: () => void
   onBack: () => void
 }
 
-interface InterviewQuestion {
+// =============================================================================
+// Types
+// =============================================================================
+
+interface ChipOption {
+  label: string
+  value: string
+}
+
+interface ChipQuestionDef {
+  id: string
+  type: 'chips'
+  multi?: boolean
+  question: string
+  options: ChipOption[]
+}
+
+interface TextQuestionDef {
+  id: string
+  type: 'text'
+  question: string
+  hint: string
+}
+
+type QuestionDef = ChipQuestionDef | TextQuestionDef
+
+interface StaticPageDef {
+  page_number: number
+  title: string
+  subtitle: string
+  image: string
+  questions: QuestionDef[]
+  is_catchall: false
+}
+
+interface CatchallQuestion {
   id: string
   question: string
   hint: string
 }
 
-interface InterviewPage {
+interface CatchallPageDef {
   page_number: number
   title: string
   subtitle: string
-  questions: InterviewQuestion[]
-  is_catchall: boolean
+  questions: CatchallQuestion[]
+  is_catchall: true
   ready_to_proceed?: boolean
 }
 
-interface Answer {
+// =============================================================================
+// Static Page Definitions (mirrors backend STATIC_PAGES)
+// =============================================================================
+
+const STATIC_PAGES: StaticPageDef[] = [
+  {
+    page_number: 1,
+    title: 'Recipes & Cooking Style',
+    subtitle: 'Alfred writes and catalogs recipes tailored to how you actually cook — from quick weeknight dinners to weekend projects.',
+    image: '/onboarding/onboarding-recipes.svg',
+    is_catchall: false,
+    questions: [
+      {
+        id: 'recipe_competence',
+        type: 'chips',
+        multi: false,
+        question: 'How much should Alfred assume you know?',
+        options: [
+          { label: 'Assume I know the basics', value: 'assume_basics' },
+          { label: 'Explain key techniques', value: 'explain_techniques' },
+          { label: 'Walk me through everything', value: 'walk_through' },
+        ],
+      },
+      {
+        id: 'timing_preference',
+        type: 'chips',
+        multi: false,
+        question: 'How do you prefer timing info?',
+        options: [
+          { label: 'Visual cues & intuition', value: 'visual_cues' },
+          { label: 'Times + visual cues', value: 'times_and_cues' },
+          { label: 'Exact temps & times', value: 'exact_times' },
+        ],
+      },
+      {
+        id: 'weeknight_time',
+        type: 'chips',
+        multi: false,
+        question: 'How much time do you usually have for weeknight cooking?',
+        options: [
+          { label: 'Under 20 min', value: 'under_20' },
+          { label: '20-40 min', value: '20_to_40' },
+          { label: '40-60 min', value: '40_to_60' },
+          { label: 'No rush', value: 'no_rush' },
+        ],
+      },
+      {
+        id: 'recipe_extras',
+        type: 'chips',
+        multi: true,
+        question: 'What extras are useful to you?',
+        options: [
+          { label: "Substitutions when I'm missing something", value: 'substitutions' },
+          { label: 'Chef tips & "why" behind techniques', value: 'chef_tips' },
+          { label: 'Troubleshooting if something goes wrong', value: 'troubleshooting' },
+        ],
+      },
+      {
+        id: 'recipe_frustration',
+        type: 'text',
+        question: "When you're mid-cook and something's not working, what do you wish a recipe told you?",
+        hint: "I wish it explained why I'm doing each step so I can troubleshoot on the fly",
+      },
+    ],
+  },
+  {
+    page_number: 2,
+    title: 'Shopping & Ingredients',
+    subtitle: "Alfred maintains your shopping lists and tracks what's in your pantry — so you always know what you have and what you need.",
+    image: '/onboarding/onboarding-pantry.svg',
+    is_catchall: false,
+    questions: [
+      {
+        id: 'shopping_detail',
+        type: 'chips',
+        multi: false,
+        question: 'What helps you shop fastest?',
+        options: [
+          { label: 'Quick scan — items, rough amounts', value: 'quick_scan' },
+          { label: 'Full detail — exact quantities, notes', value: 'full_detail' },
+        ],
+      },
+      {
+        id: 'shopping_frequency',
+        type: 'chips',
+        multi: false,
+        question: 'How do you typically shop?',
+        options: [
+          { label: 'One big weekly trip', value: 'weekly_trip' },
+          { label: 'Multiple small trips', value: 'small_trips' },
+          { label: 'Online delivery', value: 'online' },
+          { label: 'Mix of stores', value: 'mix_stores' },
+        ],
+      },
+      {
+        id: 'shopping_organization',
+        type: 'chips',
+        multi: false,
+        question: 'How should Alfred organize your lists?',
+        options: [
+          { label: 'By recipe — "for the curry: ..."', value: 'by_recipe' },
+          { label: 'By store section — Produce, Dairy, Meat', value: 'by_section' },
+        ],
+      },
+      {
+        id: 'grocery_frustration',
+        type: 'text',
+        question: "What's your biggest grocery or ingredient frustration?",
+        hint: 'I always forget what I already have and end up with 3 jars of cumin',
+      },
+    ],
+  },
+  {
+    page_number: 3,
+    title: 'Meal Planning & Prep',
+    subtitle: "Alfred plans your meals and sends prep reminders — so nothing catches you off guard on a busy Tuesday.",
+    image: '/onboarding/onboarding-mealplan.svg',
+    is_catchall: false,
+    questions: [
+      {
+        id: 'cooking_rhythm',
+        type: 'chips',
+        multi: false,
+        question: "What's your cooking rhythm?",
+        options: [
+          { label: 'Cook fresh each day', value: 'fresh_daily' },
+          { label: 'Mix of fresh and batch', value: 'mixed' },
+          { label: 'Weekend batch + weekday assembly', value: 'batch_assembly' },
+        ],
+      },
+      {
+        id: 'leftover_strategy',
+        type: 'chips',
+        multi: false,
+        question: 'How do you handle leftovers?',
+        options: [
+          { label: 'Happy eating the same thing', value: 'same_meal' },
+          { label: 'Transform into new dishes', value: 'transform' },
+          { label: 'Leftovers lose quality, prefer fresh', value: 'prefer_fresh' },
+        ],
+      },
+      {
+        id: 'prep_reminder_detail',
+        type: 'chips',
+        multi: false,
+        question: 'How much context do you want in prep reminders?',
+        options: [
+          { label: 'Just the task — "thaw chicken"', value: 'task_only' },
+          { label: 'Include the meal — "thaw chicken for Thursday\'s stir-fry"', value: 'with_meal' },
+          { label: 'Full scheduling — "thaw 1.5lb chicken (Thursday stir-fry), move to fridge by Tue 6pm"', value: 'full_context' },
+        ],
+      },
+      {
+        id: 'ideal_week',
+        type: 'text',
+        question: 'What does your ideal cooking week look like?',
+        hint: 'Big cook Sunday, quick assembly Mon-Wed, eat out Thursday, something fun Friday',
+      },
+    ],
+  },
+]
+
+const TOTAL_PAGES = 4 // 3 static + 1 catchall
+
+// =============================================================================
+// Answer State Types
+// =============================================================================
+
+interface ChipAnswer {
   question_id: string
-  question: string
+  type: 'chips'
+  value?: string
+  values?: string[]
+}
+
+interface TextAnswer {
+  question_id: string
+  type: 'text'
   answer: string
 }
 
+type Answer = ChipAnswer | TextAnswer
+
+// =============================================================================
+// Component
+// =============================================================================
+
 export function StyleInterviewStep({ onNext, onBack }: StyleInterviewStepProps) {
   const [currentPage, setCurrentPage] = useState(1)
-  const [pageData, setPageData] = useState<InterviewPage | null>(null)
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [, setAllAnswers] = useState<Answer[]>([]) // Track all answers across pages
-  const [loading, setLoading] = useState(true)
+  const [catchallData, setCatchallData] = useState<CatchallPageDef | null>(null)
+  const [loadingCatchall, setLoadingCatchall] = useState(false)
+
+  // Per-page answers: pageNumber → answer map
+  const [pageAnswers, setPageAnswers] = useState<Record<number, Record<string, Answer>>>({})
   const [submitting, setSubmitting] = useState(false)
   const [synthesizing, setSynthesizing] = useState(false)
   const [error, setError] = useState('')
 
-  // Load interview page
+  // Load catchall page when we reach page 4
   useEffect(() => {
-    loadPage(currentPage)
+    if (currentPage === 4 && !catchallData) {
+      loadCatchallPage()
+    }
   }, [currentPage])
 
-  const loadPage = async (pageNum: number) => {
-    setLoading(true)
+  const loadCatchallPage = async () => {
+    setLoadingCatchall(true)
     setError('')
-    setAnswers({}) // Clear answers for new page
-
     try {
-      const data = await apiRequest<InterviewPage>(`/api/onboarding/interview/page/${pageNum}`)
-      setPageData(data)
-
-      // Pre-fill with hints as placeholders (user can edit or clear)
-      const initialAnswers: Record<string, string> = {}
-      data.questions.forEach(q => {
-        initialAnswers[q.id] = '' // Start empty, hint shown as placeholder
-      })
-      setAnswers(initialAnswers)
+      const data = await apiRequest<CatchallPageDef>('/api/onboarding/interview/page/4')
+      setCatchallData(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load questions')
+      setError(err instanceof Error ? err.message : 'Failed to load follow-up questions')
     } finally {
-      setLoading(false)
+      setLoadingCatchall(false)
     }
   }
 
-  const handleAnswerChange = (questionId: string, value: string) => {
-    setAnswers(prev => ({ ...prev, [questionId]: value }))
+  // Get or initialize answers for the current page
+  const getCurrentAnswers = (): Record<string, Answer> => {
+    return pageAnswers[currentPage] || {}
+  }
+
+  const updateAnswer = (questionId: string, answer: Answer) => {
+    setPageAnswers(prev => ({
+      ...prev,
+      [currentPage]: {
+        ...(prev[currentPage] || {}),
+        [questionId]: answer,
+      },
+    }))
+  }
+
+  const getChipValue = (questionId: string): string | null => {
+    const ans = getCurrentAnswers()[questionId]
+    if (ans?.type === 'chips' && ans.value) return ans.value
+    return null
+  }
+
+  const getChipValues = (questionId: string): string[] => {
+    const ans = getCurrentAnswers()[questionId]
+    if (ans?.type === 'chips' && ans.values) return ans.values
+    return []
+  }
+
+  const getTextValue = (questionId: string): string => {
+    const ans = getCurrentAnswers()[questionId]
+    if (ans?.type === 'text') return ans.answer
+    return ''
+  }
+
+  // Collect all answers across pages for submission
+  const collectPageAnswers = (pageNum: number): Answer[] => {
+    const answers = pageAnswers[pageNum] || {}
+    return Object.values(answers).filter(ans => {
+      if (ans.type === 'chips') {
+        return ans.value || (ans.values && ans.values.length > 0)
+      }
+      if (ans.type === 'text') {
+        return ans.answer?.trim()
+      }
+      return false
+    })
   }
 
   const handleSubmitPage = async () => {
-    if (!pageData) return
-
-    // Validate at least some answers provided
-    const answeredQuestions = pageData.questions.filter(q => answers[q.id]?.trim())
-    if (answeredQuestions.length === 0 && pageData.questions.length > 0) {
-      setError('Please answer at least one question')
-      return
-    }
-
     setSubmitting(true)
     setError('')
 
     try {
-      // Format answers for API
-      const pageAnswers: Answer[] = pageData.questions
-        .filter(q => answers[q.id]?.trim())
-        .map(q => ({
-          question_id: q.id,
-          question: q.question,
-          answer: answers[q.id].trim(),
-        }))
+      const answers = collectPageAnswers(currentPage)
 
-      // Submit to API
-      const response = await apiRequest<{ success: boolean; next_page: number | null; ready_for_synthesis?: boolean }>(
+      const response = await apiRequest<{
+        success: boolean
+        next_page: number | null
+        ready_for_synthesis?: boolean
+      }>(
         `/api/onboarding/interview/page/${currentPage}`,
         {
           method: 'POST',
           body: JSON.stringify({
             page_number: currentPage,
-            answers: pageAnswers,
+            answers,
           }),
         }
       )
 
-      // Store answers locally for display
-      setAllAnswers(prev => [...prev, ...pageAnswers])
-
       if (response.ready_for_synthesis) {
-        // All pages done, synthesize
         await handleSynthesize()
       } else if (response.next_page) {
-        // Move to next page
         setCurrentPage(response.next_page)
       }
     } catch (err) {
@@ -121,31 +358,15 @@ export function StyleInterviewStep({ onNext, onBack }: StyleInterviewStepProps) 
     }
   }
 
-  const handleSynthesize = async () => {
-    setSynthesizing(true)
-    setError('')
-
-    try {
-      const response = await apiRequest<{ success: boolean; subdomain_guidance: Record<string, string> }>(
-        '/api/onboarding/interview/synthesize',
-        { method: 'POST' }
-      )
-
-      if (response.success) {
-        // Move to next step in onboarding
-        onNext()
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to synthesize preferences')
-      setSynthesizing(false)
-    }
-  }
-
   const handleSkipPage = async () => {
-    // Allow skipping with empty answers
     setSubmitting(true)
+    setError('')
     try {
-      const response = await apiRequest<{ success: boolean; next_page: number | null; ready_for_synthesis?: boolean }>(
+      const response = await apiRequest<{
+        success: boolean
+        next_page: number | null
+        ready_for_synthesis?: boolean
+      }>(
         `/api/onboarding/interview/page/${currentPage}`,
         {
           method: 'POST',
@@ -168,18 +389,34 @@ export function StyleInterviewStep({ onNext, onBack }: StyleInterviewStepProps) 
     }
   }
 
-  const canGoBack = currentPage > 1
+  const handleSynthesize = async () => {
+    setSynthesizing(true)
+    setError('')
 
-  // Loading state
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16">
-        <div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-[var(--color-text-muted)]">
-          {currentPage === 1 ? 'Preparing your interview...' : 'Loading next questions...'}
-        </p>
-      </div>
-    )
+    try {
+      const response = await apiRequest<{
+        success: boolean
+        subdomain_guidance: Record<string, string>
+      }>(
+        '/api/onboarding/interview/synthesize',
+        { method: 'POST' }
+      )
+
+      if (response.success) {
+        onNext()
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to synthesize preferences')
+      setSynthesizing(false)
+    }
+  }
+
+  const handleBack = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1)
+    } else {
+      onBack()
+    }
   }
 
   // Synthesizing state
@@ -197,12 +434,124 @@ export function StyleInterviewStep({ onNext, onBack }: StyleInterviewStepProps) 
     )
   }
 
-  if (!pageData) {
+  // =============================================================================
+  // Static Pages (1-3)
+  // =============================================================================
+
+  if (currentPage <= 3) {
+    const pageDef = STATIC_PAGES[currentPage - 1]
+
+    return (
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={currentPage}
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          transition={{ duration: 0.2 }}
+        >
+          <InterviewPageLayout
+            pageNumber={currentPage}
+            totalPages={TOTAL_PAGES}
+            title={pageDef.title}
+            subtitle={pageDef.subtitle}
+            image={pageDef.image}
+            onBack={handleBack}
+            onSkip={handleSkipPage}
+            onSubmit={handleSubmitPage}
+            submitLabel={currentPage === 3 ? 'Continue' : 'Continue'}
+            submitting={submitting}
+            error={error}
+          >
+            {pageDef.questions.map((q) => {
+              if (q.type === 'chips') {
+                const chipQ = q as ChipQuestionDef
+                return (
+                  <ChipQuestion
+                    key={q.id}
+                    question={chipQ.question}
+                    options={chipQ.options}
+                    multi={chipQ.multi}
+                    value={getChipValue(q.id)}
+                    values={getChipValues(q.id)}
+                    onChange={(value, values) => {
+                      if (chipQ.multi) {
+                        updateAnswer(q.id, { question_id: q.id, type: 'chips', values })
+                      } else {
+                        updateAnswer(q.id, { question_id: q.id, type: 'chips', value: value ?? undefined })
+                      }
+                    }}
+                  />
+                )
+              }
+
+              if (q.type === 'text') {
+                const textQ = q as TextQuestionDef
+                return (
+                  <div key={q.id} className="space-y-2">
+                    <label className="block text-[var(--color-text-primary)] font-medium">
+                      {textQ.question}
+                    </label>
+                    <textarea
+                      value={getTextValue(q.id)}
+                      onChange={(e) =>
+                        updateAnswer(q.id, {
+                          question_id: q.id,
+                          type: 'text',
+                          answer: e.target.value,
+                        })
+                      }
+                      placeholder={textQ.hint}
+                      rows={3}
+                      className="
+                        w-full px-4 py-3
+                        bg-[var(--color-bg-secondary)]
+                        border border-[var(--color-border)]
+                        rounded-[var(--radius-lg)]
+                        text-[var(--color-text-primary)]
+                        placeholder:text-[var(--color-text-muted)]
+                        placeholder:italic
+                        focus:outline-none focus:border-[var(--color-accent)]
+                        transition-colors
+                        resize-none
+                      "
+                    />
+                    <p className="text-xs text-[var(--color-text-muted)]">
+                      Write in your own words — the example is just a guide
+                    </p>
+                  </div>
+                )
+              }
+
+              return null
+            })}
+          </InterviewPageLayout>
+        </motion.div>
+      </AnimatePresence>
+    )
+  }
+
+  // =============================================================================
+  // Page 4: LLM Catchall
+  // =============================================================================
+
+  if (loadingCatchall) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16">
+        <div className="w-8 h-8 border-2 border-[var(--color-accent)] border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-[var(--color-text-muted)]">
+          Reviewing your answers for any follow-ups...
+        </p>
+      </div>
+    )
+  }
+
+  if (!catchallData) {
     return (
       <div className="text-center py-12">
-        <p className="text-[var(--color-error)]">Failed to load interview</p>
+        <p className="text-[var(--color-error)]">Failed to load follow-up questions</p>
         <button
-          onClick={() => loadPage(currentPage)}
+          onClick={loadCatchallPage}
           className="mt-4 px-4 py-2 text-[var(--color-accent)] hover:underline"
         >
           Try again
@@ -211,158 +560,90 @@ export function StyleInterviewStep({ onNext, onBack }: StyleInterviewStepProps) 
     )
   }
 
+  // If catchall says ready_to_proceed and no questions, auto-synthesize
+  if (catchallData.ready_to_proceed && catchallData.questions.length === 0) {
+    return (
+      <InterviewPageLayout
+        pageNumber={4}
+        totalPages={TOTAL_PAGES}
+        title="Almost Done"
+        subtitle={catchallData.subtitle}
+        onBack={handleBack}
+        onSubmit={handleSynthesize}
+        submitLabel="Create My Profile"
+        submitting={synthesizing}
+        error={error}
+      >
+        <div className="text-center py-8">
+          <p className="text-[var(--color-text-primary)] font-medium">
+            Great! I have everything I need.
+          </p>
+          <p className="text-[var(--color-text-muted)] mt-2">
+            Let me create your personalized cooking profile...
+          </p>
+        </div>
+      </InterviewPageLayout>
+    )
+  }
+
+  // Catchall with follow-up questions
   return (
-    <div className="space-y-8">
-      {/* Page Header */}
-      <div>
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide">
-            {pageData.is_catchall ? 'Final Questions' : `Part ${currentPage} of 4`}
-          </span>
-        </div>
-        <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-2">
-          {pageData.title}
-        </h2>
-        <p className="text-[var(--color-text-muted)]">
-          {pageData.subtitle}
-        </p>
-      </div>
-
-      {error && (
-        <div className="p-3 bg-[var(--color-error-muted)] border border-[var(--color-error)] rounded-[var(--radius-md)] text-[var(--color-error)] text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Questions */}
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentPage}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.2 }}
-          className="space-y-6"
+    <AnimatePresence mode="wait">
+      <motion.div
+        key="catchall"
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: -20 }}
+        transition={{ duration: 0.2 }}
+      >
+        <InterviewPageLayout
+          pageNumber={4}
+          totalPages={TOTAL_PAGES}
+          title="Almost Done"
+          subtitle={catchallData.subtitle}
+          onBack={handleBack}
+          onSkip={handleSkipPage}
+          onSubmit={handleSubmitPage}
+          submitLabel="Finish Interview"
+          submitting={submitting}
+          error={error}
         >
-          {pageData.questions.length === 0 && pageData.is_catchall && pageData.ready_to_proceed ? (
-            // No follow-up questions needed
-            <div className="text-center py-8">
-              <div className="text-4xl mb-4">✨</div>
-              <p className="text-[var(--color-text-primary)] font-medium">
-                Great! I have everything I need.
-              </p>
-              <p className="text-[var(--color-text-muted)] mt-2">
-                Let me create your personalized cooking profile...
+          {catchallData.questions.map((question) => (
+            <div key={question.id} className="space-y-2">
+              <label className="block text-[var(--color-text-primary)] font-medium">
+                {question.question}
+              </label>
+              <textarea
+                value={getTextValue(question.id)}
+                onChange={(e) =>
+                  updateAnswer(question.id, {
+                    question_id: question.id,
+                    type: 'text',
+                    answer: e.target.value,
+                  })
+                }
+                placeholder={question.hint}
+                rows={3}
+                className="
+                  w-full px-4 py-3
+                  bg-[var(--color-bg-secondary)]
+                  border border-[var(--color-border)]
+                  rounded-[var(--radius-lg)]
+                  text-[var(--color-text-primary)]
+                  placeholder:text-[var(--color-text-muted)]
+                  placeholder:italic
+                  focus:outline-none focus:border-[var(--color-accent)]
+                  transition-colors
+                  resize-none
+                "
+              />
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Write in your own words — the example is just a guide
               </p>
             </div>
-          ) : (
-            pageData.questions.map((question) => (
-              <div key={question.id} className="space-y-2">
-                <label className="block">
-                  <span className="text-[var(--color-text-primary)] font-medium">
-                    {question.question}
-                  </span>
-                </label>
-                <textarea
-                  value={answers[question.id] || ''}
-                  onChange={(e) => handleAnswerChange(question.id, e.target.value)}
-                  placeholder={question.hint}
-                  rows={3}
-                  className="
-                    w-full px-4 py-3 
-                    bg-[var(--color-bg-secondary)] 
-                    border border-[var(--color-border)] 
-                    rounded-[var(--radius-lg)]
-                    text-[var(--color-text-primary)]
-                    placeholder:text-[var(--color-text-muted)]
-                    placeholder:italic
-                    focus:outline-none focus:border-[var(--color-accent)]
-                    transition-colors
-                    resize-none
-                  "
-                />
-                <p className="text-xs text-[var(--color-text-muted)]">
-                  Write in your own words — the example is just a guide
-                </p>
-              </div>
-            ))
-          )}
-        </motion.div>
-      </AnimatePresence>
-
-      {/* Navigation */}
-      <div className="flex items-center justify-between pt-4 border-t border-[var(--color-border-subtle)]">
-        <div className="flex gap-2">
-          {canGoBack && (
-            <button
-              onClick={() => setCurrentPage(currentPage - 1)}
-              disabled={submitting}
-              className="px-4 py-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors disabled:opacity-50"
-            >
-              ← Back
-            </button>
-          )}
-          {!canGoBack && (
-            <button
-              onClick={onBack}
-              disabled={submitting}
-              className="px-4 py-2 text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors disabled:opacity-50"
-            >
-              ← Back
-            </button>
-          )}
-        </div>
-
-        <div className="flex gap-3">
-          {pageData.questions.length > 0 && (
-            <button
-              onClick={handleSkipPage}
-              disabled={submitting}
-              className="px-4 py-2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors disabled:opacity-50 text-sm"
-            >
-              Skip this section
-            </button>
-          )}
-          
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={pageData.questions.length === 0 && pageData.ready_to_proceed ? handleSynthesize : handleSubmitPage}
-            disabled={submitting}
-            className="
-              px-8 py-3 
-              bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] 
-              text-[var(--color-text-inverse)] 
-              font-semibold 
-              rounded-[var(--radius-lg)] 
-              transition-colors 
-              disabled:opacity-50
-            "
-          >
-            {submitting ? 'Saving...' : 
-             pageData.questions.length === 0 && pageData.ready_to_proceed ? 'Create My Profile' :
-             currentPage === 4 ? 'Finish Interview' : 'Continue'}
-          </motion.button>
-        </div>
-      </div>
-
-      {/* Progress indicator for interview */}
-      <div className="flex justify-center gap-2 pt-4">
-        {[1, 2, 3, 4].map(page => (
-          <div
-            key={page}
-            className={`
-              w-2 h-2 rounded-full transition-colors
-              ${page === currentPage 
-                ? 'bg-[var(--color-accent)]' 
-                : page < currentPage 
-                  ? 'bg-[var(--color-accent-muted)]'
-                  : 'bg-[var(--color-border)]'
-              }
-            `}
-          />
-        ))}
-      </div>
-    </div>
+          ))}
+        </InterviewPageLayout>
+      </motion.div>
+    </AnimatePresence>
   )
 }

@@ -119,10 +119,16 @@ class SkipPhaseRequest(BaseModel):
 
 
 class InterviewAnswerRequest(BaseModel):
-    """Submit answers for an interview page."""
+    """Submit answers for an interview page.
+
+    Answers can be typed:
+    - chips (single): {"question_id": str, "type": "chips", "value": str}
+    - chips (multi):  {"question_id": str, "type": "chips", "values": list[str]}
+    - text:           {"question_id": str, "type": "text", "answer": str}
+    - legacy:         {"question_id": str, "question": str, "answer": str}
+    """
     page_number: int = Field(ge=1, le=4)
     answers: list[dict] = Field(default_factory=list)
-    # Each: {"question_id": str, "question": str, "answer": str}
 
 
 class InterviewSynthesisRequest(BaseModel):
@@ -513,46 +519,35 @@ async def get_interview_page(
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Get an interview page with LLM-generated questions.
-    
-    Pages 1-3 have structured data points, page 4 is catch-all.
-    Questions are personalized based on user context and prior answers.
+    Get an interview page.
+
+    Pages 1-3 are static (chip + text questions, no LLM call).
+    Page 4 is catch-all with LLM-generated follow-up questions.
     """
-    from .style_interview import generate_interview_page, generate_catchall_page
-    
+    from .style_interview import get_static_page, generate_catchall_page
+
     if page_number < 1 or page_number > 4:
         raise HTTPException(status_code=400, detail="Page number must be 1-4")
-    
-    state = await get_or_create_session(user.id)
-    
-    # Build user context from collected data
-    user_context = {
-        "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),
-        "household_size": state.constraints.get("household_size", 2),
-        "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
-        "available_equipment": state.constraints.get("available_equipment", []),
-        "cuisines": state.cuisine_selections,
-        "liked_ingredients": [item.get("name", "") for item in state.pantry_items[:10]],
-    }
-    
-    # Get prior answers from state
-    prior_answers = state.payload_draft.get("interview_answers", [])
-    
-    try:
-        if page_number <= 3:
-            page = await generate_interview_page(
-                page_number=page_number,
-                user_context=user_context,
-                prior_answers=prior_answers,
-            )
-            return {
-                "page_number": page_number,
-                "title": page.title,
-                "subtitle": page.subtitle,
-                "questions": [q.model_dump() for q in page.questions],
-                "is_catchall": False,
-            }
-        else:  # page 4 = catch-all
+
+    if page_number <= 3:
+        # Static pages — no LLM call, instant response
+        return get_static_page(page_number)
+    else:
+        # Page 4 = catch-all with LLM-generated follow-ups
+        state = await get_or_create_session(user.id)
+
+        user_context = {
+            "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),
+            "household_size": state.constraints.get("household_size", 2),
+            "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
+            "available_equipment": state.constraints.get("available_equipment", []),
+            "cuisines": state.cuisine_selections,
+            "liked_ingredients": [item.get("name", "") for item in state.pantry_items[:10]],
+        }
+
+        prior_answers = state.payload_draft.get("interview_answers", [])
+
+        try:
             catchall = await generate_catchall_page(
                 user_context=user_context,
                 all_answers=prior_answers,
@@ -565,9 +560,9 @@ async def get_interview_page(
                 "is_catchall": True,
                 "ready_to_proceed": catchall.ready_to_proceed,
             }
-    except Exception as e:
-        logger.error(f"Failed to generate interview page {page_number}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate questions: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to generate catchall page: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate questions: {str(e)}")
 
 
 @router.post("/interview/page/{page_number}")
@@ -590,14 +585,10 @@ async def submit_interview_page(
     if "interview_answers" not in state.payload_draft:
         state.payload_draft["interview_answers"] = []
     
-    # Add new answers (with page context)
+    # Add new answers (preserve full typed structure: type, value/values/answer)
     for ans in request.answers:
-        state.payload_draft["interview_answers"].append({
-            "page": page_number,
-            "question_id": ans.get("question_id", ""),
-            "question": ans.get("question", ""),
-            "answer": ans.get("answer", ""),
-        })
+        entry = {"page": page_number, **ans}
+        state.payload_draft["interview_answers"].append(entry)
     
     await save_session(state)
     

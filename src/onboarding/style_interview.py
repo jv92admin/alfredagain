@@ -1,41 +1,31 @@
 """
-Style Interview - LLM-Guided Preference Discovery.
+Style Interview - Structured Preference Discovery.
 
-This module handles the conversational interview phase of onboarding where we
-discover user preferences through free-form questions, then synthesize into
-structured subdomain_guidance strings.
+This module handles the interview phase of onboarding where we discover user
+preferences through a mix of labeled chip selections (quick-tap) and focused
+text questions, then synthesize into structured subdomain_guidance strings.
 
 ## How Alfred Uses subdomain_guidance
 
 Alfred is a multi-agent cooking assistant with 5 subdomains:
 - recipes: How to write/present recipes
-- meal_plans: How to structure meal plans  
+- meal_plans: How to structure meal plans
 - tasks: How to format prep tasks and reminders
 - shopping: How to organize shopping lists
 - inventory: How to track pantry items
 
 Each subdomain has a `subdomain_guidance` string (~50-200 tokens) that shapes
-ALL outputs for that domain. Examples:
-
-    subdomain_guidance["recipes"] = 
-        "Concise steps with timing cues. Skip obvious techniques. 
-         Include chef tips and why behind key steps. Temperature 
-         for proteins, visual cues for vegetables."
-    
-    subdomain_guidance["meal_plans"] = 
-        "Batch cooking orientation - big cook Sunday, assembly weeknights.
-         Show leftover transformations. Include shopping list summary.
-         Flexible on Thursday for eating out."
+ALL outputs for that domain.
 
 ## Interview Flow
 
-1. Page 1: Cooking Style (4 questions) → recipe guidance
-2. Page 2: Planning & Prep (4 questions) → meal_plans, tasks guidance  
-3. Page 3: Exploration & Goals (4 questions) → all domains
-4. Page 4: Catch-all (0-4 questions) → fill gaps
+1. Page 1: Recipes & Cooking Style (4 chips + 1 text) → recipes guidance
+2. Page 2: Shopping & Ingredients (3 chips + 1 text) → shopping, inventory guidance
+3. Page 3: Meal Planning & Prep (3 chips + 1 text) → meal_plans, tasks guidance
+4. Page 4: Catch-all (0-3 LLM-generated questions) → fill gaps
 
-Each page: LLM generates questions → user answers free text → next page
-Finally: LLM synthesizes all answers → subdomain_guidance strings
+Pages 1-3 are STATIC (no LLM call). Page 4 uses LLM to generate follow-ups.
+Finally: LLM synthesizes all answers → subdomain_guidance strings.
 """
 
 from pydantic import BaseModel, Field
@@ -48,205 +38,180 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Outcome Framework - What We're Trying to Determine
+# Static Page Definitions
 # =============================================================================
 
-SUBDOMAIN_OUTCOMES = """
-## Alfred Subdomain Guidance Framework
-
-Alfred uses `subdomain_guidance` strings to personalize ALL outputs. Your job is
-to ask questions that help us write these guidance strings.
-
-### subdomain_guidance["recipes"]
-Controls how recipes are written. Key dimensions:
-- **Detail level**: Concise bullets ↔ Full step-by-step with explanations
-- **Timing info**: Visual cues only ↔ Precise temps + exact times
-- **Technique depth**: Skip obvious ↔ Explain why + chef tips
-- **Substitutions**: Assume competence ↔ Suggest alternatives
-- **Complexity**: Simple one-pot ↔ Multi-component dishes OK
-
-Example outputs:
-- Beginner: "Full step-by-step instructions. Explain techniques briefly. Include exact temps and times. Suggest substitutions. Keep to 6-8 steps max."
-- Advanced: "Concise steps, skip obvious. Focus on technique nuances and timing. Multi-component dishes OK. Include chef tips and why behind key decisions."
-
-### subdomain_guidance["meal_plans"]  
-Controls how meal plans are structured. Key dimensions:
-- **Batch orientation**: Cook fresh daily ↔ Heavy batch cooking
-- **Leftover strategy**: Same meal ↔ Transform into new dishes
-- **Prep scheduling**: Daily cooking ↔ Weekend batch + weekday assembly
-- **Freezer usage**: Never ↔ Heavy freezer rotation
-- **Detail level**: Just meals ↔ Full calendar with prep tasks
-
-Example outputs:
-- Busy parent: "Batch cook Sunday. Show leftover transformations. Assembly meals weeknights (15-20 min). Include prep tasks for day before."
-- Food enthusiast: "Fresh cooking preferred. Variety over efficiency. Different cuisine each night. Detailed shopping by store section."
-
-### subdomain_guidance["tasks"]
-Controls prep reminders and task formatting. Key dimensions:
-- **Timing**: Day-of reminders ↔ 2-3 days ahead
-- **Detail**: "Thaw chicken" ↔ "Thaw chicken breast (1.5lb) for Thursday's stir-fry - move to fridge by 6pm Tuesday"
-- **Context**: Standalone tasks ↔ Linked to specific meals
-
-### subdomain_guidance["shopping"]
-Controls shopping list organization. Key dimensions:
-- **Grouping**: By recipe ↔ By store section
-- **Detail**: Just items ↔ Quantities + notes + substitutions
-- **Frequency**: Single trip ↔ Multi-store strategy
-
-### subdomain_guidance["inventory"]
-Controls pantry tracking. Key dimensions:
-- **Strictness**: Loose tracking ↔ Precise quantities
-- **Staple assumptions**: Assume basics ↔ Track everything
-- **Expiry focus**: Relaxed ↔ Strict FIFO
-"""
-
-# =============================================================================
-# Data Points to Capture
-# =============================================================================
-
-INTERVIEW_FRAMEWORK = {
+STATIC_PAGES = {
     "page_1": {
-        "title": "Cooking Style",
-        "focus": "How you approach cooking and what you need from recipes",
+        "title": "Recipes & Cooking Style",
+        "subtitle": "Alfred writes and catalogs recipes tailored to how you actually cook — from quick weeknight dinners to weekend projects.",
+        "image": "/onboarding/onboarding-recipes.svg",
         "maps_to": ["recipes"],
-        "data_points": [
+        "questions": [
             {
-                "id": "recipe_detail_level",
-                "question_goal": "Understand how much hand-holding they need in recipe instructions",
-                "outcome_range": "Concise bullets ↔ Full step-by-step with explanations",
-                "example_hints": [
-                    "I like clear steps but don't need the basics explained - I know how to sauté",
-                    "Walk me through everything, I'm still building confidence",
-                    "Just key points - I'll figure out the technique"
-                ]
+                "id": "recipe_competence",
+                "type": "chips",
+                "multi": False,
+                "question": "How much should Alfred assume you know?",
+                "options": [
+                    {"label": "Assume I know the basics", "value": "assume_basics"},
+                    {"label": "Explain key techniques", "value": "explain_techniques"},
+                    {"label": "Walk me through everything", "value": "walk_through"},
+                ],
             },
             {
                 "id": "timing_preference",
-                "question_goal": "Do they want precise temps/times or prefer visual cues?",
-                "outcome_range": "Visual cues mostly ↔ Exact temperatures and times always",
-                "example_hints": [
-                    "Precise temps for meat safety, but I go by look for veggies",
-                    "I need exact times - I set timers for everything",
-                    "I go by smell and color mostly, temps feel clinical"
-                ]
-            },
-            {
-                "id": "cooking_help_level",
-                "question_goal": "How much guidance during cooking - substitutions, tips, troubleshooting?",
-                "outcome_range": "I can improvise ↔ Tell me everything including what could go wrong",
-                "example_hints": [
-                    "Love knowing substitutions and what I can swap in a pinch",
-                    "Just the base recipe - I'll adapt as needed",
-                    "Chef tips are gold - tell me the why behind techniques"
-                ]
+                "type": "chips",
+                "multi": False,
+                "question": "How do you prefer timing info?",
+                "options": [
+                    {"label": "Visual cues & intuition", "value": "visual_cues"},
+                    {"label": "Times + visual cues", "value": "times_and_cues"},
+                    {"label": "Exact temps & times", "value": "exact_times"},
+                ],
             },
             {
                 "id": "weeknight_time",
-                "question_goal": "Time constraints for typical weeknight cooking",
-                "outcome_range": "15-20 min max ↔ Time is flexible",
-                "example_hints": [
-                    "30 mins max on weeknights, but I have time on weekends",
-                    "Need quick 15-20 min meals, kids are hungry",
-                    "I actually enjoy longer cooks, it's my wind-down time"
-                ]
+                "type": "chips",
+                "multi": False,
+                "question": "How much time do you usually have for weeknight cooking?",
+                "options": [
+                    {"label": "Under 20 min", "value": "under_20"},
+                    {"label": "20-40 min", "value": "20_to_40"},
+                    {"label": "40-60 min", "value": "40_to_60"},
+                    {"label": "No rush", "value": "no_rush"},
+                ],
             },
-        ]
+            {
+                "id": "recipe_extras",
+                "type": "chips",
+                "multi": True,
+                "question": "What extras are useful to you?",
+                "options": [
+                    {"label": "Substitutions when I'm missing something", "value": "substitutions"},
+                    {"label": "Chef tips & \"why\" behind techniques", "value": "chef_tips"},
+                    {"label": "Troubleshooting if something goes wrong", "value": "troubleshooting"},
+                ],
+            },
+            {
+                "id": "recipe_frustration",
+                "type": "text",
+                "question": "When you're mid-cook and something's not working, what do you wish a recipe told you?",
+                "hint": "I wish it explained why I'm doing each step so I can troubleshoot on the fly",
+            },
+        ],
     },
     "page_2": {
-        "title": "Planning & Prep", 
-        "focus": "How you organize your cooking week and handle meal prep",
+        "title": "Shopping & Ingredients",
+        "subtitle": "Alfred maintains your shopping lists and tracks what's in your pantry — so you always know what you have and what you need.",
+        "image": "/onboarding/onboarding-pantry.svg",
+        "maps_to": ["shopping", "inventory"],
+        "questions": [
+            {
+                "id": "shopping_detail",
+                "type": "chips",
+                "multi": False,
+                "question": "What helps you shop fastest?",
+                "options": [
+                    {"label": "Quick scan — items, rough amounts", "value": "quick_scan"},
+                    {"label": "Full detail — exact quantities, notes", "value": "full_detail"},
+                ],
+            },
+            {
+                "id": "shopping_frequency",
+                "type": "chips",
+                "multi": False,
+                "question": "How do you typically shop?",
+                "options": [
+                    {"label": "One big weekly trip", "value": "weekly_trip"},
+                    {"label": "Multiple small trips", "value": "small_trips"},
+                    {"label": "Online delivery", "value": "online"},
+                    {"label": "Mix of stores", "value": "mix_stores"},
+                ],
+            },
+            {
+                "id": "shopping_organization",
+                "type": "chips",
+                "multi": False,
+                "question": "How should Alfred organize your lists?",
+                "options": [
+                    {"label": "By recipe — \"for the curry: ...\"", "value": "by_recipe"},
+                    {"label": "By store section — Produce, Dairy, Meat", "value": "by_section"},
+                ],
+            },
+            {
+                "id": "grocery_frustration",
+                "type": "text",
+                "question": "What's your biggest grocery or ingredient frustration?",
+                "hint": "I always forget what I already have and end up with 3 jars of cumin",
+            },
+        ],
+    },
+    "page_3": {
+        "title": "Meal Planning & Prep",
+        "subtitle": "Alfred plans your meals and sends prep reminders — so nothing catches you off guard on a busy Tuesday.",
+        "image": "/onboarding/onboarding-mealplan.svg",
         "maps_to": ["meal_plans", "tasks"],
-        "data_points": [
+        "questions": [
             {
                 "id": "cooking_rhythm",
-                "question_goal": "Do they batch cook, cook daily, or mix?",
-                "outcome_range": "Fresh each day ↔ Weekend batch + weekday assembly",
-                "example_hints": [
-                    "Big cook Sunday, then mostly assembly during the week",
-                    "I prefer cooking fresh each night - it's my therapy",
-                    "Mix depending on the week - some batch, some fresh"
-                ]
+                "type": "chips",
+                "multi": False,
+                "question": "What's your cooking rhythm?",
+                "options": [
+                    {"label": "Cook fresh each day", "value": "fresh_daily"},
+                    {"label": "Mix of fresh and batch", "value": "mixed"},
+                    {"label": "Weekend batch + weekday assembly", "value": "batch_assembly"},
+                ],
             },
             {
                 "id": "leftover_strategy",
-                "question_goal": "How they feel about and handle leftovers",
-                "outcome_range": "Same meal repeated ↔ Transform into completely new dishes",
-                "example_hints": [
-                    "Love transforming - Sunday roast becomes Monday tacos",
-                    "Happy eating the same thing for 2-3 days",
-                    "Honestly not a big leftovers person, prefer fresh"
-                ]
+                "type": "chips",
+                "multi": False,
+                "question": "How do you handle leftovers?",
+                "options": [
+                    {"label": "Happy eating the same thing", "value": "same_meal"},
+                    {"label": "Transform into new dishes", "value": "transform"},
+                    {"label": "Leftovers lose quality, prefer fresh", "value": "prefer_fresh"},
+                ],
             },
             {
-                "id": "freezer_usage",
-                "question_goal": "How much do they use freezer for meal prep strategy?",
-                "outcome_range": "Rarely freeze ↔ Heavy freezer rotation",
-                "example_hints": [
-                    "Freeze sauces, stocks, and extra proteins all the time",
-                    "Prefer fresh - freezer is mostly for ice cream",
-                    "Some emergency meals frozen, but not my main strategy"
-                ]
+                "id": "prep_reminder_detail",
+                "type": "chips",
+                "multi": False,
+                "question": "How much context do you want in prep reminders?",
+                "options": [
+                    {"label": "Just the task — \"thaw chicken\"", "value": "task_only"},
+                    {"label": "Include the meal — \"thaw chicken for Thursday's stir-fry\"", "value": "with_meal"},
+                    {"label": "Full scheduling — \"thaw 1.5lb chicken (Thursday stir-fry), move to fridge by Tue 6pm\"", "value": "full_context"},
+                ],
             },
             {
-                "id": "prep_tasks_detail",
-                "question_goal": "How detailed should prep reminders be?",
-                "outcome_range": "Simple task name ↔ Full context with timing and meal link",
-                "example_hints": [
-                    "Link it to the meal - 'thaw chicken for Thursday stir-fry'",
-                    "Just 'thaw chicken' is fine, I'll remember why",
-                    "Include timing - 'move to fridge by 6pm Tuesday'"
-                ]
+                "id": "ideal_week",
+                "type": "text",
+                "question": "What does your ideal cooking week look like?",
+                "hint": "Big cook Sunday, quick assembly Mon-Wed, eat out Thursday, something fun Friday",
             },
-        ]
-    },
-    "page_3": {
-        "title": "Exploration & Goals",
-        "focus": "What you want to learn, explore, and your shopping style",
-        "maps_to": ["recipes", "meal_plans", "shopping", "inventory"],
-        "data_points": [
-            {
-                "id": "exploration_level", 
-                "question_goal": "How adventurous are they with new recipes and cuisines?",
-                "outcome_range": "Stick to reliable favorites ↔ Always trying new things",
-                "example_hints": [
-                    "Love trying new cuisines - surprise me!",
-                    "Mostly stick to favorites but open to occasional new thing",
-                    "Very adventurous - I get bored cooking the same stuff"
-                ]
-            },
-            {
-                "id": "growth_direction",
-                "question_goal": "What specific areas do they want to improve or explore?",
-                "outcome_range": "Open-ended - capture their interests",
-                "example_hints": [
-                    "Want to get better at Thai curries and proper wok technique",
-                    "Trying to eat more vegetables in interesting ways",
-                    "Learning to bake bread and work with doughs"
-                ]
-            },
-            {
-                "id": "shopping_style",
-                "question_goal": "How and when do they typically shop?",
-                "outcome_range": "As-needed trips ↔ Planned weekly with list",
-                "example_hints": [
-                    "Weekly Costco run plus farmers market on Saturday",
-                    "Quick trips as needed - hate big shopping expeditions",
-                    "Online delivery for basics, specialty store for fun stuff"
-                ]
-            },
-            {
-                "id": "biggest_challenge",
-                "question_goal": "What's their main cooking pain point we can help with?",
-                "outcome_range": "Open-ended - understand their frustrations",
-                "example_hints": [
-                    "Running out of weeknight dinner ideas",
-                    "Wasting ingredients that go bad before I use them",
-                    "Making healthy food that my kids will actually eat"
-                ]
-            },
-        ]
+        ],
     },
 }
+
+
+# =============================================================================
+# Label Lookup (for formatting answers as readable text)
+# =============================================================================
+
+def _build_label_lookup() -> dict[str, dict[str, str]]:
+    """Build a question_id → {value: label} lookup from static pages."""
+    lookup: dict[str, dict[str, str]] = {}
+    for page in STATIC_PAGES.values():
+        for q in page["questions"]:
+            if q["type"] == "chips":
+                lookup[q["id"]] = {opt["value"]: opt["label"] for opt in q["options"]}
+    return lookup
+
+
+LABEL_LOOKUP = _build_label_lookup()
 
 
 # =============================================================================
@@ -254,44 +219,36 @@ INTERVIEW_FRAMEWORK = {
 # =============================================================================
 
 class InterviewQuestion(BaseModel):
-    """A single interview question generated by LLM."""
-    id: str = Field(description="Data point ID this captures, e.g., 'recipe_detail_level'")
+    """A single interview question generated by LLM (used for catchall page)."""
+    id: str = Field(description="Data point ID this captures, e.g., 'clarify_leftovers'")
     question: str = Field(description="The question text, conversational tone")
     hint: str = Field(description="Example answer as placeholder, first person, natural")
-
-
-class InterviewPage(BaseModel):
-    """One page of the interview."""
-    title: str = Field(description="Page title")
-    subtitle: str = Field(description="Friendly 1-2 sentence intro for this section")
-    questions: list[InterviewQuestion] = Field(description="4 questions for this page")
 
 
 class CatchallPage(BaseModel):
     """The catch-all page with follow-up questions."""
     subtitle: str = Field(description="Friendly intro acknowledging their answers")
-    questions: list[InterviewQuestion] = Field(description="0-4 follow-up questions to fill gaps")
+    questions: list[InterviewQuestion] = Field(
+        description="0-3 follow-up questions to fill gaps",
+        max_length=3,
+    )
     ready_to_proceed: bool = Field(description="True if answers are complete, no questions needed")
 
 
 class SubdomainGuidance(BaseModel):
     """Synthesized guidance strings for all subdomains."""
-    recipes: str = Field(description="~50-100 words on how to write recipes for this user")
-    meal_plans: str = Field(description="~50-100 words on how to structure meal plans")
-    tasks: str = Field(description="~30-50 words on how to format prep tasks")
-    shopping: str = Field(description="~30-50 words on shopping list preferences")
-    inventory: str = Field(description="~30-50 words on inventory tracking style")
+    recipes: str = Field(description="~100-200 words on how to write recipes for this user")
+    meal_plans: str = Field(description="~100-200 words on how to structure meal plans")
+    tasks: str = Field(description="~50-75 words on how to format prep tasks")
+    shopping: str = Field(description="~50-75 words on shopping list preferences")
+    inventory: str = Field(description="~50-75 words on inventory tracking style")
 
 
 # =============================================================================
 # LLM Prompts
 # =============================================================================
 
-# =============================================================================
-# System Prompts with Clear Identity + Success Criteria
-# =============================================================================
-
-SYSTEM_IDENTITY = """You are the Preference Curator for Alfred, an agentic cooking assistant.
+SYSTEM_IDENTITY = """You are the Preference Synthesizer for Alfred, an agentic cooking assistant.
 
 ## About Alfred
 
@@ -302,75 +259,45 @@ Alfred is a multi-agent AI system that helps users with:
 - Shopping list organization
 - Pantry/inventory tracking
 
-Alfred uses `subdomain_guidance` strings to personalize ALL outputs. These are 50-150 word 
+Alfred uses `subdomain_guidance` strings to personalize ALL outputs. These are 50-200 word
 instruction sets that shape how Alfred writes recipes, structures meal plans, formats tasks, etc.
 
-## Your Role
+## What Alfred Actually Does With Your Guidance
 
-You are conducting an onboarding interview to discover user preferences. Your questions will 
-be synthesized into subdomain_guidance strings that Alfred follows literally.
+Your guidance strings are injected LITERALLY into Alfred's prompts at two points:
+- **Think Node**: All 5 guidance strings visible when Alfred plans what to do
+- **Act Node**: Domain-specific guidance when Alfred writes/generates content
 
-## Success Criteria
+### Alfred's Data Model (write guidance that maps to these)
 
-A successful interview:
-1. Captures specific, actionable preferences (not vague platitudes)
-2. Teases out the user's actual cooking style through natural conversation
-3. Provides enough signal to write distinct, personalized guidance
-4. Feels conversational and warm, not like a form
+- Recipes: name, description, cuisine (italian/mexican/chinese/etc.), difficulty (easy/medium/hard),
+  ingredients[] with quantities, steps[] with timing
+- Inventory: name, quantity, unit, location (pantry/fridge/freezer/counter/cabinet), expiry_date
+- Shopping: name, quantity, unit, checked, grouped by category
+- Meal Plans: date, meal_type (breakfast/lunch/dinner/snack), linked recipe
+- Tasks: title, description, due_date, category (prep/shopping/cleanup), completed
 
-Bad: "Do you like detailed recipes?" → "Yes" (useless)
-Good: "When you're mid-cook and something's not working, what do you wish recipes told you?"
-      → "I wish they'd explain WHY I'm doing each step so I can troubleshoot" (actionable!)
-"""
+### Concrete Examples of How Guidance Drives Output
 
+When recipes guidance says "Explain why behind non-obvious steps, skip basics":
+→ Alfred writes: "Sear chicken 4 min per side until golden (internal 165°F) —
+   the high heat creates a Maillard crust that locks in moisture."
 
-GENERATE_PAGE_PROMPT = """{system_identity}
+When shopping guidance says "Organize by store section":
+→ Alfred groups: Produce: [items], Dairy: [items], Meat: [items]
 
-## Your Task: Generate Interview Page {page_number} - "{page_title}"
+When tasks guidance says "Include meal connection and timing":
+→ Alfred generates: "Thaw salmon for Friday's teriyaki bowl — move to fridge by Thu 6pm"
 
-**Page Focus:** {page_focus}
-**Maps to subdomains:** {maps_to}
+## Critical: Preferences Shape Output, Never Restrict Capability
 
-### User Context
-| Attribute | Value |
-|-----------|-------|
-| Cooking skill | {skill_level} |
-| Household | {household_size} people |
-| Dietary | {dietary} |
-| Equipment | {equipment} |
-| Cuisines | {cuisines} |
-| Liked ingredients | {liked_ingredients} |
+Alfred will ALWAYS help when explicitly asked. Guidance shapes HOW, not WHETHER.
 
-### Prior Answers
-{prior_answers}
+❌ WRONG: "You prefer quick meals, so I can't help with this complex dish"
+❌ WRONG: "You said basic tracking, so I won't add this item"
+✅ RIGHT: Write guidance as "prefer X" and "default to Y", never "never do X"
 
-### Data Points to Capture This Page
-
-{data_points_json}
-
-## Success Criteria for This Page
-
-Generate 4 questions that:
-1. **Capture each data point** - One question per data point ID
-2. **Tease out specifics** - Avoid yes/no questions, ask for their actual behavior
-3. **Adapt to skill level** - Beginner = encouraging, advanced = peer-to-peer
-4. **Reference their context** - Mention their cuisines, equipment, ingredients where natural
-5. **Build on prior answers** - If they mentioned batch cooking, reference it
-
-For each question provide a **hint** (example answer):
-- First person voice ("I usually...", "For me...")
-- Shows the DEPTH of answer we want
-- Feels like a real person wrote it
-
-## Output Contract
-
-Return a JSON object with:
-- title: Page title (use "{page_title}")
-- subtitle: 1-2 sentence friendly intro for this section
-- questions: Array of 4 objects, each with:
-  - id: The data point ID (e.g., "recipe_detail_level")
-  - question: Your question text
-  - hint: Example answer as placeholder
+Every preference is a DEFAULT, not a constraint.
 """
 
 
@@ -378,7 +305,8 @@ GENERATE_CATCHALL_PROMPT = """{system_identity}
 
 ## Your Task: Generate Catch-all Follow-up Questions (Page 4)
 
-You've collected answers from the first 3 interview pages. Now review for gaps or contradictions.
+You've collected structured preferences and text answers from the first 3 interview pages.
+Now review for gaps or contradictions.
 
 ### User Context
 | Attribute | Value |
@@ -391,32 +319,96 @@ You've collected answers from the first 3 interview pages. Now review for gaps o
 ### All Interview Answers So Far
 {all_answers}
 
+## Captured Signal (What We Already Know)
+
+From Pages 1-3, we have user preferences for:
+- **Recipe writing**: assumed competence level, timing format, useful extras
+- **Time constraints**: weeknight cook time budget
+- **Shopping lists**: verbosity style, organization format, shopping frequency
+- **Meal planning**: batch vs. daily rhythm, leftover handling
+- **Task reminders**: context level (task-only vs. full scheduling)
+
+## Decision Gaps to Probe
+
+The structured chip answers above already cover recipe detail, timing, cook time,
+shopping format, cooking rhythm, leftovers, and prep reminder style. Do NOT re-ask
+about any of these — they are resolved.
+
+The ONLY gaps worth probing (if text answers don't already cover them):
+- Weekend vs. weekday cooking differences (time budget only covers weeknights)
+- Cuisine exploration appetite (do they want variety or stick to favorites?)
+- Hard exclusions ("never suggest X" — ingredients, cuisines, or styles to avoid)
+
+Do NOT ask questions that:
+- Restate or clarify a chip selection (those are definitive)
+- Could be interpreted as restricting Alfred's willingness to help
+
 ## Success Criteria
 
 1. **Identify gaps**: What preferences are still unclear for subdomain_guidance?
 2. **Spot contradictions**: Did they say conflicting things? Clarify.
-3. **Fill holes**: Any major cooking style aspects we missed?
-4. **Don't over-ask**: If answers are clear and complete, return empty questions.
+3. **Don't over-ask**: If answers are clear and complete, return empty questions and set ready_to_proceed=true.
 
 ### Good Follow-up Examples
-- "You mentioned batch cooking but also said you don't love leftovers - do you mean transforming them into new dishes?"
+- "You mentioned batch cooking but also said leftovers lose quality - do you mean you batch components and assemble fresh?"
 - "Any ingredients or cuisines you'd NEVER want suggested?"
 - "You mentioned weeknight time limits - are weekends different?"
 
 ### Bad Follow-ups (Don't do these)
 - Generic questions that don't reference their answers
-- Questions already answered implicitly
+- Questions already answered by chip selections
 - Asking just to have more questions
 
 ## Output Contract
 
 Return a JSON object with:
 - subtitle: Friendly 1-2 sentence acknowledging what they've shared
-- questions: Array of 0-4 follow-up questions (empty if complete), each with:
+- questions: Array of 0-3 follow-up questions (empty if complete), each with:
   - id: A descriptive ID like "clarify_leftovers" or "weekend_cooking"
   - question: Your question text, referencing their specific answers
   - hint: Example answer
 - ready_to_proceed: true if answers are complete (even if questions array is empty)
+"""
+
+
+# =============================================================================
+# Subdomain Outcomes Framework
+# =============================================================================
+
+SUBDOMAIN_OUTCOMES = """
+## Alfred Subdomain Guidance Framework
+
+Alfred uses `subdomain_guidance` strings to personalize ALL outputs.
+
+### subdomain_guidance["recipes"]
+Controls how recipes are written. Key dimensions:
+- **Assumed competence**: Skip obvious techniques ↔ Explain everything with context
+- **Timing info**: Visual cues only ↔ Precise temps + exact times
+- **Extras**: Substitutions, chef tips, troubleshooting — include what user selected
+- **Complexity**: Weeknight time constraints → filter recipe suggestions accordingly
+
+### subdomain_guidance["meal_plans"]
+Controls how meal plans are structured. Key dimensions:
+- **Cooking rhythm**: Cook fresh daily ↔ Weekend batch + weekday assembly
+- **Leftover strategy**: Same meal ↔ Transform into new dishes ↔ Prefer fresh
+- **Prep scheduling**: Based on cooking rhythm and weeknight time constraints
+- **Detail level**: Meals only ↔ Full calendar with prep tasks linked
+
+### subdomain_guidance["tasks"]
+Controls prep reminders and task formatting. Key dimensions:
+- **Context level**: Task-only ↔ Include meal connection ↔ Full scheduling with timing
+- **Timing**: Tied to their cooking rhythm (batch = prep days ahead)
+
+### subdomain_guidance["shopping"]
+Controls shopping list organization. Key dimensions:
+- **Organization**: By recipe ↔ By store section
+- **Detail**: Quick scan (item + rough amount) ↔ Full detail (exact quantities, notes)
+- **Frequency**: Matches their shopping style (weekly, small trips, online, mixed)
+
+### subdomain_guidance["inventory"]
+Controls pantry tracking. Key dimensions:
+- **Proactive vs. reactive**: Based on their frustrations (waste, forgetting what they have)
+- **Staple assumptions**: Infer from their selected pantry staples during onboarding
 """
 
 
@@ -439,6 +431,38 @@ Convert all interview answers into the subdomain_guidance strings that Alfred wi
 ### All Interview Answers
 {all_answers}
 
+## How Preferences Map to Guidance
+
+Each chip selection translates to an imperative instruction:
+
+| User Selected | → Guidance Fragment |
+|---------------|---------------------|
+| "Assume I know the basics" | "Skip explanations for basic techniques. Focus on what's non-obvious." |
+| "Explain key techniques" | "Briefly explain the why behind key techniques." |
+| "Walk me through everything" | "Explain each technique. Include why, not just how. Break complex steps into micro-steps." |
+| "Visual cues & intuition" | "Emphasize visual and texture cues for doneness. Skip exact times where possible." |
+| "Times + visual cues" | "Include both precise times and visual cues. Times as guidance, visual cues as confirmation." |
+| "Exact temps & times" | "Always include exact temperatures and times. Precise measurements for all cooking steps." |
+| "Under 20 min" | "Prioritize recipes under 20 min active time for weeknights." |
+| "20-40 min" | "Weeknight recipes should target 20-40 min active time." |
+| "40-60 min" | "Weeknight recipes can be up to 60 min." |
+| "No rush" | "No time constraints — include involved recipes freely." |
+| "Quick scan — items, rough amounts" | "Shopping lists: item names with rough quantities. Scannable, not verbose." |
+| "Full detail — exact quantities, notes" | "Shopping lists: exact quantities, brief notes, highlight fresh vs. frozen." |
+| "By recipe" | "Organize shopping lists by recipe — group items under the dish they're for." |
+| "By store section" | "Organize shopping lists by store section (Produce, Dairy, Meat, Pantry)." |
+| "Cook fresh each day" | "Plan for daily fresh cooking. Minimize batch prep assumptions." |
+| "Mix of fresh and batch" | "Balance batch components (sauces, proteins) with fresh daily cooking." |
+| "Weekend batch + weekday assembly" | "Structure around weekend batch cooking, weekday assembly from components." |
+| "Happy eating the same thing" | "Leftovers OK as-is. Plan for bulk portions that reheat well." |
+| "Transform into new dishes" | "Plan leftover transformations — Sunday roast becomes Monday tacos." |
+| "Leftovers lose quality, prefer fresh" | "Minimize leftovers. Plan appropriate portions for fresh cooking." |
+| "Just the task" | "Prep reminders: simple task name only." |
+| "Include the meal" | "Prep reminders: include which meal the task is for." |
+| "Full scheduling" | "Prep reminders: include meal name, quantity, and timing deadline." |
+
+Chip selections give you the WHAT. Text answers give you the HOW and WHY — use both.
+
 ## Subdomain Guidance Specification
 
 Each subdomain_guidance string is injected into Alfred's prompts and followed LITERALLY.
@@ -446,22 +470,31 @@ Write direct instructions that shape Alfred's behavior.
 
 {subdomain_framework}
 
+## Writing for User Comfort
+
+1. **Match their energy** — If text answers are casual, write conversational guidance
+2. **Respect their competence** — If they selected "Assume I know basics", don't add training wheels
+3. **Address their frustrations** — If they said "I waste ingredients", make inventory guidance proactive
+4. **Default to helpful, not less** — When uncertain, write guidance that helps MORE, not less
+
 ## Success Criteria
 
 For each subdomain, write guidance that:
-1. **Is specific and actionable** - "Include timing for proteins" not "be helpful"
-2. **References their actual answers** - If they said "visual cues for veggies", include it
-3. **Uses imperative style** - "Do X. Skip Y. Include Z."
-4. **Respects word limits** - These go into EVERY prompt, keep them tight
+1. **Is specific and actionable** — "Include timing for proteins" not "be helpful"
+2. **Maps from their selections** — Chip labels → imperative instructions (see table above)
+3. **Incorporates their text answers** — Add specificity and voice from free-text responses
+4. **Uses imperative style** — "Do X. Prefer Y. Default to Z."
+5. **Uses "prefer/default to" language** — Never "never do X" or "refuse Y"
+6. **Respects word limits** — These go into EVERY prompt, keep them tight
 
 ### Word Limits
 | Subdomain | Words | Focus |
 |-----------|-------|-------|
-| recipes | 100-200 | Instruction detail, timing, technique, substitutions, weekday vs weekend |
-| meal_plans | 100-200 | Batch style, leftovers, scheduling, detail level, component reuse |
-| tasks | 50-75 | Reminder timing, detail, meal linking |
-| shopping | 50-75 | Grouping, frequency, detail level |
-| inventory | 50-75 | Tracking strictness, staple assumptions |
+| recipes | 100-200 | Assumed competence, timing format, extras, weeknight constraints |
+| meal_plans | 100-200 | Cooking rhythm, leftovers, scheduling, component reuse |
+| tasks | 50-75 | Reminder context level, timing, meal linking |
+| shopping | 50-75 | Organization, detail level, shopping frequency |
+| inventory | 50-75 | Tracking approach, staple assumptions, frustration-driven |
 
 ## Output Contract
 
@@ -475,93 +508,108 @@ Return a JSON object with exactly these 5 keys:
 ### Example Output
 
 ```json
-{{
-  "recipes": "Always provide clear, step-by-step instructions with precise temperatures for proteins and key steps. Include exact times as guidance but emphasize visual and texture cues for doneness. Break down complex steps into micro-steps, especially for sauces, curries, and multi-component dishes. Explain the 'why' behind each technique or step, especially for less familiar cuisines. Do not suggest ingredient substitutions unless specifically requested. Skip detailed instructions for basics like eggs or toast unless there's a nuance. Weeknight recipes should be air fryer or skillet-friendly and under 30 minutes; weekends can be more involved with oven, Instant Pot, or multi-step dishes.",
-  "meal_plans": "Structure meal plans around weekend batch cooking of 2-3 main components (sauces, proteins), with weekday assembly using fresh carbs and veggies. Emphasize transformable leftovers—reuse components in new dishes, not just reheating the same meal. Limit weeknight active cooking/cleanup to 20-30 minutes, favoring air fryer and skillet recipes. Include longer, more involved recipes for weekends using Instant Pot, rice cooker, or oven. Minimal use of freezer—mainly for sauces, not cooked proteins. Always link batch prep tasks to specific meals they enable.",
-  "tasks": "Provide detailed, beginner-style prep reminders linked to specific meals, including precise timing (e.g., when to thaw, soak, or marinate). Always connect tasks to the associated meal and specify when to start each prep step.",
-  "shopping": "Organize shopping lists by store section. Prepare for a single weekly trip with minimal midweek shopping. Include quantities, brief notes, and highlight which ingredients are fresh versus frozen.",
-  "inventory": "Track key proteins, sauces, and fresh/frozen produce with moderate detail. Assume common pantry staples are always available. Prioritize tracking items relevant to upcoming planned meals."
-}}
+{{{{
+  "recipes": "Assume intermediate competence — skip explanations for basic techniques like sautéing, dicing, or deglazing. For non-obvious steps, briefly explain the why (e.g., why you rest meat, why you bloom spices in oil). Include both precise times and visual cues: times as guidance, visual cues as confirmation of doneness. Always include exact temperatures for proteins. Weeknight recipes should target 20-40 min active time using skillet or air fryer. Weekends can be more involved. Include substitutions when an ingredient might be hard to find. Add chef tips for technique nuances, especially for Thai and Mexican cuisines.",
+  "meal_plans": "Structure meal plans around a mix of batch and fresh cooking. Prep 2-3 batch components on weekends (sauces, marinated proteins), with fresh vegetables and carbs added daily. Plan leftover transformations — roast chicken becomes chicken tacos becomes chicken soup. Weeknight active cooking should stay under 30 min. Include prep task reminders linked to specific meals. Flexible on Thursday for eating out or takeout.",
+  "tasks": "Include the meal connection in every prep reminder — 'thaw chicken for Thursday's stir-fry.' Link batch prep tasks to the specific meals they enable. Reminders 1-2 days ahead for thawing and marinating.",
+  "shopping": "Organize shopping lists by store section (Produce, Dairy, Meat, Pantry). Include exact quantities and brief notes. Plan for a single weekly trip with a short midweek top-up for fresh produce.",
+  "inventory": "Track proteins, sauces, and fresh produce — these drive meal planning decisions. Assume common pantry staples (oil, salt, basic spices) are always available. Flag items approaching expiry when they could be used in upcoming meals."
+}}}}
 ```
 """
 
 
 # =============================================================================
-# Generation Functions
+# Helper Functions
 # =============================================================================
 
-def _format_data_points(page_key: str) -> str:
-    """Format data points for a page into structured format for LLM."""
-    page = INTERVIEW_FRAMEWORK[page_key]
-    lines = []
-    for i, dp in enumerate(page["data_points"], 1):
-        lines.append(f"""
-**Data Point {i}: `{dp['id']}`**
-- Goal: {dp['question_goal']}
-- Outcome range: {dp['outcome_range']}
-- Example hint styles: {dp['example_hints']}
-""")
-    return "\n".join(lines)
+def get_static_page(page_number: int) -> dict:
+    """
+    Return the static page definition for pages 1-3.
+
+    Args:
+        page_number: 1, 2, or 3
+
+    Returns:
+        Dict with title, subtitle, image, questions (ready to send to frontend)
+    """
+    page_key = f"page_{page_number}"
+    if page_key not in STATIC_PAGES:
+        raise ValueError(f"Invalid static page number: {page_number}. Must be 1-3.")
+
+    page = STATIC_PAGES[page_key]
+    return {
+        "page_number": page_number,
+        "title": page["title"],
+        "subtitle": page["subtitle"],
+        "image": page["image"],
+        "questions": page["questions"],
+        "is_catchall": False,
+    }
 
 
 def _format_prior_answers(answers: list[dict]) -> str:
-    """Format prior answers for prompt context."""
+    """Format prior answers for prompt context, handling typed inputs."""
     if not answers:
-        return "(No prior answers yet - this is the first page)"
-    
+        return "(No answers yet)"
+
     lines = []
     for ans in answers:
-        lines.append(f"Q: {ans.get('question', 'Unknown')}")
-        lines.append(f"A: {ans.get('answer', 'No answer')}")
+        q_id = ans.get("question_id", ans.get("id", "unknown"))
+        ans_type = ans.get("type", "text")
+
+        if ans_type == "chips":
+            # Multi-select chips
+            if "values" in ans:
+                value_ids = ans["values"]
+                labels = [
+                    LABEL_LOOKUP.get(q_id, {}).get(v, v)
+                    for v in value_ids
+                ]
+                lines.append(f"{q_id}: {', '.join(labels)}")
+            # Single-select chip
+            elif "value" in ans:
+                value_id = ans["value"]
+                label = LABEL_LOOKUP.get(q_id, {}).get(value_id, value_id)
+                lines.append(f"{q_id}: {label}")
+        elif ans_type == "text":
+            answer_text = ans.get("answer", "")
+            if answer_text.strip():
+                # Find the question text from static pages
+                question_text = _find_question_text(q_id)
+                if question_text:
+                    lines.append(f"Q: {question_text}")
+                    lines.append(f"A: {answer_text}")
+                else:
+                    # Catchall page questions (not in static pages)
+                    q_text = ans.get("question", q_id)
+                    lines.append(f"Q: {q_text}")
+                    lines.append(f"A: {answer_text}")
+        else:
+            # Legacy format: plain Q/A from catchall page
+            question = ans.get("question", "")
+            answer = ans.get("answer", "")
+            if question and answer:
+                lines.append(f"Q: {question}")
+                lines.append(f"A: {answer}")
+
         lines.append("")
-    return "\n".join(lines)
+
+    return "\n".join(lines).strip()
 
 
-async def generate_interview_page(
-    page_number: int,
-    user_context: dict,
-    prior_answers: list[dict],
-) -> InterviewPage:
-    """
-    Generate an interview page with questions tailored to user context.
-    
-    Args:
-        page_number: 1, 2, or 3
-        user_context: Dict with skill_level, household_size, dietary, equipment, cuisines, liked_ingredients
-        prior_answers: List of {question, answer} dicts from previous pages
-    
-    Returns:
-        InterviewPage with title, subtitle, and 4 questions
-    """
-    page_key = f"page_{page_number}"
-    if page_key not in INTERVIEW_FRAMEWORK:
-        raise ValueError(f"Invalid page number: {page_number}")
-    
-    page_info = INTERVIEW_FRAMEWORK[page_key]
-    
-    prompt = GENERATE_PAGE_PROMPT.format(
-        system_identity=SYSTEM_IDENTITY,
-        page_number=page_number,
-        page_title=page_info["title"],
-        page_focus=page_info["focus"],
-        maps_to=", ".join(page_info["maps_to"]),
-        skill_level=user_context.get("cooking_skill_level", "intermediate"),
-        household_size=user_context.get("household_size", 2),
-        dietary=", ".join(user_context.get("dietary_restrictions", [])) or "None",
-        equipment=", ".join(user_context.get("available_equipment", [])) or "Standard kitchen",
-        cuisines=", ".join(user_context.get("cuisines", [])) or "Various",
-        liked_ingredients=", ".join(user_context.get("liked_ingredients", [])[:10]) or "Not specified",
-        prior_answers=_format_prior_answers(prior_answers),
-        data_points_json=_format_data_points(page_key),
-    )
-    
-    return await call_llm(
-        response_model=InterviewPage,
-        system_prompt=prompt,
-        user_prompt=f"Generate the '{page_info['title']}' interview page (page {page_number} of 4).",
-        complexity="medium",
-    )
+def _find_question_text(question_id: str) -> str | None:
+    """Find the question text for a given question_id from static pages."""
+    for page in STATIC_PAGES.values():
+        for q in page["questions"]:
+            if q["id"] == question_id:
+                return q["question"]
+    return None
 
+
+# =============================================================================
+# LLM Functions
+# =============================================================================
 
 async def generate_catchall_page(
     user_context: dict,
@@ -569,13 +617,13 @@ async def generate_catchall_page(
 ) -> CatchallPage:
     """
     Generate the catch-all page with follow-up questions if needed.
-    
+
     Args:
         user_context: Dict with user preferences
         all_answers: All answers from pages 1-3
-    
+
     Returns:
-        CatchallPage with 0-4 follow-up questions
+        CatchallPage with 0-3 follow-up questions
     """
     prompt = GENERATE_CATCHALL_PROMPT.format(
         system_identity=SYSTEM_IDENTITY,
@@ -585,7 +633,7 @@ async def generate_catchall_page(
         cuisines=", ".join(user_context.get("cuisines", [])) or "Various",
         all_answers=_format_prior_answers(all_answers),
     )
-    
+
     return await call_llm(
         response_model=CatchallPage,
         system_prompt=prompt,
@@ -600,11 +648,11 @@ async def synthesize_guidance(
 ) -> SubdomainGuidance:
     """
     Synthesize all interview answers into subdomain_guidance strings.
-    
+
     Args:
         user_context: Dict with user preferences
         all_answers: All answers from interview (pages 1-4)
-    
+
     Returns:
         SubdomainGuidance with strings for all 5 subdomains
     """
@@ -619,7 +667,7 @@ async def synthesize_guidance(
         liked_ingredients=", ".join(user_context.get("liked_ingredients", [])[:10]) or "Not specified",
         all_answers=_format_prior_answers(all_answers),
     )
-    
+
     return await call_llm(
         response_model=SubdomainGuidance,
         system_prompt=prompt,
