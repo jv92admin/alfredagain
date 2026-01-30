@@ -29,6 +29,35 @@ interface SearchResult {
   aliases?: string[] | null
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  pantry: 'Pantry Essentials',
+  spices: 'Spices & Seasonings',
+  grains: 'Grains & Pasta',
+  baking: 'Baking',
+  dairy: 'Dairy & Eggs',
+}
+
+// Display order for categories
+const CATEGORY_ORDER = ['pantry', 'spices', 'grains', 'dairy', 'baking']
+
+function groupByCategory(ingredients: Ingredient[]): Record<string, Ingredient[]> {
+  const groups: Record<string, Ingredient[]> = {}
+  for (const ing of ingredients) {
+    const cat = ing.parent_category || 'other'
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(ing)
+  }
+  // Sort by defined order, unknowns at end
+  const sorted: Record<string, Ingredient[]> = {}
+  for (const cat of CATEGORY_ORDER) {
+    if (groups[cat]) sorted[cat] = groups[cat]
+  }
+  for (const cat of Object.keys(groups)) {
+    if (!sorted[cat]) sorted[cat] = groups[cat]
+  }
+  return sorted
+}
+
 export function StaplesStep({ onNext, onBack }: StaplesStepProps) {
   const [essentials, setEssentials] = useState<Ingredient[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -56,7 +85,8 @@ export function StaplesStep({ onNext, onBack }: StaplesStepProps) {
       const data = await apiRequest<StaplesResponse>(`/api/onboarding/staples/options${cuisineParam}`)
 
       setEssentials(data.essentials)
-      setSelected(new Set(data.pre_selected_ids))
+      // Start with nothing selected — user taps to add what they keep stocked
+      setSelected(new Set())
     } catch (err) {
       console.error('Failed to load staples:', err)
       setError('Failed to load staples')
@@ -173,7 +203,7 @@ export function StaplesStep({ onNext, onBack }: StaplesStepProps) {
           What do you always keep stocked?
         </h2>
         <p className="text-[var(--color-text-muted)]">
-          We'll add these to your pantry. Uncheck anything you don't usually have.
+          Tap the items you always keep stocked. We'll add them to your pantry so Alfred knows what you have.
         </p>
       </div>
 
@@ -183,50 +213,57 @@ export function StaplesStep({ onNext, onBack }: StaplesStepProps) {
         </div>
       )}
 
-      {/* Essentials Checklist */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        {essentials.map((ingredient) => {
-          const isSelected = selected.has(ingredient.id)
+      {/* Essentials Checklist — grouped by category */}
+      {Object.entries(groupByCategory(essentials)).map(([category, items]) => (
+        <div key={category} className="space-y-2">
+          <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">
+            {CATEGORY_LABELS[category] || category}
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {items.map((ingredient) => {
+              const isSelected = selected.has(ingredient.id)
 
-          return (
-            <motion.button
-              key={ingredient.id}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => toggleIngredient(ingredient.id)}
-              className={`
-                px-3 py-2 rounded-[var(--radius-md)] border text-left text-sm transition-all
-                ${isSelected
-                  ? 'bg-[var(--color-accent-muted)] border-[var(--color-accent)]'
-                  : 'bg-[var(--color-bg-primary)] border-[var(--color-border)] hover:border-[var(--color-text-muted)]'
-                }
-              `}
-            >
-              <div className="flex items-center gap-2">
-                <span
+              return (
+                <motion.button
+                  key={ingredient.id}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => toggleIngredient(ingredient.id)}
                   className={`
-                    w-4 h-4 rounded border flex items-center justify-center text-xs flex-shrink-0
+                    px-3 py-2 rounded-[var(--radius-md)] border text-left text-sm transition-all
                     ${isSelected
-                      ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
-                      : 'border-[var(--color-border)]'
+                      ? 'bg-[var(--color-accent-muted)] border-[var(--color-accent)]'
+                      : 'bg-[var(--color-bg-primary)] border-[var(--color-border)] hover:border-[var(--color-text-muted)]'
                     }
                   `}
                 >
-                  {isSelected && '✓'}
-                </span>
-                <span className="text-[var(--color-text-primary)] truncate">
-                  {ingredient.name}
-                </span>
-                {ingredient.cuisine_match && (
-                  <span className="text-xs text-[var(--color-accent)] flex-shrink-0" title="Matches your cuisines">
-                    ★
-                  </span>
-                )}
-              </div>
-            </motion.button>
-          )
-        })}
-      </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`
+                        w-4 h-4 rounded border flex items-center justify-center text-xs flex-shrink-0
+                        ${isSelected
+                          ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
+                          : 'border-[var(--color-border)]'
+                        }
+                      `}
+                    >
+                      {isSelected && '✓'}
+                    </span>
+                    <span className="text-[var(--color-text-primary)] truncate">
+                      {ingredient.name}
+                    </span>
+                    {ingredient.cuisine_match && (
+                      <span className="text-xs text-[var(--color-accent)] flex-shrink-0" title="Matches your cuisines">
+                        ★
+                      </span>
+                    )}
+                  </div>
+                </motion.button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
 
       {/* Your Additions (from search) */}
       <AnimatePresence>
