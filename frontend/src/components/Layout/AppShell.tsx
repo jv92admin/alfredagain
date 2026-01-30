@@ -20,6 +20,7 @@ const navItems = [
   { path: '/tasks', label: 'Tasks' },
   { path: '/ingredients', label: 'Ingredients DB' },
   { path: '/preferences', label: 'Preferences' },
+  { path: '/about', label: 'About Alfred' },
 ]
 
 export function AppShell({ children, user, onNewChat }: AppShellProps) {

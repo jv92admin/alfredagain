@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { AppShell } from './components/Layout/AppShell'
 import { LoginPage } from './components/Auth/LoginPage'
@@ -11,6 +11,7 @@ import { ShoppingView } from './components/Views/ShoppingView'
 import { TasksView } from './components/Views/TasksView'
 import { IngredientsView } from './components/Views/IngredientsView'
 import { PreferencesView } from './components/Views/PreferencesView'
+import { AboutView } from './components/Views/AboutView'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
 import { ResumePrompt } from './components/Chat/ResumePrompt'
@@ -29,6 +30,7 @@ const INITIAL_MESSAGE: Message = {
 
 function App() {
   const { user, loading, checkAuth } = useAuth()
+  const navigate = useNavigate()
   const [focusItem, setFocusItem] = useState<{ type: string; id: string } | null>(null)
   const [chatMessages, setChatMessages] = useState<Message[]>([INITIAL_MESSAGE])
   const mode: Mode = 'plan' // Default to plan mode (toggle removed)
@@ -67,6 +69,8 @@ function App() {
 
   const handleOnboardingComplete = () => {
     setNeedsOnboarding(false)
+    // Redirect to About page after first-time onboarding
+    navigate('/about')
   }
 
   // Load conversation history and check session status after auth and onboarding
@@ -176,6 +180,7 @@ function App() {
           <Route path="/tasks" element={<TasksView />} />
           <Route path="/ingredients" element={<IngredientsView />} />
           <Route path="/preferences" element={<PreferencesView />} />
+          <Route path="/about" element={<AboutView />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>
