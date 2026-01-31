@@ -28,8 +28,6 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from alfred.core.id_registry import SessionIdRegistry
-from alfred.db.client import get_authenticated_client
-from alfred.db.request_context import get_access_token
 
 logger = logging.getLogger(__name__)
 from alfred.core.modes import Mode, ModeContext
@@ -503,43 +501,45 @@ async def run_alfred(
         turn_step_results = conv_context.get("turn_step_results", {})
         current_turn_key = str(current_turn)
 
-        access_token = get_access_token()
-        if access_token:
-            client = get_authenticated_client(access_token)
+        from alfred.tools.crud import db_read, DbReadParams, FilterClause
 
-            for label, entity_type, uuid in mentions:
-                # 1. Register and get ref
-                ref = id_registry.register_from_ui(uuid, entity_type, label, "mentioned:user")
-                logger.info(f"Workflow: Registered @-mention {ref} [{entity_type}]")
+        for label, entity_type, uuid in mentions:
+            # 1. Register and get ref
+            ref = id_registry.register_from_ui(uuid, entity_type, label, "mentioned:user")
+            logger.info(f"Workflow: Registered @-mention {ref} [{entity_type}]")
 
-                # 2. Fetch full entity data from DB
-                table_name = TYPE_TO_TABLE.get(entity_type, entity_type)
-                try:
-                    result = client.table(table_name).select("*").eq("id", uuid).execute()
+            # 2. Fetch full entity data via db_read (includes joins like recipe_ingredients)
+            table_name = TYPE_TO_TABLE.get(entity_type, entity_type)
+            try:
+                read_params = DbReadParams(
+                    table=table_name,
+                    filters=[FilterClause(field="id", op="=", value=uuid)],
+                )
+                result = await db_read(read_params, user_id)
 
-                    if result.data:
-                        # 3. Replace UUID with ref and inject into cache
-                        entity_data = result.data[0]
-                        entity_data["id"] = ref
+                if result:
+                    # 3. Replace UUID with ref and inject into cache
+                    entity_data = result[0]
+                    entity_data["id"] = ref
 
-                        if current_turn_key not in turn_step_results:
-                            turn_step_results[current_turn_key] = {}
+                    if current_turn_key not in turn_step_results:
+                        turn_step_results[current_turn_key] = {}
 
-                        mention_step_key = f"mention_{entity_type}_{uuid[:8]}"
-                        turn_step_results[current_turn_key][mention_step_key] = {
-                            "table": table_name,
-                            "data": [entity_data],
-                            "meta": {
-                                "source": "mention",
-                                "action": "mentioned:user",
-                                "turn": current_turn,
-                            },
-                        }
-                        logger.info(f"Workflow: Injected @-mention data for {ref}")
-                except Exception as e:
-                    logger.warning(f"Workflow: Failed to fetch @-mention data for {uuid[:8]}: {e}")
+                    mention_step_key = f"mention_{entity_type}_{uuid[:8]}"
+                    turn_step_results[current_turn_key][mention_step_key] = {
+                        "table": table_name,
+                        "data": [entity_data],
+                        "meta": {
+                            "source": "mention",
+                            "action": "mentioned:user",
+                            "turn": current_turn,
+                        },
+                    }
+                    logger.info(f"Workflow: Injected @-mention data for {ref}")
+            except Exception as e:
+                logger.warning(f"Workflow: Failed to fetch @-mention data for {uuid[:8]}: {e}")
 
-            conv_context["turn_step_results"] = turn_step_results
+        conv_context["turn_step_results"] = turn_step_results
 
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
@@ -748,43 +748,45 @@ async def run_alfred_streaming(
         turn_step_results = conv_context.get("turn_step_results", {})
         current_turn_key = str(current_turn)
 
-        access_token = get_access_token()
-        if access_token:
-            client = get_authenticated_client(access_token)
+        from alfred.tools.crud import db_read, DbReadParams, FilterClause
 
-            for label, entity_type, uuid in mentions:
-                # 1. Register and get ref
-                ref = id_registry.register_from_ui(uuid, entity_type, label, "mentioned:user")
-                logger.info(f"Workflow: Registered @-mention {ref} [{entity_type}]")
+        for label, entity_type, uuid in mentions:
+            # 1. Register and get ref
+            ref = id_registry.register_from_ui(uuid, entity_type, label, "mentioned:user")
+            logger.info(f"Workflow: Registered @-mention {ref} [{entity_type}]")
 
-                # 2. Fetch full entity data from DB
-                table_name = TYPE_TO_TABLE.get(entity_type, entity_type)
-                try:
-                    result = client.table(table_name).select("*").eq("id", uuid).execute()
+            # 2. Fetch full entity data via db_read (includes joins like recipe_ingredients)
+            table_name = TYPE_TO_TABLE.get(entity_type, entity_type)
+            try:
+                read_params = DbReadParams(
+                    table=table_name,
+                    filters=[FilterClause(field="id", op="=", value=uuid)],
+                )
+                result = await db_read(read_params, user_id)
 
-                    if result.data:
-                        # 3. Replace UUID with ref and inject into cache
-                        entity_data = result.data[0]
-                        entity_data["id"] = ref
+                if result:
+                    # 3. Replace UUID with ref and inject into cache
+                    entity_data = result[0]
+                    entity_data["id"] = ref
 
-                        if current_turn_key not in turn_step_results:
-                            turn_step_results[current_turn_key] = {}
+                    if current_turn_key not in turn_step_results:
+                        turn_step_results[current_turn_key] = {}
 
-                        mention_step_key = f"mention_{entity_type}_{uuid[:8]}"
-                        turn_step_results[current_turn_key][mention_step_key] = {
-                            "table": table_name,
-                            "data": [entity_data],
-                            "meta": {
-                                "source": "mention",
-                                "action": "mentioned:user",
-                                "turn": current_turn,
-                            },
-                        }
-                        logger.info(f"Workflow: Injected @-mention data for {ref}")
-                except Exception as e:
-                    logger.warning(f"Workflow: Failed to fetch @-mention data for {uuid[:8]}: {e}")
+                    mention_step_key = f"mention_{entity_type}_{uuid[:8]}"
+                    turn_step_results[current_turn_key][mention_step_key] = {
+                        "table": table_name,
+                        "data": [entity_data],
+                        "meta": {
+                            "source": "mention",
+                            "action": "mentioned:user",
+                            "turn": current_turn,
+                        },
+                    }
+                    logger.info(f"Workflow: Injected @-mention data for {ref}")
+            except Exception as e:
+                logger.warning(f"Workflow: Failed to fetch @-mention data for {uuid[:8]}: {e}")
 
-            conv_context["turn_step_results"] = turn_step_results
+        conv_context["turn_step_results"] = turn_step_results
 
     # V3: Initialize mode context from parameter
     selected_mode = Mode(mode) if mode in [m.value for m in Mode] else Mode.PLAN
