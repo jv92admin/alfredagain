@@ -188,12 +188,9 @@ class UnderstandContext:
         if not ref_to_uuid:
             return "## Entity Registry\n\n*No entities tracked yet.*"
 
+        from alfred.context.entity import SOURCE_TAG_LEGEND
         lines = ["## Entity Registry (for context decisions)", ""]
-        lines.append("**Entity Source Tags:**")
-        lines.append("- `created:user` / `updated:user` — User made this change via UI")
-        lines.append("- `mentioned:user` — User @-mentioned this entity")
-        lines.append("- `read` / `created` / `generated` — Alfred accessed via conversation")
-        lines.append("- `linked` — Auto-registered from FK field")
+        lines.append(SOURCE_TAG_LEGEND)
         lines.append("")
         lines.append("| Ref | Type | Label | Last Action | Created | Last Ref |")
         lines.append("|-----|------|-------|-------------|---------|----------|")
@@ -243,20 +240,12 @@ class ThinkContext:
     def format_entity_context(self) -> str:
         """Format entity context for Think prompt with recipe detail tracking.
 
-        Preserves the proven structure from format_for_think_prompt():
+        Structure:
         1. Generated Content (pending artifacts)
-        2. Recent Context (last 2 turns) with [read:full/summary] tags
+        2. Active Entities (last 2 turns) with [read:full/summary] tags
         3. Long Term Memory (Understand-retained)
         """
         lines = []
-
-        # Entity Source Legend (helps Think understand context origins)
-        lines.append("**Entity Source Tags:**")
-        lines.append("- `[created:user]` / `[updated:user]` — User made this change via UI")
-        lines.append("- `[mentioned:user]` — User @-mentioned this entity")
-        lines.append("- `[read]` / `[created]` / `[generated]` — Alfred accessed via conversation")
-        lines.append("- `[linked]` — Auto-registered from FK field")
-        lines.append("")
 
         ref_to_uuid = self.registry_data.get("ref_to_uuid", {})
         ref_types = self.registry_data.get("ref_types", {})
@@ -299,14 +288,20 @@ class ThinkContext:
             lines.append("*No entities tracked.*")
             return "\n".join(lines)
 
-        # Section 2: Recent Context (last 2 turns - automatic)
+        # Section 2: Active Entities (last 2 turns - automatic)
         # Filter out: entities shown in Generated Content section
+        from alfred.context.entity import SOURCE_TAG_LEGEND, RECIPE_DATA_LEGEND
         recent_display = [r for r in recent_refs if r not in generated_refs]
         if recent_display:
-            lines.append("## Recent Context (last 2 turns)")
-            lines.append("Act has data for these entities. Check the `[action:level]` tag:")
-            lines.append("- `[read:full]` → Act has instructions/ingredients, can `analyze` directly")
-            lines.append("- `[read:summary]` → Act has metadata only, `read with instructions` first for details")
+            lines.append("## ACTIVE ENTITIES")
+            lines.append("Act has data for these. Plan reads only when data is missing from this section.")
+            lines.append(SOURCE_TAG_LEGEND)
+            # Only show recipe-specific read level guidance when recipes are present
+            has_recipes = any(
+                ref_types.get(r) == "recipe" for r in recent_display
+            )
+            if has_recipes:
+                lines.append(RECIPE_DATA_LEGEND)
             lines.append("")
             for ref in recent_display:
                 label = ref_labels.get(ref, ref)
@@ -322,7 +317,13 @@ class ThinkContext:
                             last_full_turn = ref_recipe_last_full_turn.get(ref)
                             if last_full_turn:
                                 action = f"{action} (last_full:T{last_full_turn})"
-                lines.append(f"- `{ref}`: {label} ({entity_type}) [{action}] T{last_ref}")
+                # Stub indicator: created:user entities that haven't been read
+                stub_marker = ""
+                if action.startswith("created:user") or action.startswith("updated:user"):
+                    # No read level means Act has no data for this entity
+                    if entity_type == "recipe" and not ref_recipe_last_read_level.get(ref):
+                        stub_marker = " (no details)"
+                lines.append(f"- `{ref}`: {label}{stub_marker} ({entity_type}) [{action}] T{last_ref}")
             lines.append("")
 
         # Section 3: Long Term Memory (Understand-retained)

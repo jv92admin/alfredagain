@@ -16,6 +16,27 @@ if TYPE_CHECKING:
     from alfred.core.id_registry import SessionIdRegistry
 
 
+# =============================================================================
+# Centralized Tag Legends (single source of truth)
+# =============================================================================
+
+SOURCE_TAG_LEGEND = (
+    "**Source tags:** "
+    "`[read]` = Alfred fetched, "
+    "`[created]` = Alfred created, "
+    "`[generated]` = Alfred generated (not yet saved), "
+    "`[created:user]` = user made via UI, "
+    "`[mentioned:user]` = user @-mentioned, "
+    "`[linked]` = auto-registered from FK"
+)
+
+RECIPE_DATA_LEGEND = (
+    "**For recipes:** "
+    "`[read:full]` = has instructions + ingredients, "
+    "`[read:summary]` = metadata only (re-read with instructions for details)"
+)
+
+
 @dataclass
 class EntitySnapshot:
     """Snapshot of an entity for context injection."""
@@ -181,12 +202,9 @@ def format_entity_context(ctx: EntityContext, mode: str = "full") -> str:
     """
     lines = []
 
-    # Entity Source Legend (for modes that show action tags)
+    # Source tag legend (for modes that show action tags)
     if mode in ("full", "reply"):
-        lines.append("**Entity Source Tags:**")
-        lines.append("- `[created:user]` / `[updated:user]` — User made this change via UI")
-        lines.append("- `[mentioned:user]` — User @-mentioned this entity")
-        lines.append("- `[read]` / `[created]` / `[generated]` — Alfred accessed via conversation")
+        lines.append(SOURCE_TAG_LEGEND)
         lines.append("")
 
     # Generated content (user hasn't saved yet)

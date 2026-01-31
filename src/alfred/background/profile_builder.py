@@ -431,7 +431,7 @@ def format_dashboard_for_prompt(dashboard: KitchenDashboard) -> str:
     Returns:
         Markdown-formatted dashboard string
     """
-    lines = ["## KITCHEN AT A GLANCE"]
+    lines = ["## KITCHEN SNAPSHOT"]
     
     # Inventory
     if dashboard.inventory_count > 0:

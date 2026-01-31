@@ -816,12 +816,9 @@ def build_act_entity_context(
     
     lines = []
 
-    # Entity Source Legend (helps Act understand context origins)
-    lines.append("**Entity Source Tags:**")
-    lines.append("- `[created:user]` / `[updated:user]` — User made this change via UI")
-    lines.append("- `[mentioned:user]` — User @-mentioned this entity")
-    lines.append("- `[read]` / `[created]` / `[generated]` — Alfred accessed via conversation")
-    lines.append("- `[linked]` — Auto-registered from FK field")
+    # Entity Source Legend (centralized in entity.py)
+    from alfred.context.entity import SOURCE_TAG_LEGEND
+    lines.append(SOURCE_TAG_LEGEND)
     lines.append("")
 
     # Get active entities split by source
