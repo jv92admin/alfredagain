@@ -12,6 +12,8 @@ import { TasksView } from './components/Views/TasksView'
 import { IngredientsView } from './components/Views/IngredientsView'
 import { PreferencesView } from './components/Views/PreferencesView'
 import { AboutView } from './components/Views/AboutView'
+import { HomeView } from './components/Views/HomeView'
+import { CapabilitiesView } from './components/Views/CapabilitiesView'
 import { PublicHeader } from './components/Layout/PublicHeader'
 import { FocusOverlay } from './components/Focus/FocusOverlay'
 import { OnboardingFlow } from './components/Onboarding/OnboardingFlow'
@@ -66,8 +68,8 @@ function App() {
 
   const handleOnboardingComplete = () => {
     setNeedsOnboarding(false)
-    // Redirect to About page after first-time onboarding
-    navigate('/about')
+    // Redirect to Home dashboard after first-time onboarding
+    navigate('/home')
   }
 
   // Load conversation history and check session status after auth and onboarding
@@ -182,8 +184,10 @@ function App() {
           <Route path="/tasks" element={<TasksView />} />
           <Route path="/ingredients" element={<IngredientsView />} />
           <Route path="/preferences" element={<PreferencesView />} />
+          <Route path="/home" element={<HomeView />} />
+          <Route path="/capabilities" element={<CapabilitiesView />} />
           <Route path="/about" element={<AboutView />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>
       </AppShell>
 

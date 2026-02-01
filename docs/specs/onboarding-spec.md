@@ -41,6 +41,16 @@
 - Page 4: Catch-all for anything missed
 - Synthesis: LLM parses all free-text answers → structured subdomain_guidance strings
 
+### Post-Onboarding ✅ (2026-02-01)
+
+| Phase | Section | Status | Notes |
+|-------|---------|--------|-------|
+| **E** | **Post-Onboarding Education** | ✅ Done | Home dashboard, capabilities page, smart nudging |
+
+After onboarding completes, users are redirected to `/home` (Home Dashboard) instead of `/about`. The dashboard shows kitchen state (stat cards) and smart nudge cards that guide users to their first recipe, pantry items, meal plan, or shopping list based on current state.
+
+**See:** [post-onboarding-education-spec.md](post-onboarding-education-spec.md) for full details.
+
 ### Pending
 
 | Phase | Section | Status | Notes |

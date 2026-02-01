@@ -1,6 +1,6 @@
 # Alfred Roadmap
 
-**Last Updated:** 2026-01-26
+**Last Updated:** 2026-02-01
 
 ---
 
@@ -15,6 +15,7 @@
 | [architecture/capabilities.md](architecture/capabilities.md) | User-facing capabilities | Feature changes |
 | [specs/context-api-spec.md](specs/context-api-spec.md) | Context builders | API changes |
 | [specs/onboarding-spec.md](specs/onboarding-spec.md) | User onboarding | Onboarding changes |
+| [specs/post-onboarding-education-spec.md](specs/post-onboarding-education-spec.md) | Home dashboard, capabilities, nudging | Post-onboarding changes |
 | [specs/session-persistence-spec.md](specs/session-persistence-spec.md) | Session timeout, resume flow | Session changes |
 
 ---
@@ -30,6 +31,37 @@
 ---
 
 ## Recently Completed
+
+### 2026-02-01: Post-Onboarding Education System — Home Dashboard + Capabilities
+
+New users now land on a Home Dashboard instead of the About page after onboarding. Smart nudging guides them through first actions based on kitchen state.
+
+- **Home Dashboard** (`/home`) — `frontend/src/components/Views/HomeView.tsx`
+  - Stat cards: recipes, pantry, shopping, meals, tasks (from existing CRUD endpoints)
+  - Smart nudge cards with priority logic (recipes → pantry → meal plan → shopping)
+  - Recipe nudge: "Ask Alfred to Create" (primary, chat-first) + "Import from URL" (secondary, RecipeImportModal)
+  - Pantry nudge: frames inventory as fuel for better suggestions
+  - Time-of-day greeting
+
+- **Capabilities Page** (`/capabilities`) — `frontend/src/components/Views/CapabilitiesView.tsx`
+  - 6 anchored sections: recipes, pantry, meal planning, shopping, cook mode, @mentions
+  - Deep-linkable via URL hash (e.g., `/capabilities#meal-planning`)
+  - "Try asking Alfred" prompts per section with chat prefill navigation
+
+- **Chat Prompt Prefill** — `ChatView.tsx`
+  - `location.state.prefillPrompt` mechanism for navigating to chat with pre-written prompt
+  - Prompt prefilled but not auto-sent (user can edit before sending)
+
+- **Routing + Navigation Changes**
+  - Post-onboarding redirect: `/about` → `/home`
+  - Catch-all: `/` → `/home`
+  - Home + Capabilities added to sidebar, hamburger menu, BrowseDrawer
+  - Logo (desktop + mobile) now clickable → `/home`
+  - About page simplified: scrollytelling + @mentions sections removed, link to `/capabilities` added
+
+- **No backend changes.** All data from existing `/api/entities/{table}` endpoints.
+
+- **Spec:** [specs/post-onboarding-education-spec.md](specs/post-onboarding-education-spec.md)
 
 ### 2026-01-28: Job Durability Phase 2.5 + 3 — Background Execution
 

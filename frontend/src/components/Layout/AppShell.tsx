@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth, User } from '../../hooks/useAuth'
 import { BottomTabBar } from './BottomTabBar'
@@ -13,6 +13,7 @@ interface AppShellProps {
 }
 
 const navItems = [
+  { path: '/home', label: 'Home' },
   { path: '/', label: 'Chat' },
   { path: '/inventory', label: 'Inventory' },
   { path: '/recipes', label: 'Recipes' },
@@ -21,6 +22,7 @@ const navItems = [
   { path: '/tasks', label: 'Tasks' },
   { path: '/ingredients', label: 'Ingredients DB' },
   { path: '/preferences', label: 'Preferences' },
+  { path: '/capabilities', label: 'Capabilities' },
   { path: '/about', label: 'About Alfred' },
 ]
 
@@ -41,9 +43,9 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
       <aside className="hidden md:flex flex-col w-[var(--sidebar-width)] bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] flex-shrink-0">
         {/* Logo */}
         <div className="p-4 border-b border-[var(--color-border)]">
-          <h1 className="text-xl font-semibold text-[var(--color-accent)]">
+          <Link to="/home" className="text-xl font-semibold text-[var(--color-accent)] hover:opacity-80 transition-opacity">
             Alfred
-          </h1>
+          </Link>
         </div>
 
         {/* New Chat Button */}
@@ -65,6 +67,7 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
             <NavLink
               key={item.path}
               to={item.path}
+              end={item.path === '/'}
               className={({ isActive }) =>
                 `block px-4 py-2.5 text-sm transition-colors ${
                   isActive
@@ -96,9 +99,9 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
       <div className="flex-1 flex flex-col min-h-0">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between px-4 py-3 bg-[var(--color-bg-elevated)] border-b border-[var(--color-border)] flex-shrink-0">
-          <h1 className="text-lg font-semibold text-[var(--color-accent)]">
+          <Link to="/home" className="text-lg font-semibold text-[var(--color-accent)] hover:opacity-80 transition-opacity">
             Alfred
-          </h1>
+          </Link>
           <div className="flex items-center gap-4">
             {onNewChat && (
               <button
@@ -164,6 +167,19 @@ export function AppShell({ children, user, onNewChat }: AppShellProps) {
                         }
                       >
                         About Alfred
+                      </NavLink>
+                      <NavLink
+                        to="/capabilities"
+                        onClick={() => setMenuOpen(false)}
+                        className={({ isActive }) =>
+                          `block px-4 py-3 text-sm transition-colors ${
+                            isActive
+                              ? 'text-[var(--color-accent)] font-semibold bg-[var(--color-accent-muted)]'
+                              : 'text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)]'
+                          }`
+                        }
+                      >
+                        Capabilities
                       </NavLink>
                       <div className="border-t border-[var(--color-border)]">
                         <button

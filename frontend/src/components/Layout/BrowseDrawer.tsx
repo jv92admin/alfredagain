@@ -13,6 +13,7 @@ const browseItems = [
   { path: '/meals', label: 'Meal Plans', description: 'Weekly meal schedule' },
   { path: '/tasks', label: 'Tasks', description: 'Reminders & to-dos' },
   { path: '/ingredients', label: 'Ingredients DB', description: 'Ingredient database' },
+  { path: '/capabilities', label: 'Capabilities', description: 'What Alfred can do' },
 ]
 
 export function BrowseDrawer({ isOpen, onClose }: BrowseDrawerProps) {

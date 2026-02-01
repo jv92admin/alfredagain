@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, FormEvent, Dispatch, SetStateAction } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { MessageBubble, Message } from './MessageBubble'
 import { ChatInput } from './ChatInput'
 import {
@@ -24,6 +25,8 @@ interface ChatViewProps {
 }
 
 export function ChatView({ messages, setMessages, onOpenFocus, setActiveJobId, jobLoading, setJobLoading }: ChatViewProps) {
+  const location = useLocation()
+  const chatNavigate = useNavigate()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   // V10: Phase-based progress tracking (graph modes only)
@@ -45,6 +48,15 @@ export function ChatView({ messages, setMessages, onOpenFocus, setActiveJobId, j
 
   // Ref for programmatic send (exit buttons, cook entry)
   const handleSendRef = useRef<(() => void) | null>(null)
+
+  // Pre-fill input from navigation state (e.g. Home dashboard "Try it" buttons)
+  useEffect(() => {
+    const state = location.state as { prefillPrompt?: string } | null
+    if (state?.prefillPrompt) {
+      setInput(state.prefillPrompt)
+      chatNavigate('/', { replace: true, state: {} })
+    }
+  }, [location.state])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
