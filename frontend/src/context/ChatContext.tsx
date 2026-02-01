@@ -9,12 +9,21 @@ export interface UIChange {
   data?: Record<string, unknown>  // Fresh entity data for creates/updates
 }
 
+// Mode types — cook/brainstorm bypass the graph, plan/quick use full pipeline
+export type Mode = 'plan' | 'quick' | 'cook' | 'brainstorm'
+
 interface ChatContextValue {
   // UI changes tracking (cleared after sending with chat message)
   uiChanges: UIChange[]
   pushUIChange: (change: UIChange) => void
   clearUIChanges: () => void
   getAndClearUIChanges: () => UIChange[]
+
+  // Mode state
+  activeMode: Mode
+  setActiveMode: (mode: Mode) => void
+  cookRecipeName: string | null
+  setCookRecipeName: (name: string | null) => void
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null)
@@ -25,6 +34,8 @@ interface ChatProviderProps {
 
 export function ChatProvider({ children }: ChatProviderProps) {
   const [uiChanges, setUIChanges] = useState<UIChange[]>([])
+  const [activeMode, setActiveMode] = useState<Mode>('plan')
+  const [cookRecipeName, setCookRecipeName] = useState<string | null>(null)
 
   const pushUIChange = useCallback((change: UIChange) => {
     setUIChanges(prev => [...prev, change])
@@ -47,6 +58,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
       pushUIChange,
       clearUIChanges,
       getAndClearUIChanges,
+      activeMode,
+      setActiveMode,
+      cookRecipeName,
+      setCookRecipeName,
     }}>
       {children}
     </ChatContext.Provider>

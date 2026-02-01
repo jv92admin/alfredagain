@@ -129,6 +129,9 @@ NODE_VERBOSITY: dict[str, str] = {
     "think": "medium",  # Plans need some detail
     "act": "low",  # Tool calls should be terse
     "reply": "medium",  # User-facing needs balance
+    "cook": "terse",  # Concise cooking guidance
+    "brainstorm": "medium",  # Creative exploration
+    "handoff": "low",  # Session summary
 }
 
 # Node-specific temperature overrides
@@ -140,6 +143,9 @@ NODE_TEMPERATURE: dict[str, float] = {
     "think": 0.35,  # Planning needs flexibility to merge steps
     "reply": 0.6,  # User-facing can be warmer
     "summarize": 0.3,  # Summarization should be consistent
+    "cook": 0.4,  # Warm but not too creative
+    "brainstorm": 0.6,  # Creative warmth
+    "handoff": 0.3,  # Summary should be consistent
 }
 
 

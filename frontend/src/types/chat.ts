@@ -1,5 +1,12 @@
 // V10: Active context types for streaming entity display
 
+export interface HandoffResult {
+  summary: string
+  action: 'save' | 'update' | 'close'
+  actionDetail: string
+  recipeContent: string | null
+}
+
 export interface ActiveContextEntity {
   ref: string
   type: string

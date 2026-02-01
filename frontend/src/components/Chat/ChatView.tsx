@@ -6,33 +6,45 @@ import {
   createInitialPhaseState,
   updatePhaseState,
 } from './StreamingProgress'
-import { Mode } from '../../App'
+import { ThinkingIndicator } from './ThinkingIndicator'
+import { ModeBar } from './ModeBar'
+import { CookEntryModal } from './CookEntryModal'
+import { HandoffCard } from './HandoffCard'
 import { apiStream, apiRequest, pollJob } from '../../lib/api'
 import { useChatContext } from '../../context/ChatContext'
-import type { ActiveContext } from '../../types/chat'
+import type { ActiveContext, HandoffResult } from '../../types/chat'
 
 interface ChatViewProps {
   messages: Message[]
   setMessages: Dispatch<SetStateAction<Message[]>>
   onOpenFocus: (item: { type: string; id: string }) => void
-  mode: Mode
   setActiveJobId: Dispatch<SetStateAction<string | null>>
   jobLoading: boolean
   setJobLoading: Dispatch<SetStateAction<boolean>>
 }
 
-export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJobId, jobLoading, setJobLoading }: ChatViewProps) {
+export function ChatView({ messages, setMessages, onOpenFocus, setActiveJobId, jobLoading, setJobLoading }: ChatViewProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  // V10: Phase-based progress tracking
+  // V10: Phase-based progress tracking (graph modes only)
   const [phaseState, setPhaseState] = useState(createInitialPhaseState())
   // V10: Active context state - can be used in future for persistent context bar
   const [, setActiveContext] = useState<ActiveContext | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const { getAndClearUIChanges } = useChatContext()
+  const { getAndClearUIChanges, activeMode, setActiveMode, setCookRecipeName } = useChatContext()
   // Track initial message count to avoid scrolling on mount
   const initialMessageCount = useRef(messages.length)
+
+  // Cook/Brainstorm streaming state
+  const [streamingText, setStreamingText] = useState('')
+  const [showCookEntry, setShowCookEntry] = useState(false)
+  const [handoffResult, setHandoffResult] = useState<HandoffResult | null>(null)
+  const [cookInit, setCookInit] = useState<{ recipe_id: string; notes: string } | null>(null)
+  const [brainstormInit, setBrainstormInit] = useState(false)
+
+  // Ref for programmatic send (exit buttons, cook entry)
+  const handleSendRef = useRef<(() => void) | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -51,7 +63,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
     if (messages.length > initialMessageCount.current && isNearBottom()) {
       scrollToBottom()
     }
-  }, [messages, phaseState])
+  }, [messages, phaseState, streamingText])
 
   const handleSend = async (e?: FormEvent) => {
     e?.preventDefault()
@@ -62,30 +74,54 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
     setLoading(true)
     // Reset phase state for new request
     setPhaseState(createInitialPhaseState())
+    setStreamingText('')
 
-    // Add user message
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: userMessage,
+    // Add user message (skip for exit signals)
+    const isExitSignal = userMessage === '__cook_exit__' || userMessage === '__brainstorm_exit__'
+    if (!isExitSignal) {
+      const userMsg: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: userMessage,
+      }
+      setMessages((prev) => [...prev, userMsg])
     }
-    setMessages((prev) => [...prev, userMsg])
 
     let currentJobId: string | null = null
     let receivedDone = false
+    const isStreamingMode = activeMode === 'cook' || activeMode === 'brainstorm'
+
+    // Capture init values before clearing (they're React state, read synchronously)
+    const currentCookInit = cookInit
+    const currentBrainstormInit = brainstormInit
 
     try {
       // Get and clear UI changes to include with this message
       const uiChanges = getAndClearUIChanges()
 
+      // Build request body
+      const body: Record<string, unknown> = {
+        message: userMessage,
+        log_prompts: true,
+        mode: activeMode,
+        ui_changes: uiChanges.length > 0 ? uiChanges : undefined,
+      }
+
+      // Cook first turn
+      if (currentCookInit) {
+        body.cook_init = currentCookInit
+        setCookInit(null)
+      }
+
+      // Brainstorm first turn
+      if (currentBrainstormInit) {
+        body.brainstorm_init = true
+        setBrainstormInit(false)
+      }
+
       const res = await apiStream('/api/chat/stream', {
         method: 'POST',
-        body: JSON.stringify({
-          message: userMessage,
-          log_prompts: true,
-          mode: mode,
-          ui_changes: uiChanges.length > 0 ? uiChanges : undefined,
-        }),
+        body: JSON.stringify(body),
       })
 
       const reader = res.body?.getReader()
@@ -94,6 +130,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
       let currentEvent = 'progress'
       let latestActiveContext: ActiveContext | null = null
       let localPhaseState = createInitialPhaseState()
+      let localStreamingText = ''
 
       while (reader) {
         const { done, value } = await reader.read()
@@ -113,25 +150,61 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
               if (currentEvent === 'job_started') {
                 // Capture job_id early so we can poll on disconnect
                 currentJobId = data.job_id
+              } else if (currentEvent === 'chunk') {
+                // Cook/Brainstorm streaming tokens
+                localStreamingText += data.content
+                setStreamingText(localStreamingText)
+              } else if (currentEvent === 'handoff') {
+                // Mode exit handoff summary
+                setHandoffResult({
+                  summary: data.summary,
+                  action: data.action,
+                  actionDetail: data.action_detail,
+                  recipeContent: data.recipe_content || null,
+                })
               } else if (currentEvent === 'done') {
                 receivedDone = true
                 // Track job_id from done event (fallback if job_started missed)
                 if (data.job_id) {
                   currentJobId = data.job_id
                 }
-                if (data.active_context) {
-                  latestActiveContext = data.active_context
-                  setActiveContext(latestActiveContext)
+
+                if (isStreamingMode) {
+                  // Cook/Brainstorm: use accumulated streaming text
+                  const responseContent = localStreamingText || data.response
+                  if (responseContent) {
+                    const assistantMsg: Message = {
+                      id: Date.now().toString(),
+                      role: 'assistant',
+                      content: responseContent,
+                    }
+                    setMessages((prev) => [...prev, assistantMsg])
+                  }
+                  setStreamingText('')
+
+                  // If this was an exit, reset mode
+                  if (isExitSignal) {
+                    setActiveMode('plan')
+                    setCookRecipeName(null)
+                  }
+                } else {
+                  // Graph modes (plan/quick): existing behavior
+                  if (data.active_context) {
+                    latestActiveContext = data.active_context
+                    setActiveContext(latestActiveContext)
+                  }
+                  const assistantMsg: Message = {
+                    id: Date.now().toString(),
+                    role: 'assistant',
+                    content: data.response,
+                    activeContext: latestActiveContext || undefined,
+                    reasoning: localPhaseState.steps.length > 0 ? localPhaseState : undefined,
+                  }
+                  setMessages((prev) => [...prev, assistantMsg])
                 }
-                const assistantMsg: Message = {
-                  id: Date.now().toString(),
-                  role: 'assistant',
-                  content: data.response,
-                  activeContext: latestActiveContext || undefined,
-                  reasoning: localPhaseState.steps.length > 0 ? localPhaseState : undefined,
-                }
-                setMessages((prev) => [...prev, assistantMsg])
+
                 setPhaseState(createInitialPhaseState())
+
                 // Acknowledge the job
                 if (currentJobId) {
                   apiRequest(`/api/jobs/${currentJobId}/ack`, { method: 'POST' }).catch(() => {})
@@ -139,6 +212,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
               } else if (currentEvent === 'error') {
                 throw new Error(data.error)
               } else {
+                // Graph mode progress events
                 const eventData = {
                   type: data.type || currentEvent,
                   ...data,
@@ -174,11 +248,15 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
         }
         setMessages((prev) => [...prev, errorMsg])
         setPhaseState(createInitialPhaseState())
+        setStreamingText('')
       }
     } finally {
       setLoading(false)
     }
   }
+
+  // Keep ref updated for programmatic sends
+  handleSendRef.current = handleSend
 
   const recoverFromJob = async (jobId: string) => {
     try {
@@ -203,10 +281,19 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
     }
   }
 
-  // Determine if we should show progress (has any activity)
+  // Determine if we should show graph progress (has any activity)
   const hasProgress = phaseState.understand.context ||
     phaseState.think.complete ||
     phaseState.steps.length > 0
+
+  const isStreamingMode = activeMode === 'cook' || activeMode === 'brainstorm'
+
+  // Placeholder text varies by mode
+  const placeholder = activeMode === 'cook'
+    ? "What's cooking?"
+    : activeMode === 'brainstorm'
+      ? 'What are you thinking about?'
+      : 'Ask Alfred anything...'
 
   return (
     <div className="h-full flex flex-col">
@@ -221,25 +308,51 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
             />
           ))}
 
-          {/* V10: Inline streaming progress */}
-          {loading && hasProgress && (
+          {/* Cook/Brainstorm: streaming text display */}
+          {loading && isStreamingMode && (
+            <div className="py-2">
+              <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4">
+                {streamingText ? (
+                  <div className="text-[var(--color-text-primary)] whitespace-pre-wrap text-sm">
+                    {streamingText}
+                    <span className="animate-pulse ml-0.5">&#9612;</span>
+                  </div>
+                ) : (
+                  <ThinkingIndicator label={activeMode === 'cook' ? 'Cooking...' : 'Thinking...'} />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Graph modes: inline streaming progress */}
+          {loading && hasProgress && !isStreamingMode && (
             <div className="py-2">
               <StreamingProgress
                 phase={phaseState}
-                mode={mode === 'quick' ? 'quick' : 'plan'}
+                mode={activeMode === 'quick' ? 'quick' : 'plan'}
               />
             </div>
           )}
 
-          {/* Initial loading state before any events */}
-          {loading && !hasProgress && !jobLoading && (
+          {/* Graph modes: initial loading state before any events */}
+          {loading && !hasProgress && !isStreamingMode && !jobLoading && (
             <div className="py-2">
               <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[var(--color-accent)]">
-                  <span className="w-4 text-center">●</span>
-                  <span>{mode === 'quick' ? 'Working...' : 'Understanding...'}</span>
+                  <span className="w-4 text-center">&#9679;</span>
+                  <span>{activeMode === 'quick' ? 'Working...' : 'Understanding...'}</span>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Handoff card on mode exit */}
+          {handoffResult && (
+            <div className="py-2">
+              <HandoffCard
+                {...handoffResult}
+                onDismiss={() => setHandoffResult(null)}
+              />
             </div>
           )}
 
@@ -248,7 +361,7 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
             <div className="py-2">
               <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[var(--color-accent)]">
-                  <span className="w-4 text-center">●</span>
+                  <span className="w-4 text-center">&#9679;</span>
                   <span>Alfred is still working...</span>
                 </div>
               </div>
@@ -259,18 +372,44 @@ export function ChatView({ messages, setMessages, onOpenFocus, mode, setActiveJo
         </div>
       </div>
 
-      {/* Input - Fixed at bottom */}
+      {/* Input area - Fixed at bottom */}
       <div className="bg-[var(--color-bg-primary)] px-4 py-3 flex-shrink-0">
         <div className="max-w-2xl mx-auto">
+          <ModeBar
+            onCookClick={() => setShowCookEntry(true)}
+            onBrainstormClick={() => {
+              setActiveMode('brainstorm')
+              setBrainstormInit(true)
+            }}
+            onSendExit={(exitMsg) => {
+              setInput(exitMsg)
+              setTimeout(() => handleSendRef.current?.(), 0)
+            }}
+            disabled={loading || jobLoading}
+          />
           <ChatInput
             value={input}
             onChange={setInput}
             onSubmit={handleSend}
             disabled={loading || jobLoading}
-            placeholder="Ask Alfred anything..."
+            placeholder={placeholder}
           />
         </div>
       </div>
+
+      {/* Cook entry modal */}
+      <CookEntryModal
+        isOpen={showCookEntry}
+        onClose={() => setShowCookEntry(false)}
+        onStart={(recipeId, recipeName, notes) => {
+          setShowCookEntry(false)
+          setActiveMode('cook')
+          setCookInit({ recipe_id: recipeId, notes })
+          setCookRecipeName(recipeName)
+          setInput(notes || 'Ready to cook!')
+          setTimeout(() => handleSendRef.current?.(), 0)
+        }}
+      />
     </div>
   )
 }

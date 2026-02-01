@@ -20,9 +20,6 @@ import { useAuth } from './hooks/useAuth'
 import { apiRequest, pollJob } from './lib/api'
 import { SessionStatusResponse } from './types/session'
 
-// V3 Mode types
-export type Mode = 'quick' | 'plan'
-
 const INITIAL_MESSAGE: Message = {
   id: '1',
   role: 'assistant',
@@ -34,7 +31,6 @@ function App() {
   const navigate = useNavigate()
   const [focusItem, setFocusItem] = useState<{ type: string; id: string } | null>(null)
   const [chatMessages, setChatMessages] = useState<Message[]>([INITIAL_MESSAGE])
-  const mode: Mode = 'plan' // Default to plan mode (toggle removed)
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
   const onboardingCheckedForUser = useRef<string | null>(null)
   const [sessionStatus, setSessionStatus] = useState<SessionStatusResponse | null>(null)
@@ -178,7 +174,7 @@ function App() {
     <>
       <AppShell user={user} onNewChat={handleNewChat}>
         <Routes>
-          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} mode={mode} setActiveJobId={setActiveJobId} jobLoading={jobLoading} setJobLoading={setJobLoading} />} />
+          <Route path="/" element={<ChatView messages={chatMessages} setMessages={setChatMessages} onOpenFocus={setFocusItem} setActiveJobId={setActiveJobId} jobLoading={jobLoading} setJobLoading={setJobLoading} />} />
           <Route path="/recipes" element={<RecipesView onOpenFocus={setFocusItem} />} />
           <Route path="/meals" element={<MealPlanView onOpenFocus={setFocusItem} />} />
           <Route path="/inventory" element={<InventoryView />} />

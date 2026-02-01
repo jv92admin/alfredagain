@@ -39,11 +39,16 @@ async def run_workflow_background(
     ui_changes: list[dict] | None,
     conversations_cache: dict[str, dict[str, Any]],
     log_prompts: bool = False,
+    cook_init: dict | None = None,
+    brainstorm_init: bool = False,
 ) -> None:
     """Run Alfred workflow independent of request lifecycle.
 
     Yields events into the provided queue (if any SSE listener is connected).
     Stores final result in jobs table regardless of client connection state.
+
+    For cook/brainstorm modes, bypasses the graph entirely and uses
+    standalone mode runners.
     """
     from alfred.llm.prompt_logger import enable_prompt_logging, set_user_id
 
@@ -55,13 +60,36 @@ async def run_workflow_background(
         enable_prompt_logging(log_prompts)
         set_user_id(user_id)
 
-        async for update in run_alfred_streaming(
-            user_message=message,
-            user_id=user_id,
-            conversation=conversation,
-            mode=mode,
-            ui_changes=ui_changes,
-        ):
+        # Mode routing: cook/brainstorm bypass the graph
+        if mode == "cook":
+            from alfred.modes.cook import run_cook_session
+
+            generator = run_cook_session(
+                user_message=message,
+                user_id=user_id,
+                conversation=conversation,
+                cook_init=cook_init,
+                access_token=access_token,
+            )
+        elif mode == "brainstorm":
+            from alfred.modes.brainstorm import run_brainstorm
+
+            generator = run_brainstorm(
+                user_message=message,
+                user_id=user_id,
+                conversation=conversation,
+                brainstorm_init=brainstorm_init,
+            )
+        else:
+            generator = run_alfred_streaming(
+                user_message=message,
+                user_id=user_id,
+                conversation=conversation,
+                mode=mode,
+                ui_changes=ui_changes,
+            )
+
+        async for update in generator:
             # Relay event to SSE listener (if still connected)
             if queue:
                 try:

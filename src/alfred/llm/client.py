@@ -4,15 +4,19 @@ Alfred V2 - LLM Client.
 Wraps OpenAI with Instructor for guaranteed structured outputs.
 All LLM calls go through here for consistency and observability.
 
+Also provides raw chat functions (call_llm_chat, call_llm_chat_stream)
+for Cook/Brainstorm modes that bypass the graph and don't need structured output.
+
 Model support:
 - GPT-4.1-mini: Fast, non-reasoning (current default)
 - GPT-5 series: Reasoning models with reasoning_effort/verbosity (future)
 """
 
+from collections.abc import AsyncGenerator
 from typing import TypeVar
 
 import instructor
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
 from alfred.config import settings
@@ -23,8 +27,9 @@ from alfred.observability.langsmith import get_session_tracker
 # Type variable for generic structured output
 T = TypeVar("T", bound=BaseModel)
 
-# Singleton client instance
+# Singleton client instances
 _client: instructor.Instructor | None = None
+_raw_async_client: AsyncOpenAI | None = None
 
 # Track current node for logging and config
 _current_node: str = "unknown"
@@ -49,6 +54,21 @@ def get_client() -> instructor.Instructor:
         _client = instructor.from_openai(openai_client)
 
     return _client
+
+
+def get_raw_async_client() -> AsyncOpenAI:
+    """
+    Get a raw async OpenAI client (no Instructor wrapping).
+
+    Used by Cook/Brainstorm modes for unstructured chat completions
+    and streaming. Singleton pattern.
+    """
+    global _raw_async_client
+
+    if _raw_async_client is None:
+        _raw_async_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+    return _raw_async_client
 
 
 async def call_llm(
@@ -160,6 +180,150 @@ async def call_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response_model=response_model.__name__,
+            error=str(e),
+            config=config,
+        )
+        raise
+
+
+def _build_chat_kwargs(
+    messages: list[dict[str, str]],
+    config: dict,
+    model: str,
+    *,
+    stream: bool = False,
+) -> dict:
+    """Build API kwargs for raw chat completions (shared by chat/chat_stream)."""
+    api_kwargs: dict = {
+        "model": model,
+        "messages": messages,
+        "stream": stream,
+        "store": False,
+    }
+
+    # Handle model-specific parameters (same logic as call_llm)
+    if model.startswith("o1"):
+        api_kwargs["temperature"] = 1.0
+        if "reasoning_effort" in config:
+            api_kwargs["reasoning_effort"] = config["reasoning_effort"]
+    elif not model.startswith("gpt-5"):
+        api_kwargs["temperature"] = config.get("temperature", 0.5)
+
+    return api_kwargs
+
+
+async def call_llm_chat(
+    *,
+    messages: list[dict[str, str]],
+    complexity: str = "low",
+    node_name: str = "cook",
+) -> str:
+    """
+    Multi-turn chat completion without structured output.
+
+    Used by Cook/Brainstorm modes for conversational responses
+    and by the handoff summarizer.
+
+    Args:
+        messages: Full messages array [{"role": "system", ...}, ...]
+        complexity: Model selection ("low" = gpt-4.1-mini)
+        node_name: Node identifier for config/logging
+
+    Returns:
+        Raw text response.
+    """
+    client = get_raw_async_client()
+    config = get_node_config(node_name, complexity)
+    model = config.pop("model", "gpt-4.1-mini")
+
+    api_kwargs = _build_chat_kwargs(messages, config, model)
+    system_prompt = next((m["content"] for m in messages if m["role"] == "system"), "")
+    user_prompt = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+
+    try:
+        response = await client.chat.completions.create(**api_kwargs)
+        text = response.choices[0].message.content or ""
+
+        # Log for observability
+        log_prompt(
+            node=node_name,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model="chat",
+            response=text,
+            config=config,
+        )
+
+        return text
+
+    except Exception as e:
+        log_prompt(
+            node=node_name,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model="chat",
+            error=str(e),
+            config=config,
+        )
+        raise
+
+
+async def call_llm_chat_stream(
+    *,
+    messages: list[dict[str, str]],
+    complexity: str = "low",
+    node_name: str = "cook",
+) -> AsyncGenerator[str, None]:
+    """
+    Streaming multi-turn chat completion. Yields token chunks.
+
+    Used by Cook/Brainstorm modes for real-time streaming responses.
+
+    Args:
+        messages: Full messages array [{"role": "system", ...}, ...]
+        complexity: Model selection ("low" = gpt-4.1-mini)
+        node_name: Node identifier for config/logging
+
+    Yields:
+        Token strings as they arrive from the model.
+    """
+    client = get_raw_async_client()
+    config = get_node_config(node_name, complexity)
+    model = config.pop("model", "gpt-4.1-mini")
+
+    api_kwargs = _build_chat_kwargs(messages, config, model, stream=True)
+    system_prompt = next((m["content"] for m in messages if m["role"] == "system"), "")
+    user_prompt = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+
+    full_response = ""
+    try:
+        stream = await client.chat.completions.create(**api_kwargs)
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                full_response += token
+                yield token
+
+        # Log after stream completes
+        log_prompt(
+            node=node_name,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model="chat_stream",
+            response=full_response,
+            config=config,
+        )
+
+    except Exception as e:
+        log_prompt(
+            node=node_name,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model="chat_stream",
             error=str(e),
             config=config,
         )

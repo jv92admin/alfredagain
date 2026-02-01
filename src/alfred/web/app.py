@@ -121,11 +121,18 @@ class UIChange(BaseModel):
     data: dict | None = None  # Fresh entity data for creates/updates
 
 
+class CookSessionInit(BaseModel):
+    recipe_id: str | None = None
+    notes: str = ""
+
+
 class ChatRequest(BaseModel):
     message: str
     log_prompts: bool = False
-    mode: str = "plan"  # V3: "quick" | "plan"
+    mode: str = "plan"  # "quick" | "plan" | "cook" | "brainstorm"
     ui_changes: list[UIChange] | None = None  # Phase 3: UI CRUD tracking
+    cook_init: CookSessionInit | None = None  # Cook mode: recipe to cook
+    brainstorm_init: bool = False  # Brainstorm mode: first turn flag
 
 
 # =============================================================================
@@ -415,6 +422,8 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
         ui_changes=ui_changes_data,
         conversations_cache=conversations,
         log_prompts=req.log_prompts,
+        cook_init=req.cook_init.model_dump() if req.cook_init else None,
+        brainstorm_init=req.brainstorm_init,
     ))
 
     async def event_generator():
@@ -450,6 +459,20 @@ async def chat_stream(req: ChatRequest, user: AuthenticatedUser = Depends(get_cu
                     yield {
                         "event": "context_updated",
                         "data": json.dumps({"status": "ready"}),
+                    }
+                elif update["type"] == "chunk":
+                    yield {
+                        "event": "chunk",
+                        "data": json.dumps({"content": update["content"]}),
+                    }
+                elif update["type"] == "handoff":
+                    yield {
+                        "event": "handoff",
+                        "data": json.dumps({
+                            "summary": update["summary"],
+                            "action": update["action"],
+                            "action_detail": update["action_detail"],
+                        }),
                     }
                 elif update["type"] == "error":
                     yield {

@@ -3,7 +3,8 @@ Alfred V3 - Mode System.
 
 Modes control complexity adaptation:
 - QUICK: 1-2 steps, minimal planning, terse responses
-- COOK: 2-4 steps, recipe-focused, light confirmation
+- COOK: Bypasses graph — 1 LLM call/turn, frozen recipe context
+- BRAINSTORM: Bypasses graph — 1 LLM call/turn, creative exploration
 - PLAN: 4-8 steps, full planning, explicit proposals
 - CREATE: 2-4 steps, generation-focused, rich output
 
@@ -19,11 +20,12 @@ from enum import Enum
 
 class Mode(Enum):
     """User interaction modes."""
-    
-    QUICK = "quick"    # 1-2 steps, minimal planning
-    COOK = "cook"      # Quick + recipe focus
-    PLAN = "plan"      # Full pipeline
-    CREATE = "create"  # Generation-focused
+
+    QUICK = "quick"        # 1-2 steps, minimal planning
+    COOK = "cook"          # Graph bypass — guided cooking session
+    BRAINSTORM = "brainstorm"  # Graph bypass — creative exploration
+    PLAN = "plan"          # Full pipeline
+    CREATE = "create"      # Generation-focused
 
 
 # Mode behavior configuration
@@ -37,11 +39,21 @@ MODE_CONFIG = {
         "profile_detail": "minimal",
     },
     Mode.COOK: {
-        "max_steps": 4,
-        "skip_think": False,
+        "max_steps": 0,
+        "skip_think": True,
+        "bypass_graph": True,
         "proposal_required": False,
-        "verbosity": "focused",
-        "examples_in_prompt": True,
+        "verbosity": "terse",
+        "examples_in_prompt": False,
+        "profile_detail": "minimal",
+    },
+    Mode.BRAINSTORM: {
+        "max_steps": 0,
+        "skip_think": True,
+        "bypass_graph": True,
+        "proposal_required": False,
+        "verbosity": "medium",
+        "examples_in_prompt": False,
         "profile_detail": "compact",
     },
     Mode.PLAN: {
