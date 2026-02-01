@@ -286,6 +286,7 @@ async def summarize_node(state: AlfredState) -> dict:
         step_results=step_results,
         step_metadata=state.get("step_metadata", {}),
         understand_output=state.get("understand_output"),
+        pending_action=state.get("pending_action"),
     )
     
     # Store in turn_summaries (keep last 2)
@@ -928,6 +929,7 @@ def _build_turn_execution_summary(
     step_results: dict[int, Any],
     step_metadata: dict[int, dict],
     understand_output: Any,
+    pending_action: Any = None,
 ) -> TurnExecutionSummary:
     """
     Build TurnExecutionSummary from turn data.
@@ -950,8 +952,8 @@ def _build_turn_execution_summary(
         step_type = step_meta.get("step_type") or (steps[idx].step_type if idx < len(steps) else "read")
         subdomain = step_meta.get("subdomain") or (steps[idx].subdomain if idx < len(steps) else "")
         
-        # Build outcome from result
-        outcome = _summarize_step_result(result)
+        # Build outcome from result (prefer LLM's semantic summary if available)
+        outcome = step_meta.get("result_summary") or _summarize_step_result(result)
         
         # Extract entities involved
         entities = _extract_entity_ids(result)
@@ -984,7 +986,20 @@ def _build_turn_execution_summary(
     
     # Extract user expression (simple heuristic)
     summary.user_expressed = _extract_user_expression(user_message)
-    
+
+    # Capture blocked state if turn was blocked
+    if pending_action and getattr(pending_action, "action", None) == "blocked":
+        details = getattr(pending_action, "details", "")
+        ctx = getattr(pending_action, "attempted_context", None)
+        if ctx and isinstance(ctx, dict):
+            items = ctx.get("items", [])
+            items_str = ", ".join(items[:10]) if items else ""
+            summary.blocked_reason = (
+                f"{details} | {ctx.get('tool', '')} on {ctx.get('table', '')}: {items_str}"
+            )
+        else:
+            summary.blocked_reason = details
+
     return summary
 
 

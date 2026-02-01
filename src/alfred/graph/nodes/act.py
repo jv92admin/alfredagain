@@ -1559,12 +1559,30 @@ async def act_node(state: AlfredState) -> dict:
             return state_update
 
         except Exception as e:
-            # Tool call failed
+            # Tool call failed — build structured context about what was attempted
+            attempted_items = []
+            table_name = fixed_params.get("table", "unknown")
+            batch_data = fixed_params.get("data", [])
+            if isinstance(batch_data, list):
+                for item in batch_data:
+                    attempted_items.append(
+                        item.get("name") or item.get("title") or item.get("label") or "unnamed"
+                    )
+            elif isinstance(batch_data, dict):
+                attempted_items.append(
+                    batch_data.get("name") or batch_data.get("title") or "unnamed"
+                )
+
             return {
                 "pending_action": BlockedAction(
                     reason_code="TOOL_FAILURE",
                     details=f"CRUD operation failed: {str(e)}",
                     suggested_next="ask_user",
+                    attempted_context={
+                        "tool": decision.tool,
+                        "table": table_name,
+                        "items": attempted_items[:10],
+                    },
                 ),
             }
 
@@ -1676,6 +1694,7 @@ async def act_node(state: AlfredState) -> dict:
             "subdomain": current_step.subdomain,
             "description": current_step.description,
             "artifacts": artifacts,
+            "result_summary": decision.result_summary,
         }
 
         # Extract note for next step (ALL step types - especially analyze!)

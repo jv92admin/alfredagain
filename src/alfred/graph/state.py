@@ -453,6 +453,7 @@ class BlockedAction(BaseModel):
     ]
     details: str  # Human-readable explanation
     suggested_next: Literal["ask_user", "replan", "fail"]
+    attempted_context: dict | None = None  # Structured: {tool, table, items: [...]}
 
 
 class FailAction(BaseModel):
@@ -558,6 +559,9 @@ class TurnExecutionSummary(BaseModel):
     # Conversation flow metadata (for Reply continuity)
     conversation_phase: str = ""  # "exploring" | "narrowing" | "confirming" | "executing"
     user_expressed: str = ""  # "wants variety" | "prefers quick meals"
+
+    # Blocked state tracking (set when turn was blocked before completion)
+    blocked_reason: str | None = None
 
 
 class ConversationContext(TypedDict, total=False):

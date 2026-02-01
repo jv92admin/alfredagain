@@ -994,9 +994,8 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
                         }
                         for ing in ing_result.data
                     ]
-                    client.table("inventory").upsert(
+                    client.table("inventory").insert(
                         inventory_records,
-                        on_conflict="user_id,ingredient_id",
                     ).execute()
                     logger.info(
                         f"Seeded {len(inventory_records)} inventory items for user {user.id}"

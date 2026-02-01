@@ -165,13 +165,16 @@ class TurnExecutionSummary:
     # Conversation flow metadata
     conversation_phase: str      # "exploring" | "narrowing" | "confirming"
     user_expressed: str          # "wants variety" | "prefers quick meals"
+
+    # Blocked state (set when turn was blocked before completion)
+    blocked_reason: str | None   # "CRUD failed: ... | db_create on inventory: sugar, onions"
     
 class StepSummary:
     step_num: int
     type: str                    # "read" | "analyze" | "generate" | "write"
     subdomain: str
     description: str             # From plan
-    outcome: str                 # "Found 5 recipes" | "Generated 3 options"
+    outcome: str                 # LLM's result_summary if available, else generic count
     entities_involved: list[str] # Refs touched
     note: str | None             # Act's note_for_next_step
     

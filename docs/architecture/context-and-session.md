@@ -171,7 +171,7 @@ build_reply_context(state) → dict       # Labels for presentation
 | **Understand** | Full (all tiers) | Full + pending | Own history | Full |
 | **Think** | Refs + labels | Recent + summary | Last 2 turns | Refs + labels |
 | **Act** | Full data | Recent only | Current turn | Full JSON |
-| **Reply** | Labels only | Recent | Outcomes | Full JSON |
+| **Reply** | Labels only | Recent | Outcomes + prior turn | Full JSON |
 
 ---
 
@@ -227,6 +227,45 @@ Entities in Recent Context are already in memory:
 If an entity appears in Dashboard but NOT in context:
 - Think cannot use a ref for it (`recipe_1` doesn't exist yet)
 - Think must search by NAME, not by ref
+
+---
+
+## Blocked State Handling
+
+When Act fails (CRUD exception, constraint violation, etc.), the failure context propagates through the system:
+
+### BlockedAction (ephemeral, single turn)
+
+```python
+BlockedAction(
+    reason_code="TOOL_FAILURE",
+    details="CRUD operation failed: ...",
+    suggested_next="ask_user",
+    attempted_context={                # Structured: what was tried
+        "tool": "db_create",
+        "table": "inventory",
+        "items": ["white sugar", "onions", ...],
+    },
+)
+```
+
+### Reply Blocked Context
+
+When Act is blocked, Reply receives:
+
+1. **Prior turn summary** from `turn_summaries[-1]` — step descriptions + semantic outcomes (e.g., "Found 7 items missing from inventory")
+2. **Attempted context** from `BlockedAction.attempted_context` — what was tried this turn
+3. **Error details** — the specific failure reason
+
+This prevents Reply from misinterpreting DB errors (e.g., inferring "items already exist" from a constraint violation when prior analysis proved they were missing).
+
+### TurnExecutionSummary Persistence
+
+`blocked_reason` field persists across turns, so next turn's Think/Understand know the prior attempt failed:
+
+```
+Turn 3 summary: blocked - CRUD failed: duplicate key... | db_create on inventory: white sugar, onions
+```
 
 ---
 

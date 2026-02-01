@@ -647,15 +647,47 @@ async def reply_node(state: AlfredState) -> dict:
     
     # Handle blocked
     if isinstance(pending_action, BlockedAction):
-        # Generate a helpful response about being blocked
+        # Build prior-turn context from turn_summaries
+        prior_turn_section = ""
+        turn_summaries = conversation.get("turn_summaries", [])
+        if turn_summaries:
+            last_summary = turn_summaries[-1]
+            prior_steps = last_summary.get("steps", [])
+            if prior_steps:
+                step_lines = [
+                    f"- {s.get('description', 'Unknown step')}: {s.get('outcome', 'no outcome')}"
+                    for s in prior_steps
+                ]
+                prior_turn_section = (
+                    f"## Prior Turn Analysis (Turn {last_summary.get('turn_num', '?')})\n"
+                    f"Goal: {last_summary.get('think_goal', 'unknown')}\n"
+                    f"Steps completed:\n" + "\n".join(step_lines)
+                )
+
+        # Build attempted action context from structured data
+        attempted_section = ""
+        ctx = getattr(pending_action, "attempted_context", None)
+        if ctx and isinstance(ctx, dict):
+            items = ctx.get("items", [])
+            items_str = ", ".join(items) if items else "unknown"
+            attempted_section = (
+                f"## What Was Attempted This Turn\n"
+                f"Action: {ctx.get('tool', 'unknown')} on {ctx.get('table', 'unknown')}\n"
+                f"Items: {items_str}"
+            )
+
         user_prompt = f"""## Original Request
 {state.get("user_message", "Unknown request")}
 
 ## Goal
 {think_output.goal if think_output else "the user's request"}
 
-## Status: ⚠️ Blocked
-Reason: {pending_action.details}
+{prior_turn_section}
+
+{attempted_section}
+
+## Status: ⚠️ Blocked (Technical Error)
+Error: {pending_action.details}
 
 {_format_execution_summary(step_results, think_output, state.get("step_metadata", {}), registry_dict=state.get("id_registry"))}
 
@@ -664,7 +696,7 @@ Reason: {pending_action.details}
 
 ---
 
-Generate a helpful response explaining what was accomplished and what we could try next."""
+Report what was attempted and the technical error. Reference the prior turn's findings if relevant. Suggest retrying or an alternative approach."""
 
         result = await call_llm(
             response_model=ReplyOutput,

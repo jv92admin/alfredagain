@@ -431,6 +431,45 @@ def _sanitize_uuid_fields(record: dict) -> dict:
     return sanitized
 
 
+def _deduplicate_batch(records: list[dict], table: str) -> list[dict]:
+    """
+    Remove duplicate records from a batch insert.
+
+    For ingredient-linked tables, dedup by ingredient_id (or name fallback).
+    Keeps last occurrence (later entry may have updated quantities).
+    """
+    if table not in INGREDIENT_LINKED_TABLES or len(records) <= 1:
+        return records
+
+    seen: dict[str, int] = {}  # dedup_key -> index of last occurrence
+    for idx, rec in enumerate(records):
+        key = rec.get("ingredient_id") or (rec.get("name", "").lower().strip() or None)
+        if not key:
+            continue  # No dedup key available, keep unconditionally
+        if key in seen:
+            prev_name = records[seen[key]].get("name", key)
+            logger.warning(
+                "Batch dedup: duplicate '%s' at positions %d and %d in %s, keeping last",
+                prev_name, seen[key], idx, table,
+            )
+        seen[key] = idx
+
+    keep_indices = set(seen.values())
+    deduped = []
+    for idx, rec in enumerate(records):
+        key = rec.get("ingredient_id") or (rec.get("name", "").lower().strip() or None)
+        if not key or idx in keep_indices:
+            deduped.append(rec)
+
+    if len(deduped) < len(records):
+        logger.warning(
+            "Batch dedup: removed %d duplicates from %d records for %s",
+            len(records) - len(deduped), len(records), table,
+        )
+
+    return deduped
+
+
 async def db_create(params: DbCreateParams, user_id: str) -> dict | list[dict]:
     """
     Insert one or more rows into a table.
@@ -465,6 +504,10 @@ async def db_create(params: DbCreateParams, user_id: str) -> dict | list[dict]:
     # Auto-add user_id for user-owned tables
     if params.table in USER_OWNED_TABLES:
         records = [{**rec, "user_id": user_id} for rec in records]
+
+    # Deduplicate batch records (prevents same-item collisions from LLM output)
+    if is_batch:
+        records = _deduplicate_batch(records, params.table)
 
     result = client.table(params.table).insert(records).execute()
     
