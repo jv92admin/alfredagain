@@ -1236,8 +1236,9 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
             # Special formatting for preferences (key-value pairs)
             if table_type == "preferences":
                 lines.append(f"{prefix}Your Preferences:")
-                for field in ["dietary_restrictions", "allergies", "favorite_cuisines", 
-                              "cooking_skill_level", "available_equipment", "household_size",
+                for field in ["dietary_restrictions", "allergies", "favorite_cuisines",
+                              "cooking_skill_level", "available_equipment",
+                              "household_adults", "household_kids", "household_babies",
                               "planning_rhythm", "current_vibes", "nutrition_goals", "disliked_ingredients"]:
                     value = clean.get(field)
                     if value is not None and value != [] and value != "":

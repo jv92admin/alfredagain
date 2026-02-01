@@ -795,7 +795,9 @@ You do NOT need to delete tasks before deleting their linked entities.
 | id | uuid | No |
 | dietary_restrictions | text[] | Yes ← HARD CONSTRAINTS: vegetarian, vegan, halal, kosher, etc. |
 | allergies | text[] | Yes ← HARD CONSTRAINTS: peanuts, shellfish, dairy, etc. |
-| household_size | integer | Yes (default 1) ← For portioning |
+| household_adults | integer | Yes (default 1) ← Number of adults for portioning |
+| household_kids | integer | Yes (default 0) ← Number of kids (~0.5 portions each) |
+| household_babies | integer | Yes (default 0) ← Number of babies (0 portions) |
 | cooking_skill_level | text | Yes ← beginner, intermediate, advanced |
 | available_equipment | text[] | Yes ← instant-pot, air-fryer, grill, sous-vide, etc. |
 | favorite_cuisines | text[] | Yes ← italian, thai, mexican, comfort-food, etc. |

@@ -64,7 +64,8 @@ class OnboardingState:
     
     # Phase 1: Constraints
     constraints: dict = field(default_factory=dict)
-    # Expected keys: household_size, allergies, dietary_restrictions, 
+    # Expected keys: household_adults, household_kids, household_babies,
+    #                allergies, dietary_restrictions,
     #                cooking_skill_level, available_equipment
     
     # Phase 2: Discovery & Seeding

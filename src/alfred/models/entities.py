@@ -162,7 +162,9 @@ class Preferences(BaseModel):
     # Profile (hard constraints)
     dietary_restrictions: list[str] = Field(default_factory=list)  # "vegetarian", "gluten-free"
     allergies: list[str] = Field(default_factory=list)  # "peanuts", "shellfish"
-    household_size: int = 1
+    household_adults: int = 1
+    household_kids: int = 0
+    household_babies: int = 0
     cooking_skill_level: str = "intermediate"  # "beginner", "intermediate", "advanced"
     
     # Overall preferences (soft guidance)

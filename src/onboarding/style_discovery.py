@@ -13,13 +13,24 @@ The pattern for each domain:
 This creates durable personalization that shapes all future Alfred outputs.
 """
 
-from pydantic import BaseModel, Field
-from typing import Literal
 import logging
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from alfred.llm.client import call_llm
+from onboarding.forms import format_household_description
 
 logger = logging.getLogger(__name__)
+
+
+def _household_desc(preferences: dict) -> str:
+    """Build household description from preferences dict."""
+    return format_household_description(
+        preferences.get("household_adults", preferences.get("household_size", 2)),
+        preferences.get("household_kids", 0),
+        preferences.get("household_babies", 0),
+    )
 
 
 # =============================================================================
@@ -92,7 +103,7 @@ RECIPE_STYLE_PROMPT = """You are helping a new Alfred user discover their prefer
 
 **User Context:**
 - Skill level: {skill_level}
-- Household: {household_size} people
+- Household: {household_description}
 - Pantry includes: {pantry_items}
 - Likes cuisines: {cuisines}
 - Dietary: {dietary}
@@ -125,7 +136,7 @@ Keep each recipe sample under 200 words."""
 MEAL_PLAN_STYLE_PROMPT = """You are helping a new Alfred user discover their preferred meal planning style.
 
 **User Context:**
-- Household: {household_size} people
+- Household: {household_description}
 - Skill level: {skill_level}
 - Cuisines: {cuisines}
 - Pantry has: {pantry_items}
@@ -157,7 +168,7 @@ TASK_STYLE_PROMPT = """You are helping a new Alfred user discover their preferre
 
 **User Context:**
 - Skill level: {skill_level}
-- Household: {household_size} people
+- Household: {household_description}
 
 Generate 3 example TASK REMINDERS for common cooking prep, each in a different style:
 
@@ -220,7 +231,7 @@ async def generate_recipe_style_samples(
     
     prompt = RECIPE_STYLE_PROMPT.format(
         skill_level=preferences.get("cooking_skill_level", "intermediate"),
-        household_size=preferences.get("household_size", 2),
+        household_description=_household_desc(preferences),
         pantry_items=", ".join(pantry_names) if pantry_names else "standard pantry staples",
         cuisines=", ".join(cuisines) if cuisines else "various",
         dietary=", ".join(preferences.get("dietary_restrictions", [])) or "none",
@@ -248,7 +259,7 @@ async def generate_meal_plan_style_samples(
     pantry_names = [item.get("name", "") for item in pantry[:8] if item.get("name")]
     
     prompt = MEAL_PLAN_STYLE_PROMPT.format(
-        household_size=preferences.get("household_size", 2),
+        household_description=_household_desc(preferences),
         skill_level=preferences.get("cooking_skill_level", "intermediate"),
         cuisines=", ".join(cuisines) if cuisines else "various",
         pantry_items=", ".join(pantry_names) if pantry_names else "standard pantry",
@@ -273,7 +284,7 @@ async def generate_task_style_samples(
     
     prompt = TASK_STYLE_PROMPT.format(
         skill_level=preferences.get("cooking_skill_level", "intermediate"),
-        household_size=preferences.get("household_size", 2),
+        household_description=_household_desc(preferences),
     )
     
     return await call_llm(
@@ -375,7 +386,7 @@ HABITS_PROMPT = """You are helping onboard a new user to Alfred, a cooking assis
 
 Based on their response, extract cooking, shopping, and inventory preferences.
 
-**User's household:** {household_size} people
+**User's household:** {household_description}
 **Dietary restrictions:** {dietary_restrictions}
 **Skill level:** {skill_level}
 
@@ -404,7 +415,7 @@ async def extract_habits(
     This single question covers cooking, shopping, and inventory habits.
     """
     prompt = HABITS_PROMPT.format(
-        household_size=constraints.get("household_size", 2),
+        household_description=_household_desc(constraints),
         dietary_restrictions=", ".join(constraints.get("dietary_restrictions", [])) or "None",
         skill_level=constraints.get("cooking_skill_level", "intermediate"),
         user_response=user_response,

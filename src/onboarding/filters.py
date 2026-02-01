@@ -54,7 +54,16 @@ def get_constraints_summary(constraints: dict) -> str:
     skill = constraints.get("cooking_skill_level", "intermediate")
     parts.append(f"{skill} cook")
     
-    household = constraints.get("household_size", 2)
-    parts.append(f"household of {household}")
+    adults = constraints.get("household_adults", 2)
+    kids = constraints.get("household_kids", 0)
+    babies = constraints.get("household_babies", 0)
+    hh_parts = []
+    if adults:
+        hh_parts.append(f"{adults} adult{'s' if adults != 1 else ''}")
+    if kids:
+        hh_parts.append(f"{kids} kid{'s' if kids != 1 else ''}")
+    if babies:
+        hh_parts.append(f"{babies} {'babies' if babies != 1 else 'baby'}")
+    parts.append(f"household of {', '.join(hh_parts) if hh_parts else '1 adult'}")
     
     return ", ".join(parts)

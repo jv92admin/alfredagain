@@ -77,7 +77,9 @@ async def get_current_user(authorization: str = Header(None)) -> AuthenticatedUs
 
 class ConstraintsRequest(BaseModel):
     """Phase 1: Hard constraints form data."""
-    household_size: int = Field(ge=1, le=12, default=2)
+    household_adults: int = Field(ge=0, le=12, default=2)
+    household_kids: int = Field(ge=0, le=12, default=0)
+    household_babies: int = Field(ge=0, le=12, default=0)
     allergies: list[str] = Field(default_factory=list)
     dietary_restrictions: list[str] = Field(default_factory=list)
     cooking_skill_level: str = Field(default="intermediate")
@@ -349,7 +351,9 @@ async def submit_constraints(request: ConstraintsRequest, user: AuthenticatedUse
     # Validate using ConstraintsForm
     try:
         form = ConstraintsForm(
-            household_size=request.household_size,
+            household_adults=request.household_adults,
+            household_kids=request.household_kids,
+            household_babies=request.household_babies,
             allergies=request.allergies,
             dietary_restrictions=request.dietary_restrictions,
             cooking_skill_level=request.cooking_skill_level,
@@ -365,7 +369,9 @@ async def submit_constraints(request: ConstraintsRequest, user: AuthenticatedUse
     
     # Store validated constraints
     state.constraints = {
-        "household_size": form.household_size,
+        "household_adults": form.household_adults,
+        "household_kids": form.household_kids,
+        "household_babies": form.household_babies,
         "allergies": form.allergies,
         "dietary_restrictions": form.dietary_restrictions,
         "cooking_skill_level": form.cooking_skill_level,
@@ -538,7 +544,9 @@ async def get_interview_page(
 
         user_context = {
             "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),
-            "household_size": state.constraints.get("household_size", 2),
+            "household_adults": state.constraints.get("household_adults", 2),
+            "household_kids": state.constraints.get("household_kids", 0),
+            "household_babies": state.constraints.get("household_babies", 0),
             "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
             "available_equipment": state.constraints.get("available_equipment", []),
             "cuisines": state.cuisine_selections,
@@ -625,13 +633,15 @@ async def synthesize_interview(
     # Build user context
     user_context = {
         "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),
-        "household_size": state.constraints.get("household_size", 2),
+        "household_adults": state.constraints.get("household_adults", 2),
+        "household_kids": state.constraints.get("household_kids", 0),
+        "household_babies": state.constraints.get("household_babies", 0),
         "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
         "available_equipment": state.constraints.get("available_equipment", []),
         "cuisines": state.cuisine_selections,
         "liked_ingredients": [item.get("name", "") for item in state.pantry_items[:10]],
     }
-    
+
     all_answers = state.payload_draft.get("interview_answers", [])
     
     if not all_answers:
@@ -959,13 +969,15 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
             "dietary_restrictions": prefs.get("dietary_restrictions", []),
             "allergies": prefs.get("allergies", []),
             "cooking_skill_level": prefs.get("cooking_skill_level", "intermediate"),
-            "household_size": prefs.get("household_size", 1),
+            "household_adults": prefs.get("household_adults", 1),
+            "household_kids": prefs.get("household_kids", 0),
+            "household_babies": prefs.get("household_babies", 0),
             "available_equipment": prefs.get("available_equipment", []),
             "favorite_cuisines": payload_dict.get("cuisine_preferences", []),
             "subdomain_guidance": payload_dict.get("subdomain_guidance", {}),
             "assumed_staples": payload_dict.get("assumed_staples", []),
         }
-        
+
         client.table("preferences").upsert(
             prefs_data,
             on_conflict="user_id"
@@ -1027,7 +1039,7 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
     Apply onboarding data to Alfred's preferences table.
     
     Transfers:
-    - constraints → dietary_restrictions, allergies, cooking_skill_level, household_size, available_equipment
+    - constraints → dietary_restrictions, allergies, cooking_skill_level, household_adults/kids/babies, available_equipment
     - cuisine_preferences → favorite_cuisines
     - subdomain_guidance → subdomain_guidance (injected into prompts)
     
@@ -1055,7 +1067,9 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
         "dietary_restrictions": prefs.get("dietary_restrictions", []),
         "allergies": prefs.get("allergies", []),
         "cooking_skill_level": prefs.get("cooking_skill_level", "intermediate"),
-        "household_size": prefs.get("household_size", 1),
+        "household_adults": prefs.get("household_adults", 1),
+        "household_kids": prefs.get("household_kids", 0),
+        "household_babies": prefs.get("household_babies", 0),
         # Equipment (used by recipes/meal_plans)
         "available_equipment": prefs.get("available_equipment", []),
         # Taste preferences
@@ -1082,7 +1096,9 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
                 "dietary_restrictions": prefs_data["dietary_restrictions"],
                 "allergies": prefs_data["allergies"],
                 "cooking_skill_level": prefs_data["cooking_skill_level"],
-                "household_size": prefs_data["household_size"],
+                "household_adults": prefs_data["household_adults"],
+                "household_kids": prefs_data["household_kids"],
+                "household_babies": prefs_data["household_babies"],
                 "available_equipment": prefs_data["available_equipment"],
                 "favorite_cuisines": prefs_data["favorite_cuisines"],
                 "subdomain_guidance_keys": list(prefs_data["subdomain_guidance"].keys()),

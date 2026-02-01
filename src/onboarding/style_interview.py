@@ -28,11 +28,21 @@ Pages 1-3 are STATIC (no LLM call). Page 4 uses LLM to generate follow-ups.
 Finally: LLM synthesizes all answers → subdomain_guidance strings.
 """
 
-from pydantic import BaseModel, Field
-from typing import Literal
 import logging
 
+from pydantic import BaseModel, Field
+
 from alfred.llm.client import call_llm
+from onboarding.forms import format_household_description
+
+
+def _household_desc(ctx: dict) -> str:
+    """Build household description from user_context dict."""
+    return format_household_description(
+        ctx.get("household_adults", ctx.get("household_size", 2)),
+        ctx.get("household_kids", 0),
+        ctx.get("household_babies", 0),
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +322,7 @@ Now review for gaps or contradictions.
 | Attribute | Value |
 |-----------|-------|
 | Cooking skill | {skill_level} |
-| Household | {household_size} people |
+| Household | {household_description} |
 | Dietary | {dietary} |
 | Cuisines | {cuisines} |
 
@@ -422,7 +432,7 @@ Convert all interview answers into the subdomain_guidance strings that Alfred wi
 | Attribute | Value |
 |-----------|-------|
 | Cooking skill | {skill_level} |
-| Household | {household_size} people |
+| Household | {household_description} |
 | Dietary | {dietary} |
 | Equipment | {equipment} |
 | Cuisines | {cuisines} |
@@ -628,7 +638,7 @@ async def generate_catchall_page(
     prompt = GENERATE_CATCHALL_PROMPT.format(
         system_identity=SYSTEM_IDENTITY,
         skill_level=user_context.get("cooking_skill_level", "intermediate"),
-        household_size=user_context.get("household_size", 2),
+        household_description=_household_desc(user_context),
         dietary=", ".join(user_context.get("dietary_restrictions", [])) or "None",
         cuisines=", ".join(user_context.get("cuisines", [])) or "Various",
         all_answers=_format_prior_answers(all_answers),
@@ -660,7 +670,7 @@ async def synthesize_guidance(
         system_identity=SYSTEM_IDENTITY,
         subdomain_framework=SUBDOMAIN_OUTCOMES,
         skill_level=user_context.get("cooking_skill_level", "intermediate"),
-        household_size=user_context.get("household_size", 2),
+        household_description=_household_desc(user_context),
         dietary=", ".join(user_context.get("dietary_restrictions", [])) or "None",
         equipment=", ".join(user_context.get("available_equipment", [])) or "Standard kitchen",
         cuisines=", ".join(user_context.get("cuisines", [])) or "Various",

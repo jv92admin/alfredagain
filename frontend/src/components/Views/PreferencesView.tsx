@@ -3,7 +3,9 @@ import { apiRequest } from '../../lib/api'
 
 interface Preferences {
   cooking_skill_level: string
-  household_size: number
+  household_adults: number
+  household_kids: number
+  household_babies: number
   dietary_restrictions: string[]
   allergies: string[]
   available_equipment: string[]
@@ -15,6 +17,14 @@ interface FlavorPreference {
   ingredient_id: string
   preference_score: number
   ingredients?: { name: string }
+}
+
+function formatHousehold(prefs: Preferences): string {
+  const parts: string[] = []
+  if (prefs.household_adults) parts.push(`${prefs.household_adults} adult${prefs.household_adults !== 1 ? 's' : ''}`)
+  if (prefs.household_kids) parts.push(`${prefs.household_kids} kid${prefs.household_kids !== 1 ? 's' : ''}`)
+  if (prefs.household_babies) parts.push(`${prefs.household_babies} ${prefs.household_babies !== 1 ? 'babies' : 'baby'}`)
+  return parts.join(', ') || '1 adult'
 }
 
 export function PreferencesView() {
@@ -99,7 +109,7 @@ export function PreferencesView() {
           <Section title="Cooking Profile">
             <div className="grid grid-cols-2 gap-4">
               <InfoItem label="Skill Level" value={preferences.cooking_skill_level} />
-              <InfoItem label="Household Size" value={preferences.household_size.toString()} />
+              <InfoItem label="Household" value={formatHousehold(preferences)} />
             </div>
           </Section>
 

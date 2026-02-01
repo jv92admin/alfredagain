@@ -22,7 +22,9 @@ class UserProfile:
     """Pre-computed user profile for prompt injection."""
     
     # HARD CONSTRAINTS (never violated)
-    household_size: int = 1
+    household_adults: int = 1
+    household_kids: int = 0
+    household_babies: int = 0
     dietary_restrictions: list[str] = field(default_factory=list)
     allergies: list[str] = field(default_factory=list)
     
@@ -113,7 +115,9 @@ async def build_user_profile(user_id: str) -> UserProfile:
         if prefs_result.data:
             prefs = prefs_result.data[0]
             # Hard constraints
-            profile.household_size = prefs.get("household_size", 1) or 1
+            profile.household_adults = prefs.get("household_adults", 1) or 1
+            profile.household_kids = prefs.get("household_kids", 0) or 0
+            profile.household_babies = prefs.get("household_babies", 0) or 0
             profile.dietary_restrictions = prefs.get("dietary_restrictions") or []
             profile.allergies = prefs.get("allergies") or []
             # Capability
@@ -239,15 +243,27 @@ def format_profile_for_prompt(profile: UserProfile) -> str:
         constraints.append(f"Diet: {', '.join(profile.dietary_restrictions)}")
     if profile.allergies:
         constraints.append(f"Allergies: {', '.join(profile.allergies)}")
-    if profile.household_size > 1:
-        constraints.append(f"Portions: {profile.household_size}")
+    total = profile.household_adults + profile.household_kids + profile.household_babies
+    if total > 1:
+        portions = profile.household_adults + profile.household_kids * 0.5
+        hh_parts = []
+        if profile.household_adults:
+            hh_parts.append(f"{profile.household_adults} adult{'s' if profile.household_adults != 1 else ''}")
+        if profile.household_kids:
+            hh_parts.append(f"{profile.household_kids} kid{'s' if profile.household_kids != 1 else ''}")
+        if profile.household_babies:
+            hh_parts.append(f"{profile.household_babies} {'babies' if profile.household_babies != 1 else 'baby'}")
+        constraints.append(f"Portions: ~{portions:g} ({', '.join(hh_parts)})")
     if constraints:
         lines.append(f"**Constraints:** {' | '.join(constraints)}")
-    
+
     # CAPABILITY (what they can do)
+    # Only show specialty equipment in prompts (basics like oven/stovetop are assumed)
+    _basic_ids = {"microwave", "oven", "stovetop", "skillet", "saucepan"}
     capability = []
-    if profile.available_equipment:
-        capability.append(f"Equipment: {', '.join(profile.available_equipment[:4])}")
+    specialty_equipment = [e for e in profile.available_equipment if e not in _basic_ids]
+    if specialty_equipment:
+        capability.append(f"Equipment: {', '.join(specialty_equipment[:4])}")
     if profile.cooking_skill_level != "intermediate":
         capability.append(f"Skill: {profile.cooking_skill_level}")
     if capability:

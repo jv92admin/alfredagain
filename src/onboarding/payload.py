@@ -98,7 +98,9 @@ class OnboardingPayload:
     
     # Phase 1: Hard constraints
     preferences: dict = field(default_factory=lambda: {
-        "household_size": 2,
+        "household_adults": 2,
+        "household_kids": 0,
+        "household_babies": 0,
         "allergies": [],
         "dietary_restrictions": [],
         "cooking_skill_level": "intermediate",
@@ -217,7 +219,9 @@ def build_payload_from_state(state: "OnboardingState") -> OnboardingPayload:
     # Phase 1: Constraints → preferences
     if state.constraints:
         payload.preferences = {
-            "household_size": state.constraints.get("household_size", 2),
+            "household_adults": state.constraints.get("household_adults", 2),
+            "household_kids": state.constraints.get("household_kids", 0),
+            "household_babies": state.constraints.get("household_babies", 0),
             "allergies": state.constraints.get("allergies", []),
             "dietary_restrictions": state.constraints.get("dietary_restrictions", []),
             "cooking_skill_level": state.constraints.get("cooking_skill_level", "intermediate"),

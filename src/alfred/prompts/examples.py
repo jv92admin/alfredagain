@@ -265,7 +265,7 @@ def _get_generate_guidance(subdomain: str, desc_lower: str) -> str:
     elif subdomain == "meal_plans":
         guidance_parts.append("""**Meal Plan Generation:**
 - Use user's planning_rhythm (e.g., "weekends only" = they cook on weekends)
-- Match household_size for servings
+- Match household_adults/kids/babies for servings (adults=1 portion, kids=0.5, babies=0)
 - Balance cuisines across the week
 - Consider what recipes exist vs need creating
 - Assign dates based on their cooking days, not eating days""")
