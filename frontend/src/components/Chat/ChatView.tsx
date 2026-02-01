@@ -59,7 +59,10 @@ export function ChatView({ messages, setMessages, onOpenFocus, setActiveJobId, j
   }, [location.state])
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = messagesContainerRef.current
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+    }
   }
 
   const isNearBottom = () => {

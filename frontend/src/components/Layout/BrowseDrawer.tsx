@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -18,6 +19,13 @@ const browseItems = [
 
 export function BrowseDrawer({ isOpen, onClose }: BrowseDrawerProps) {
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+      return () => { document.body.style.overflow = '' }
+    }
+  }, [isOpen])
 
   const handleNavigate = (path: string) => {
     navigate(path)

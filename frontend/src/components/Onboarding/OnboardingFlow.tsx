@@ -113,7 +113,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-primary)] flex flex-col">
+    <div className="min-h-dvh bg-[var(--color-bg-primary)] flex flex-col">
       {/* Header */}
       <header className="p-6 border-b border-[var(--color-border)]">
         <div className="max-w-2xl mx-auto flex items-center justify-between">

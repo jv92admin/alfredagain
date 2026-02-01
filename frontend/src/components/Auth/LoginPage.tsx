@@ -24,7 +24,7 @@ export function LoginPage({ onLogin: _onLogin }: LoginPageProps) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)] p-4">
+    <div className="min-h-dvh flex items-center justify-center bg-[var(--color-bg-primary)] p-4">
       <div className="w-full max-w-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[var(--radius-xl)] p-8 shadow-lg">
         {/* Logo */}
         <div className="text-center mb-8">

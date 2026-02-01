@@ -134,7 +134,7 @@ function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[var(--color-bg-primary)]">
+      <div className="flex items-center justify-center min-h-dvh bg-[var(--color-bg-primary)]">
         <div className="text-[var(--color-text-secondary)]">Loading...</div>
       </div>
     )
@@ -153,7 +153,7 @@ function App() {
   // Show onboarding if needed (still checking = null, needs = true)
   if (needsOnboarding === null) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[var(--color-bg-primary)]">
+      <div className="flex items-center justify-center min-h-dvh bg-[var(--color-bg-primary)]">
         <div className="text-[var(--color-text-secondary)]">Loading...</div>
       </div>
     )

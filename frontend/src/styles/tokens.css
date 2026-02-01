@@ -143,6 +143,12 @@ h1, h2, .font-display {
   font-family: var(--font-display);
 }
 
+/* Prevent scroll chaining on inner containers */
+.overflow-y-auto,
+.overflow-auto {
+  overscroll-behavior: contain;
+}
+
 /* Scrollbar styling - warm theme */
 ::-webkit-scrollbar {
   width: 8px;
