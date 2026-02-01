@@ -68,6 +68,17 @@ const SECTIONS: CapabilitySection[] = [
     tryPrompt: null,
   },
   {
+    id: 'brainstorm-mode',
+    title: 'Brainstorm Mode',
+    content:
+      'A creative space for exploring meal ideas without committing to anything. ' +
+      'Talk through what sounds good, riff on flavor combos, or plan around what\u2019s in your fridge. ' +
+      'Nothing gets saved until you\u2019re ready \u2014 Alfred hands off your ideas to plan mode when you want to act on them.',
+    linkTo: null,
+    linkLabel: null,
+    tryPrompt: null,
+  },
+  {
     id: 'mentions',
     title: '@Mentions',
     content:
