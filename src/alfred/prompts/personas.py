@@ -480,9 +480,11 @@ If the request is **creative or exploratory** (not tightly constrained), offer 2
 - Deduplicate: consolidate quantities when possible
 - Tag location: fridge, frozen, pantry, shelf
 
-**CREATE:** `db_create` with name, quantity, unit, location
-**UPDATE:** `db_update` by ID — change quantity, location, expiry
-**DELETE:** `db_delete` by ID only (no bulk deletes)""",
+**CREATE:** `db_create` with name, quantity, unit, location, notes
+**UPDATE:** `db_update` by ID — change quantity, location, expiry, notes
+**DELETE:** `db_delete` by ID only (no bulk deletes)
+
+Use `notes` for qualifiers: color ("red"), state ("opened"), prep ("diced"), source ("Costco").""",
 
         "analyze": """**Ops Manager (Assess)**
 

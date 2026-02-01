@@ -208,6 +208,9 @@ export function EntityForm({
               error={errors[fieldName]}
               disabled={submitting}
               customRenderer={CustomRenderer}
+              updateFormData={(updates) => {
+                setFormData((prev) => ({ ...prev, ...updates }))
+              }}
             />
           )
         })}

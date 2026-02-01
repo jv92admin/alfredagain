@@ -30,6 +30,8 @@ export interface FieldRendererProps {
   disabled?: boolean
   placeholder?: string
   customRenderer?: React.ComponentType<FieldRendererProps>
+  /** Allows custom renderers to set sibling form fields (e.g., ingredient_id, category). */
+  updateFormData?: (updates: Record<string, any>) => void
 }
 
 // =============================================================================
@@ -48,6 +50,7 @@ export function FieldRenderer({
   disabled,
   placeholder,
   customRenderer: CustomRenderer,
+  updateFormData,
 }: FieldRendererProps) {
   // Use custom renderer if provided
   if (CustomRenderer) {
@@ -63,6 +66,7 @@ export function FieldRenderer({
         error={error}
         disabled={disabled}
         placeholder={placeholder}
+        updateFormData={updateFormData}
       />
     )
   }

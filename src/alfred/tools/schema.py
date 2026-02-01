@@ -643,6 +643,7 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | quantity | numeric | No |
 | unit | text | No |
 | location | text | Yes |
+| notes | text | Yes |
 | expiry_date | date | Yes |
 
 ### ingredients

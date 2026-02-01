@@ -7,3 +7,4 @@
 
 export { RecipePicker } from './RecipePicker'
 export { MealPlanPicker } from './MealPlanPicker'
+export { IngredientSearchField } from './IngredientSearchField'

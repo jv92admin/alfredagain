@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiRequest } from '../../lib/api'
+import { getCategoryIcon } from '../../lib/categoryUtils'
 
 interface Ingredient {
   id: string
@@ -267,43 +268,3 @@ export function IngredientsView() {
   )
 }
 
-function getCategoryIcon(category: string): string {
-  const icons: Record<string, string> = {
-    'produce': '🥬',
-    'vegetables': '🥕',
-    'fruits': '🍎',
-    'meat': '🥩',
-    'poultry': '🍗',
-    'seafood': '🐟',
-    'dairy': '🧀',
-    'eggs': '🥚',
-    'grains': '🌾',
-    'bread': '🍞',
-    'pasta': '🍝',
-    'rice': '🍚',
-    'legumes': '🫘',
-    'beans': '🫘',
-    'nuts': '🥜',
-    'seeds': '🌻',
-    'spices': '🌶️',
-    'herbs': '🌿',
-    'condiments': '🍯',
-    'sauces': '🥫',
-    'oils': '🫒',
-    'vinegars': '🍶',
-    'baking': '🧁',
-    'sweeteners': '🍯',
-    'canned': '🥫',
-    'frozen': '🧊',
-    'beverages': '🥤',
-    'snacks': '🍿',
-    'international': '🌍',
-    'asian': '🥢',
-    'mexican': '🌮',
-    'indian': '🍛',
-    'italian': '🍕',
-    'mediterranean': '🫒',
-    'uncategorized': '📦',
-  }
-  return icons[category.toLowerCase()] || '📦'
-}

@@ -13,7 +13,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # =============================================================================
 # Core Entities
 # =============================================================================
@@ -65,6 +64,7 @@ class Inventory(BaseModel):
     quantity: float
     unit: str
     location: str | None = None  # "pantry", "fridge", "freezer"
+    category: str | None = None  # Denormalized from linked ingredient
     expiry_date: date | None = None
     purchase_date: date | None = None
     created_at: datetime | None = None
@@ -235,6 +235,7 @@ class InventoryCreate(BaseModel):
     unit: str
     ingredient_id: UUID | None = None
     location: str | None = None
+    category: str | None = None
     expiry_date: date | None = None
     purchase_date: date | None = None
 
@@ -246,6 +247,7 @@ class InventoryUpdate(BaseModel):
     quantity: float | None = None
     unit: str | None = None
     location: str | None = None
+    category: str | None = None
     expiry_date: date | None = None
 
 
