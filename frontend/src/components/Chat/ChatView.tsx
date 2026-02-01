@@ -57,13 +57,23 @@ export function ChatView({ messages, setMessages, onOpenFocus, setActiveJobId, j
     return container.scrollHeight - container.scrollTop - container.clientHeight < threshold
   }
 
+  // Track previous streaming text length to detect clears vs. new content
+  const prevStreamingLen = useRef(0)
+
   useEffect(() => {
     // Only scroll when NEW messages are added after mount, not on initial render
     // This prevents mobile Chrome from triggering address bar hide on load
+    const streamingCleared = prevStreamingLen.current > 0 && streamingText.length === 0
+    prevStreamingLen.current = streamingText.length
+
+    // Don't scroll when streaming text is cleared — the DOM is shrinking,
+    // and scrolling now pushes the input to the top with a blank screen
+    if (streamingCleared) return
+
     if (messages.length > initialMessageCount.current && isNearBottom()) {
       scrollToBottom()
     }
-  }, [messages, phaseState, streamingText])
+  }, [messages, phaseState, streamingText, handoffResult])
 
   const handleSend = async (e?: FormEvent) => {
     e?.preventDefault()
