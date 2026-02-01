@@ -105,7 +105,7 @@ function CapabilityCard({ section }: { section: CapabilitySection }) {
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: '-40px' }}
       transition={{ duration: 0.3 }}
-      className="bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6 scroll-mt-6"
+      className="bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6 scroll-mt-6 overflow-hidden"
     >
       <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-3">
         {section.title}
@@ -142,8 +142,8 @@ function CapabilityCard({ section }: { section: CapabilitySection }) {
       )}
 
       {section.tryPrompt && (
-        <div className="mt-4 pt-4 border-t border-[var(--color-border)] flex items-center gap-3">
-          <span className="text-sm text-[var(--color-text-muted)] italic flex-1 min-w-0 truncate">
+        <div className="mt-4 pt-4 border-t border-[var(--color-border)] flex items-center gap-3 overflow-hidden">
+          <span className="text-sm text-[var(--color-text-muted)] italic min-w-0 truncate">
             &ldquo;{section.tryPrompt}&rdquo;
           </span>
           <button
@@ -172,7 +172,7 @@ export function CapabilitiesView() {
   }, [hash])
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
+    <div className="max-w-2xl mx-auto px-4 py-8 overflow-hidden">
       <h1 className="text-2xl font-semibold text-[var(--color-text-primary)] mb-2">
         What Alfred Can Do
       </h1>

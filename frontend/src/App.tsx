@@ -144,6 +144,7 @@ function App() {
     return (
       <Routes>
         <Route path="/about" element={<><PublicHeader /><AboutView /></>} />
+        <Route path="/capabilities" element={<><PublicHeader /><CapabilitiesView /></>} />
         <Route path="*" element={<LoginPage onLogin={checkAuth} />} />
       </Routes>
     )
