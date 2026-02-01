@@ -185,6 +185,11 @@ async def run_brainstorm(
                 recent_turns.append({
                     "user": "[Brainstorm session]",
                     "assistant": assistant_text,
+                    # Pre-set assistant_summary to bypass conversation.py's
+                    # summarizer, which detects recipe patterns and replaces
+                    # with "[Content archived]". Think only sees
+                    # assistant_summary, so it must contain the full recipe.
+                    "assistant_summary": assistant_text,
                 })
             yield {
                 "type": "handoff",

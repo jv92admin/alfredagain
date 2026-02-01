@@ -156,6 +156,11 @@ async def run_cook_session(
                 recent_turns.append({
                     "user": f"[Cook session: {recipe_name}]",
                     "assistant": assistant_text,
+                    # Pre-set assistant_summary to bypass conversation.py's
+                    # summarizer, which detects recipe patterns and replaces
+                    # with "[Content archived]". Think only sees
+                    # assistant_summary, so it must contain the full recipe.
+                    "assistant_summary": assistant_text,
                 })
             yield {
                 "type": "handoff",
