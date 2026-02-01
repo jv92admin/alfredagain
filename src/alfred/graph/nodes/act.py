@@ -1338,7 +1338,7 @@ async def act_node(state: AlfredState) -> dict:
     
     # Get schema for read/write steps
     subdomain_schema = None
-    if step_type in ("read", "write"):
+    if step_type in ("read", "write", "generate"):
         subdomain_schema = await get_schema_with_fallback(current_step.subdomain)
     
     # Get previous step's subdomain for cross-domain pattern detection

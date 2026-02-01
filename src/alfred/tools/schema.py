@@ -437,6 +437,10 @@ FIELD_ENUMS: dict[str, dict[str, list[str]]] = {
     "recipes": {
         "cuisine": ["italian", "mexican", "chinese", "indian", "american", "french", "japanese", "thai", "mediterranean", "korean"],
         "difficulty": ["easy", "medium", "hard"],
+        "occasions": ["weeknight", "batch-prep", "hosting", "weekend", "comfort"],
+        "health_tags": ["high-protein", "low-carb", "vegetarian", "vegan", "light", "gluten-free", "dairy-free", "keto"],
+        "flavor_tags": ["spicy", "mild", "savory", "sweet", "tangy", "rich", "light", "umami", "other"],
+        "equipment_tags": ["air-fryer", "instant-pot", "one-pot", "one-pan", "grill", "no-cook", "slow-cooker", "oven", "stovetop"],
     },
     "shopping": {
         "category": ["produce", "dairy", "meat", "seafood", "bakery", "frozen", "canned", "dry goods", "beverages", "snacks", "condiments", "spices"],

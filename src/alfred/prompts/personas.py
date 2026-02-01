@@ -123,10 +123,7 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
 | `_semantic` | intent search | `{"field": "_semantic", "op": "similar", "value": "light summer dinner"}` |
 
 **Tag columns (use `contains` operator):**
-- `occasions`: weeknight, batch-prep, hosting, weekend, comfort
-- `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free
-- `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven).
+Valid values for each tag column are provided in the schema context below. Only use values from that list.
 
 **When to use which filter:**
 
@@ -156,11 +153,7 @@ SUBDOMAIN_PERSONAS: dict[str, dict[str, str]] = {
 **Metadata:** `cuisine` (free text), `difficulty` (beginner/intermediate/advanced)
 **Arrays:** `instructions` (text[]), plus tag arrays below
 
-**Tag arrays** (pick appropriate values):
-- `occasions`: weeknight, batch-prep, hosting, weekend, comfort
-- `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free
-- `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven).
+**Tag arrays** — valid values for `occasions`, `health_tags`, `flavor_tags`, and `equipment_tags` are provided in the schema context. Only use values from that list.
 
 **Example** (updating multiple fields at once):
 ```json
@@ -266,10 +259,7 @@ Your job: parse intent and set direction before Generate creates.
 ### Data Context (How to Read What You're Given)
 
 **Recipe tags** you may see in data:
-- `occasions`: weeknight, batch-prep, hosting, weekend, comfort
-- `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free  
-- `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven).
+Valid values for `occasions`, `health_tags`, `flavor_tags`, and `equipment_tags` are provided in the schema context.
 
 **Ingredient categories** (inventory and recipe ingredients link to canonical database):
 - **Proteins**: chicken, beef, pork, fish, tofu, eggs
@@ -414,11 +404,7 @@ Don't just list ingredients. Design flavor profiles with intention.
 }
 ```
 
-**Tag columns (pick appropriate values):**
-- `occasions`: weeknight, batch-prep, hosting, weekend, comfort
-- `health_tags`: high-protein, low-carb, vegetarian, vegan, dairy-free, gluten-free
-- `flavor_tags`: spicy, mild, sweet, savory, umami, tangy
-- `equipment_tags`: major appliances only (air-fryer, instant-pot, slow-cooker, sous-vide, grill, blender, food-processor, stovetop, oven). 
+**Tag columns** — valid values for `occasions`, `health_tags`, `flavor_tags`, and `equipment_tags` are provided in the schema context. Only use values from that list.
 
 ---
 
@@ -630,9 +616,7 @@ You reason. Generate compiles. But you give actual directions, not just abstract
 ### Data Context (How to Read What You're Given)
 
 **Recipe tags** you may see:
-- `occasions`: weeknight, batch-prep, hosting, weekend, comfort — use to match recipes to days
-- `health_tags`: high-protein, low-carb, vegetarian, etc. — filter by user's dietary needs
-- `equipment_tags`: major appliances (air-fryer, instant-pot, slow-cooker, grill, etc.) — match to user's equipment
+Valid values for `occasions`, `health_tags`, `flavor_tags`, and `equipment_tags` are provided in the schema context. Use these to match recipes to days, dietary needs, and available equipment.
 
 **Inventory structure:**
 - Items have `category` (proteins, produce, dairy, pantry, frozen) and `location` (fridge, freezer, pantry)
