@@ -83,8 +83,8 @@ Pure client-side function computed from counts on every render. No database stor
 
 | Priority | Condition | Title | Primary CTA | Secondary |
 |----------|-----------|-------|-------------|-----------|
-| 1 | `recipes === 0` | "Get your first recipe" | "Ask Alfred to Create" → chat prefill | "Import from URL" → RecipeImportModal |
-| 2 | `inventory < 10` | "Your Pantry" | "Add Pantry Items" → `/inventory` | "Learn more" → `/capabilities#inventory` |
+| 1 | `inventory < 10` | "Stock your pantry" | "Tell Alfred what you have" → chat prefill | "Add manually" → `/inventory` |
+| 2 | `recipes === 0` | "Get your first recipe" | "Ask Alfred to Create" → chat prefill | "Import from URL" → RecipeImportModal |
 | 3 | `recipes > 5 && meals === 0` | "Plan your week" | "Plan Meals" → chat prefill | "Learn more" → `/capabilities#meal-planning` |
 | 4 | `meals > 0 && shopping === 0` | "Build your shopping list" | "Generate Shopping List" → chat prefill | "Learn more" → `/capabilities#shopping` |
 | — | All conditions false | "You're all set!" | "Chat with Alfred" → `/` | — |
@@ -166,14 +166,14 @@ The prompt is **prefilled but not auto-sent** — the user sees it in the input 
 
 | Source | Prompt Text |
 |--------|-------------|
-| Home: no recipes | "Suggest a simple dinner recipe using my current pantry" |
-| Home: low inventory | (navigates to `/inventory`, no chat prompt) |
-| Home: no meal plan | "Help me plan 4 dinners for this week using my saved recipes" |
-| Home: no shopping | "Build a shopping list for my planned meals" |
-| Capabilities: recipe-import | "Suggest a simple dinner recipe using my current pantry" |
-| Capabilities: inventory | "What ingredients am I running low on?" |
-| Capabilities: meal-planning | "Help me plan 4 dinners for this week using my saved recipes" |
-| Capabilities: shopping | "Build a shopping list for my planned meals" |
+| Home: low inventory | "Can you add the following to my inventory: " (user completes the list) |
+| Home: no recipes | "I'd like to create some simple recipes based on what I have and everything you know about my preferences. I can go grocery shopping later for any ingredients I might need." |
+| Home: no meal plan | "Can you plan a week's worth of dinners for me? I can meal prep on Sunday." |
+| Home: no shopping | "Can you look at my meal plan for the next 5 days and add the missing stuff to my shopping list?" |
+| Capabilities: recipe-import | Same as Home: no recipes |
+| Capabilities: inventory | "Can you add the following to my inventory: " |
+| Capabilities: meal-planning | "Can you plan a week's worth of dinners for me? I can meal prep on Sunday." |
+| Capabilities: shopping | "Can you look at my meal plan for the next 5 days and add the missing stuff to my shopping list?" |
 
 ---
 

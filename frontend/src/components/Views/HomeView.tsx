@@ -132,57 +132,63 @@ export function HomeView() {
   const computeNudges = (): Nudge[] => {
     const nudges: Nudge[] = []
 
+    // Priority 1: Inventory first — Alfred needs to know what you have
+    if (counts.inventory < 10) {
+      nudges.push({
+        key: 'stock-pantry',
+        title: 'Stock your pantry',
+        description:
+          'Alfred works best when it knows what you have. This powers recipe suggestions, smart shopping lists, and meal plans that minimize waste.',
+        primaryLabel: 'Tell Alfred what you have',
+        primaryAction: () => goToChat('Can you add the following to my inventory: '),
+        secondaryLabel: 'Add manually',
+        secondaryAction: () => navigate('/inventory'),
+      })
+    }
+
+    // Priority 2: Recipes — don't restrict to "use what I have" since pantry may be sparse
     if (counts.recipes === 0) {
       nudges.push({
         key: 'first-recipe',
         title: 'Get your first recipe',
         description:
-          'Tell Alfred what you\u2019re in the mood for \u2014 it\u2019ll draft something based on your pantry and preferences.',
+          'Alfred can create recipes based on your preferences, skill level, and what you have on hand. Don\u2019t worry about missing ingredients \u2014 you can always shop for what you need.',
         primaryLabel: 'Ask Alfred to Create',
-        primaryAction: () => goToChat('Suggest a simple dinner recipe using my current pantry'),
+        primaryAction: () => goToChat('I\u2019d like to create some simple recipes based on what I have and everything you know about my preferences. I can go grocery shopping later for any ingredients I might need.'),
         secondaryLabel: 'Import from URL',
         secondaryAction: () => setShowImportModal(true),
       })
     }
 
-    if (counts.inventory < 10) {
-      nudges.push({
-        key: 'stock-pantry',
-        title: 'Your Pantry',
-        description:
-          'Alfred works best when it knows what you have. This powers:\n' +
-          '\u2022 Recipe suggestions that use your actual ingredients\n' +
-          '\u2022 Shopping lists that skip what you already own\n' +
-          '\u2022 Meal plans that minimize waste\n\n' +
-          'Start with staples, add as you shop.',
-        primaryLabel: 'Add Pantry Items',
-        primaryAction: () => navigate('/inventory'),
-        secondaryLabel: 'Learn more',
-        secondaryAction: () => navigate('/capabilities#inventory'),
-      })
-    }
-
-    if (counts.recipes > 5 && counts.meals === 0) {
+    // Priority 3: Meal planning — once you have at least one recipe
+    if (counts.recipes >= 1 && counts.meals === 0) {
+      const hasEnough = counts.recipes >= 5
       nudges.push({
         key: 'plan-week',
         title: 'Plan your week',
-        description:
-          `You have ${counts.recipes} recipes saved. Pick which days you want to cook and Alfred will help you choose recipes that work together.`,
+        description: hasEnough
+          ? `You have ${counts.recipes} recipes saved. Let Alfred build a weekly dinner plan \u2014 it\u2019ll pick recipes that work together and fit your schedule.`
+          : `You have ${counts.recipes} recipe${counts.recipes === 1 ? '' : 's'} so far. Alfred can plan your week and create new recipes to fill in the gaps.`,
         primaryLabel: 'Plan Meals',
-        primaryAction: () => goToChat('Help me plan 4 dinners for this week using my saved recipes'),
+        primaryAction: () => goToChat(
+          hasEnough
+            ? 'Can you plan a week\u2019s worth of dinners for me? I can meal prep on Sunday.'
+            : 'Can you plan a week\u2019s worth of dinners for me? Feel free to create new recipes if I don\u2019t have enough saved yet. I can meal prep on Sunday.'
+        ),
         secondaryLabel: 'Learn more',
         secondaryAction: () => navigate('/capabilities#meal-planning'),
       })
     }
 
+    // Priority 4: Shopping list — once you have a meal plan
     if (counts.meals > 0 && counts.shopping === 0) {
       nudges.push({
         key: 'shopping-list',
         title: 'Build your shopping list',
         description:
-          'Your meal plan is set. Alfred can generate a shopping list and cross-reference your pantry so you skip what you already have.',
+          'Your meal plan is set. Alfred can figure out what you\u2019re missing and build your shopping list automatically.',
         primaryLabel: 'Generate Shopping List',
-        primaryAction: () => goToChat('Build a shopping list for my planned meals'),
+        primaryAction: () => goToChat('Can you look at my meal plan for the next 5 days and add the missing stuff to my shopping list?'),
         secondaryLabel: 'Learn more',
         secondaryAction: () => navigate('/capabilities#shopping'),
       })

@@ -22,7 +22,7 @@ const SECTIONS: CapabilitySection[] = [
       '\u2022 **Ask Alfred** \u2014 describe what you want and Alfred drafts a recipe based on your pantry and preferences.',
     linkTo: '/recipes',
     linkLabel: 'Go to Recipes',
-    tryPrompt: 'Suggest a simple dinner recipe using my current pantry',
+    tryPrompt: 'I\u2019d like to create some simple recipes based on what I have and my preferences. I can go grocery shopping later for any ingredients I might need.',
   },
   {
     id: 'inventory',
@@ -32,30 +32,30 @@ const SECTIONS: CapabilitySection[] = [
       '\u2022 Recipe suggestions that use your actual ingredients\n' +
       '\u2022 Shopping lists that skip what you already own\n' +
       '\u2022 Meal plans that minimize waste\n\n' +
-      'Start with staples, add as you shop.',
+      'Start with staples, add as you shop. You can tell Alfred what you have in plain language and it\u2019ll add everything for you.',
     linkTo: '/inventory',
     linkLabel: 'Go to Inventory',
-    tryPrompt: 'What ingredients am I running low on?',
+    tryPrompt: 'Can you add the following to my inventory: ',
   },
   {
     id: 'meal-planning',
     title: 'Meal Planning',
     content:
       'Plan your week by assigning recipes to days. Alfred tracks what\u2019s planned and can build your shopping list from the plan. ' +
-      'Tell Alfred which days you want to cook and it\u2019ll help you pick recipes that work together.',
+      'Tell Alfred which days you want to cook, whether you like to meal prep, and it\u2019ll put together a plan that works.',
     linkTo: '/meals',
     linkLabel: 'Go to Meal Plans',
-    tryPrompt: 'Help me plan 4 dinners for this week using my saved recipes',
+    tryPrompt: 'Can you plan a week\u2019s worth of dinners for me? I can meal prep on Sunday.',
   },
   {
     id: 'shopping',
     title: 'Shopping Lists',
     content:
       'Auto-generate a shopping list from your meal plan, or add items manually. ' +
-      'Alfred cross-references your inventory so you don\u2019t buy what you already have. Check items off as you shop.',
+      'Alfred cross-references your inventory so you don\u2019t buy what you already have.',
     linkTo: '/shopping',
     linkLabel: 'Go to Shopping',
-    tryPrompt: 'Build a shopping list for my planned meals',
+    tryPrompt: 'Can you look at my meal plan for the next 5 days and add the missing stuff to my shopping list?',
   },
   {
     id: 'cook-mode',
