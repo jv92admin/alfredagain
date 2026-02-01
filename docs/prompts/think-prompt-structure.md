@@ -54,8 +54,8 @@ Think receives a **system prompt** (static template with placeholders) and a **u
 |-----------|--------|----------|
 | User Profile | `get_cached_profile(user_id)` | `format_profile_for_prompt()` |
 | Subdomain Guidance | `profile.subdomain_guidance` | `format_all_subdomain_guidance()` |
-| Kitchen Dashboard | `get_cached_dashboard(user_id)` | `format_dashboard_for_prompt()` |
-| Entity Context | `SessionIdRegistry` | `format_for_think_prompt()` |
+| Kitchen Snapshot | `get_cached_dashboard(user_id)` | `format_dashboard_for_prompt()` |
+| Active Entities | `SessionIdRegistry` | `ThinkContext.format_entity_context()` |
 | Reasoning Trace | `conversation["turn_summaries"]` | `format_reasoning(trace, node="think")` |
 | Current Curation | `understand_output.entity_curation` | `format_curation_for_think()` |
 
@@ -113,14 +113,17 @@ Think receives a **system prompt** (static template with placeholders) and a **u
 
 ```markdown
 ## Generated Content
-User can save these or discard:
+**Act has full data for these.** Use `analyze` or `generate` directly (no read needed).
 - `gen_recipe_1`: Thai Curry (recipe) [unsaved]
 
-## Recent Context (last 2 turns)
-**Known refs and labels only. Do NOT assume full record data is loaded for Act in this turn.**
-- `recipe_1`: Butter Chicken (recipe) [read:summary]
-- `recipe_3`: Cod Masala (recipe) [read:full]
-- `inv_1`: eggs (inv) [read]
+## ACTIVE ENTITIES
+Act has data for these. Plan reads only when data is missing from this section.
+**Source tags:** `[read]` = Alfred fetched, `[created:user]` = user made via UI, ...
+**For recipes:** `[read:full]` = has instructions + ingredients, `[read:summary]` = metadata only
+- `recipe_1`: Butter Chicken (recipe) [read:summary] T3
+- `recipe_3`: Cod Masala (recipe) [read:full] T4
+- `inv_1`: eggs (inv) [read] T4
+- `recipe_5`: Wings (no details) (recipe) [created:user] T2
 
 ## Long Term Memory (retained from earlier)
 - `gen_meal_plan_1`: Weekly Plan (meal) — *User's ongoing goal*
@@ -134,12 +137,18 @@ User can save these or discard:
 | `[read:full]` | Recipe was read WITH instructions | "with instructions" in step |
 | `[unsaved]` | Generated but not persisted | `pending_artifacts` |
 | `[created]` | Generated and saved | After `db_create` |
+| `[created:user]` | User created via UI | UI change registration |
+| `(no details)` | Stub entity, needs read for data | `created:user` recipe without read level |
+
+### Tag legends:
+
+Centralized in `src/alfred/context/entity.py` as `SOURCE_TAG_LEGEND` and `RECIPE_DATA_LEGEND`. Imported by `builders.py` (Think/Understand) and `act.py`.
 
 ### Source function:
 
 ```python
-# src/alfred/core/id_registry.py
-SessionIdRegistry.format_for_think_prompt() -> str
+# src/alfred/context/builders.py
+ThinkContext.format_entity_context() -> str
 ```
 
 ---
@@ -206,6 +215,9 @@ Think's subdomain knowledge is baked into `think.md` — it knows things like:
 4. **Recipe data levels** — Think knows if instructions were loaded (`[read:summary]` vs `[read:full]`)
 5. **Mode-aware step limits** — QUICK: 2, COOK: 4, PLAN: 8, CREATE: 4
 6. **Subdomain guidance split** — System-level in `think.md`, user-level in profile
+7. **Kitchen Snapshot isolation** — Dashboard shows counts only; no entity refs, no data-operation language
+8. **Active Entities boundary** — Section header explicitly says "Plan reads only when data is missing from this section"
+9. **Centralized tag legends** — `SOURCE_TAG_LEGEND` and `RECIPE_DATA_LEGEND` defined once in `entity.py`
 
 ---
 
@@ -217,7 +229,8 @@ When changing Think's context:
 |------|----------------|
 | `prompts/think.md` | System prompt — subdomain structure, linked tables, step types |
 | `src/alfred/graph/nodes/think.py` | User prompt assembly |
-| `src/alfred/core/id_registry.py` | `format_for_think_prompt()` |
+| `src/alfred/context/builders.py` | `ThinkContext.format_entity_context()` — Active Entities section |
+| `src/alfred/context/entity.py` | `SOURCE_TAG_LEGEND`, `RECIPE_DATA_LEGEND` — tag legend constants |
 | `src/alfred/context/reasoning.py` | Reasoning trace formatting |
 
 **NOT for Think** (these are for Act):

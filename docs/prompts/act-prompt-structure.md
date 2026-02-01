@@ -281,6 +281,7 @@ When changing Act's prompt structure:
 | `src/alfred/prompts/injection.py` | `build_act_user_prompt()` and helpers |
 | `src/alfred/graph/nodes/act.py` | Context gathering, system prompt |
 | `prompts/act/*.md` | System prompt templates |
+| `src/alfred/context/entity.py` | `SOURCE_TAG_LEGEND` — centralized tag legend (shared with Think) |
 | `src/alfred/core/id_registry.py` | `translate_read_output()` (nested ingredient IDs) |
 | `src/alfred/graph/nodes/summarize.py` | Persist `turn_step_results` |
 
@@ -294,6 +295,7 @@ When changing Act's prompt structure:
 4. **Schema for CRUD only** — Analyze/generate don't need DB schema
 5. **Profile for generation only** — Read steps don't need user preferences
 6. **Full instructions shown** — Write steps need actual text to modify
+7. **Centralized tag legends** — `SOURCE_TAG_LEGEND` defined once in `entity.py`, imported by `act.py` and `builders.py`
 
 ---
 
