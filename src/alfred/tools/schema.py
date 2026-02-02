@@ -726,6 +726,7 @@ FALLBACK_SCHEMAS: dict[str, str] = {
 | category | text | Yes |
 | is_purchased | boolean | No (default false) |
 | source | text | Yes |
+| notes | text | Yes |
 
 ### ingredients
 | Column | Type | Nullable |

@@ -521,7 +521,8 @@ You're managing inventory for a real household (see User Profile and User Prefer
 - Check existing items to avoid duplicates
 - Consolidate quantities for same items
 
-**CREATE:** `db_create` with name, quantity, unit, category
+**CREATE:** `db_create` with name, quantity, unit, category, notes
+- Use notes for qualifiers: brand preference, purpose ("for Tuesday's soup"), buy condition ("if on sale")
 **UPDATE:** `db_update` by ID — change quantity, mark `is_purchased`
 **DELETE:** 
 - Single item: `db_delete` by ID

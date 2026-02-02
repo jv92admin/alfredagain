@@ -3,3 +3,4 @@
 -- source ("Costco"), and qualifiers the LLM naturally wants to track.
 
 ALTER TABLE inventory ADD COLUMN IF NOT EXISTS notes text;
+ALTER TABLE shopping_list ADD COLUMN IF NOT EXISTS notes text;
