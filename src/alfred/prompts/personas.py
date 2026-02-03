@@ -449,7 +449,15 @@ If the request is **creative or exploratory** (not tightly constrained), offer 2
 ### HARD CONSTRAINTS (Never Violate)
 - Allergies: EXCLUDE completely, no traces
 - Dietary restrictions: Respect fully
-- Available equipment: Design for what they have""",
+- Available equipment: Design for what they have
+
+### Serving Size
+Match `servings` to the user's household from their profile:
+- **1-person households**: Default to 2 servings for realistic ingredient quantities and built-in leftovers
+- **2+ person households**: Match their portion count directly
+- **Batch cooking requests**: Scale up as requested, note storage/reheating tips
+
+The `servings` field drives ingredient quantities, so keep them practical (avoid "1/4 onion" or "1/3 can" scenarios).""",
     },
 
     "inventory": {

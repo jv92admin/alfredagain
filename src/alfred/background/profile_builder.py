@@ -244,7 +244,7 @@ def format_profile_for_prompt(profile: UserProfile) -> str:
     if profile.allergies:
         constraints.append(f"Allergies: {', '.join(profile.allergies)}")
     total = profile.household_adults + profile.household_kids + profile.household_babies
-    if total > 1:
+    if total >= 1:
         portions = profile.household_adults + profile.household_kids * 0.5
         hh_parts = []
         if profile.household_adults:
