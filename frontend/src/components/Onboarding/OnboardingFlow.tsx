@@ -106,7 +106,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)]">
+      <div className="h-dvh flex items-center justify-center bg-[var(--color-bg-primary)]">
         <div className="text-[var(--color-text-secondary)]">Loading...</div>
       </div>
     )
