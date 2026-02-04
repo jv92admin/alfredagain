@@ -371,8 +371,8 @@ def _build_step_type_sections(
     if guidance:
         result["guidance"] = guidance
     
-    # === Schema (read/write only) ===
-    if step_type in ("read", "write") and schema:
+    # === Schema (read/write/generate) ===
+    if step_type in ("read", "write", "generate") and schema:
         result["schema"] = f"""## 3. Schema ({subdomain})
 
 {schema}"""

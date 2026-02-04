@@ -24,7 +24,7 @@ act.py                              injection.py
                                    │   └─ _build_step_type_sections()│
                                    │       ├─ subdomain_header       │
                                    │       ├─ guidance               │
-                                   │       ├─ schema (read/write)    │
+                                   │       ├─ schema (read/write/gen)│
                                    │       └─ artifacts (write)      │
                                    └─────────────────────────────────┘
 ```
@@ -44,7 +44,7 @@ act.py                              injection.py
 | Task section | ✅ | ✅ | ✅ | ✅ | ✅ COMMON |
 | Step-type guidance | ✅ | ✅ | ✅ | ✅ | ✅ COMMON (different content) |
 | Data/Step history | ✅ | ✅ | ✅ | ✅ | ✅ COMMON (different label) |
-| Schema | ❌ | ❌ | ✅ | ✅ | ⚠️ read/write only |
+| Schema | ❌ | ✅ | ✅ | ✅ | ⚠️ read/write/generate |
 | **Entities in Context** | ✅ | ✅ | ✅ | ✅ | ✅ **ALWAYS** |
 | Generated artifacts | ❌ | ❌ | ❌ | ✅ | ⚠️ write only |
 | **Conversation context** | ✅ | ✅ | ✅ | ✅ | ✅ **ALWAYS** |
@@ -58,7 +58,7 @@ The user prompt is assembled in this order:
 
 ```
 1. Subdomain header      ← from get_full_subdomain_content()
-2. Schema                ← database schema (read/write only) — so examples can reference it
+2. Schema                ← database schema (read/write/generate) — so LLM knows valid enum values
 3. User preferences      ← profile + subdomain guidance (write only here)
 4. STATUS table          ← step #, goal, type, progress, today
 5. Previous step note    ← note from prior step (read/write only)
@@ -200,7 +200,7 @@ def build_act_user_prompt(
     prev_step_results: str,
     current_step_results: str,
     # Step-type specific (passed only when needed)
-    schema: str | None = None,              # read/write only
+    schema: str | None = None,              # read/write/generate
     profile_section: str | None = None,     # analyze/generate only
     subdomain_guidance: str | None = None,
     batch_manifest_section: str | None = None,
@@ -292,7 +292,7 @@ When changing Act's prompt structure:
 1. **Entity context ALWAYS included** — Common section, never omitted regardless of step type
 2. **Conversation ALWAYS included** — Common section, never omitted
 3. **Refs only for long-term** — Entities >2 turns old show refs + labels only
-4. **Schema for CRUD only** — Analyze/generate don't need DB schema
+4. **Schema for read/write/generate** — Generate needs enum values for valid tags; analyze doesn't
 5. **Profile for generation only** — Read steps don't need user preferences
 6. **Full instructions shown** — Write steps need actual text to modify
 7. **Centralized tag legends** — `SOURCE_TAG_LEGEND` defined once in `entity.py`, imported by `act.py` and `builders.py`
@@ -320,4 +320,4 @@ user_prompt = build_act_user_prompt(
 
 ---
 
-*Last updated: 2026-01-16*
+*Last updated: 2026-02-04*

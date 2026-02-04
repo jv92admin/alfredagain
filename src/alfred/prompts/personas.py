@@ -406,6 +406,8 @@ Don't just list ingredients. Design flavor profiles with intention.
 
 **Tag columns** — valid values for `occasions`, `health_tags`, `flavor_tags`, and `equipment_tags` are provided in the schema context. Only use values from that list.
 
+**Schema note:** The `recipes` table has NO `chef_tips` column. Embed tips directly in the `instructions` array as `**Chef's tip:** ...` (see example above).
+
 ---
 
 ### Quality Bar (Non-Negotiable)
