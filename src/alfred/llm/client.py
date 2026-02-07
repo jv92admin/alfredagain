@@ -5,7 +5,7 @@ Wraps OpenAI with Instructor for guaranteed structured outputs.
 All LLM calls go through here for consistency and observability.
 
 Also provides raw chat functions (call_llm_chat, call_llm_chat_stream)
-for Cook/Brainstorm modes that bypass the graph and don't need structured output.
+for bypass modes that skip the graph and don't need structured output.
 
 Model support:
 - GPT-4.1-mini: Fast, non-reasoning (current default)
@@ -60,7 +60,7 @@ def get_raw_async_client() -> AsyncOpenAI:
     """
     Get a raw async OpenAI client (no Instructor wrapping).
 
-    Used by Cook/Brainstorm modes for unstructured chat completions
+    Used by bypass modes for unstructured chat completions
     and streaming. Singleton pattern.
     """
     global _raw_async_client
@@ -216,12 +216,12 @@ async def call_llm_chat(
     *,
     messages: list[dict[str, str]],
     complexity: str = "low",
-    node_name: str = "cook",
+    node_name: str = "bypass",
 ) -> str:
     """
     Multi-turn chat completion without structured output.
 
-    Used by Cook/Brainstorm modes for conversational responses
+    Used by bypass modes for conversational responses
     and by the handoff summarizer.
 
     Args:
@@ -274,12 +274,12 @@ async def call_llm_chat_stream(
     *,
     messages: list[dict[str, str]],
     complexity: str = "low",
-    node_name: str = "cook",
+    node_name: str = "bypass",
 ) -> AsyncGenerator[str, None]:
     """
     Streaming multi-turn chat completion. Yields token chunks.
 
-    Used by Cook/Brainstorm modes for real-time streaming responses.
+    Used by bypass modes for real-time streaming responses.
 
     Args:
         messages: Full messages array [{"role": "system", ...}, ...]

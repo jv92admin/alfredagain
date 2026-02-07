@@ -357,7 +357,7 @@ class TestCookModeExit:
     """Tests for cook mode exit with handoff."""
 
     def test_exit_with_save_action_injects_summary(self):
-        from alfred.modes.handoff import HandoffResult
+        from alfred.domain.kitchen.handoff import HandoffResult
 
         mock_handoff = HandoffResult(
             summary="Cooked Pancakes. Doubled the garlic.",
@@ -401,7 +401,7 @@ class TestCookModeExit:
         assert "cook_context" not in conversation
 
     def test_exit_with_close_action_no_injection(self):
-        from alfred.modes.handoff import HandoffResult
+        from alfred.domain.kitchen.handoff import HandoffResult
 
         mock_handoff = HandoffResult(
             summary="Normal cook session.",
@@ -505,7 +505,7 @@ class TestBrainstormModeExit:
     """Tests for brainstorm exit with handoff."""
 
     def test_exit_with_save_injects_summary(self):
-        from alfred.modes.handoff import HandoffResult
+        from alfred.domain.kitchen.handoff import HandoffResult
 
         mock_handoff = HandoffResult(
             summary="Developed Miso Eggplant concept.",
@@ -549,7 +549,7 @@ class TestHandoff:
     """Tests for generate_session_handoff."""
 
     def test_cook_handoff_returns_structured_result(self):
-        from alfred.modes.handoff import HandoffResult
+        from alfred.domain.kitchen.handoff import HandoffResult
 
         mock_result = HandoffResult(
             summary="Cooked butter chicken with extra spice.",
@@ -575,7 +575,7 @@ class TestHandoff:
         assert "cook" in call_kwargs["system_prompt"].lower()
 
     def test_brainstorm_handoff_uses_brainstorm_prompt(self):
-        from alfred.modes.handoff import HandoffResult
+        from alfred.domain.kitchen.handoff import HandoffResult
 
         mock_result = HandoffResult(
             summary="Explored miso glazes.",
@@ -604,18 +604,19 @@ class TestHandoff:
 class TestModeConfig:
     """Tests for Mode enum and configuration."""
 
-    def test_cook_mode_bypasses_graph(self):
-        from alfred.core.modes import Mode, MODE_CONFIG
-        config = MODE_CONFIG[Mode.COOK]
-        assert config["bypass_graph"] is True
-        assert config["max_steps"] == 0
-        assert config["skip_think"] is True
+    def test_bypass_modes_registered_via_domain(self):
+        """Bypass modes (cook, brainstorm) are registered via DomainConfig, not Mode enum."""
+        from alfred.domain import get_current_domain
+        domain = get_current_domain()
+        assert "cook" in domain.bypass_modes
+        assert "brainstorm" in domain.bypass_modes
 
-    def test_brainstorm_mode_bypasses_graph(self):
+    def test_core_modes_no_bypass(self):
+        """Core modes (QUICK, PLAN, CREATE) don't have bypass_graph flag."""
         from alfred.core.modes import Mode, MODE_CONFIG
-        config = MODE_CONFIG[Mode.BRAINSTORM]
-        assert config["bypass_graph"] is True
-        assert config["max_steps"] == 0
+        for mode in Mode:
+            config = MODE_CONFIG[mode]
+            assert config.get("bypass_graph") is None or config.get("bypass_graph") is False
 
     def test_plan_mode_unchanged(self):
         from alfred.core.modes import Mode, MODE_CONFIG
@@ -624,13 +625,19 @@ class TestModeConfig:
         assert config["max_steps"] == 8
         assert config["skip_think"] is False
 
-    def test_node_temperatures_for_new_modes(self):
+    def test_bypass_mode_llm_config_via_domain(self):
+        """Bypass mode LLM configs come from domain, not NODE_TEMPERATURE."""
+        from alfred.domain import get_current_domain
         from alfred.llm.model_router import NODE_TEMPERATURE
-        assert "cook" in NODE_TEMPERATURE
-        assert "brainstorm" in NODE_TEMPERATURE
+        domain = get_current_domain()
+        mode_config = domain.get_mode_llm_config()
+        # cook/brainstorm are in domain config, not in core NODE_TEMPERATURE
+        assert "cook" not in NODE_TEMPERATURE
+        assert "brainstorm" not in NODE_TEMPERATURE
+        assert mode_config["cook"]["temperature"] == 0.4
+        assert mode_config["brainstorm"]["temperature"] == 0.6
+        # handoff stays in core
         assert "handoff" in NODE_TEMPERATURE
-        assert NODE_TEMPERATURE["cook"] == 0.4
-        assert NODE_TEMPERATURE["brainstorm"] == 0.6
 
 
 # ---------------------------------------------------------------------------

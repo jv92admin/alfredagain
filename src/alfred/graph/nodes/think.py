@@ -166,7 +166,7 @@ async def think_node(state: AlfredState) -> dict:
     # Format conversation context (condensed for Think)
     context_section = format_condensed_context(conversation)
     
-    # Fetch user profile and kitchen dashboard for decision-making
+    # Fetch user profile and dashboard for decision-making
     profile_section = ""
     dashboard_section = ""
     subdomain_guidance_section = ""
@@ -225,8 +225,8 @@ If they modify → adjust the plan.
         understand_section = f"\n**Entities mentioned**: {referenced_entities}"
     
     # Extract mode info
-    mode_name = mode.name  # QUICK, COOK, PLAN, or CREATE
-    max_steps = {"QUICK": 2, "COOK": 4, "PLAN": 8, "CREATE": 4}.get(mode_name, 4)
+    mode_name = mode.name  # QUICK, PLAN, or CREATE
+    max_steps = mode_context.max_steps
     
     # Build three XML sections that fill the placeholders
     

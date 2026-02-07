@@ -508,12 +508,12 @@ class KitchenConfig(DomainConfig):
     def bypass_modes(self) -> dict[str, type]:
         """Get graph-bypass mode handlers."""
         from alfred.modes.cook import run_cook_session
-        from alfred.modes.brainstorm import run_brainstorm_session
+        from alfred.modes.brainstorm import run_brainstorm
         # Note: These are functions, not classes. The type annotation
         # is flexible - in practice these are async generator functions.
         return {
             "cook": run_cook_session,
-            "brainstorm": run_brainstorm_session,
+            "brainstorm": run_brainstorm,
         }
 
     @property
@@ -536,9 +536,26 @@ class KitchenConfig(DomainConfig):
         """Kitchen router - None for single-agent mode."""
         return None
 
+    def get_payload_compilers(self) -> list:
+        """Kitchen payload compilers for all subdomains."""
+        from alfred.domain.kitchen.compilers import KITCHEN_COMPILERS
+        return KITCHEN_COMPILERS
+
+    def get_mode_llm_config(self) -> dict[str, dict]:
+        """LLM config for bypass modes (cook, brainstorm)."""
+        return {
+            "cook": {"verbosity": "terse", "temperature": 0.4},
+            "brainstorm": {"verbosity": "medium", "temperature": 0.6},
+        }
+
+    def get_handoff_system_prompts(self) -> dict[str, str]:
+        """Handoff prompts for bypass modes."""
+        from alfred.domain.kitchen.handoff import HANDOFF_SYSTEM_PROMPTS
+        return HANDOFF_SYSTEM_PROMPTS
+
     def get_handoff_result_model(self) -> type:
         """Get the HandoffResult Pydantic model."""
-        from alfred.modes.handoff import HandoffResult
+        from alfred.domain.kitchen.handoff import HandoffResult
         return HandoffResult
 
 

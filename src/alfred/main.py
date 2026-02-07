@@ -69,7 +69,7 @@ def chat(
             f"[dim]Mode: [bold]{selected_mode.value}[/bold] (--mode to change)[/dim]\n"
             "[dim]Type 'exit' or 'quit' to end the session.[/dim]\n"
             "[dim]Type 'context' to see current conversation state.[/dim]\n"
-            "[dim]Type 'mode <quick|cook|plan|create>' to switch modes.[/dim]",
+            "[dim]Type 'mode <quick|plan|create>' to switch modes.[/dim]",
             title="Welcome",
             border_style="green",
         )
@@ -107,7 +107,8 @@ def chat(
                     mode_context = ModeContext(selected_mode=selected_mode)
                     console.print(f"[green]Mode switched to: {selected_mode.value}[/green]")
                 except ValueError:
-                    console.print(f"[red]Invalid mode: {new_mode_str}. Options: quick, cook, plan, create[/red]")
+                    valid = ", ".join(m.value for m in Mode)
+                    console.print(f"[red]Invalid mode: {new_mode_str}. Options: {valid}[/red]")
                 continue
 
             # Run through the graph with conversation context

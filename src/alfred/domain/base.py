@@ -833,14 +833,46 @@ class DomainConfig(ABC):
         """
         return None  # Default: single-agent mode
 
+    def get_payload_compilers(self) -> list:
+        """
+        Get domain-specific payload compilers.
+
+        Returns SubdomainCompiler instances that map generated artifacts
+        to schema-ready payloads for database writes.
+
+        Returns:
+            List of SubdomainCompiler instances
+        """
+        return []  # Default: no compilers
+
+    def get_mode_llm_config(self) -> dict[str, dict[str, Any]]:
+        """
+        Get LLM config overrides for domain-specific bypass modes.
+
+        Keys are mode/node names (e.g., "cook", "brainstorm").
+        Values are dicts with optional "verbosity" and "temperature" keys.
+
+        Returns:
+            Dict mapping mode name to LLM config overrides
+        """
+        return {}  # Default: no bypass mode LLM configs
+
+    def get_handoff_system_prompts(self) -> dict[str, str]:
+        """
+        Get system prompts for bypass mode handoff summaries.
+
+        Returns:
+            Dict mapping mode name to handoff system prompt text
+        """
+        return {}  # Default: no handoff prompts
+
     @abstractmethod
     def get_handoff_result_model(self) -> type:
         """
         Get the domain-specific HandoffResult Pydantic model.
 
         Base has: summary, action, action_detail.
-        Kitchen adds: recipe_content.
-        FPL might add: transfer_plan, squad_changes.
+        Domain extends with additional fields (e.g., recipe_content, transfer_plan).
 
         Returns:
             Pydantic model class for handoff results
