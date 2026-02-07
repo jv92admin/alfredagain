@@ -1,39 +1,8 @@
 """
-Alfred V3 Prompts - Modular prompt assembly.
+Alfred Prompts - Modular prompt assembly.
 
-This module provides:
-- Step-type-specific prompt injection
-- Subdomain personas and scope
-- Contextual examples for Act steps
+Prompt injection, persona, and example content is provided by each domain
+via DomainConfig methods. Use get_current_domain() to access domain-specific
+prompt content rather than importing directly from this package.
 """
-
-from alfred.prompts.injection import build_act_prompt, get_verbosity_label
-from alfred.domain.kitchen.personas import (
-    SUBDOMAIN_INTRO,
-    SUBDOMAIN_PERSONAS,
-    SUBDOMAIN_SCOPE,
-    get_subdomain_intro,
-    get_persona_for_subdomain,
-    get_scope_for_subdomain,
-    get_subdomain_dependencies_summary,
-    get_full_subdomain_content,
-)
-from alfred.domain.kitchen.examples import get_contextual_examples
-
-__all__ = [
-    # Injection
-    "build_act_prompt",
-    "get_verbosity_label",
-    # Personas
-    "SUBDOMAIN_INTRO",
-    "SUBDOMAIN_PERSONAS",
-    "SUBDOMAIN_SCOPE",
-    "get_subdomain_intro",
-    "get_persona_for_subdomain",
-    "get_scope_for_subdomain",
-    "get_subdomain_dependencies_summary",
-    "get_full_subdomain_content",
-    # Examples
-    "get_contextual_examples",
-]
 

@@ -97,6 +97,135 @@ REPLY_STRIP_FIELDS = {
 
 
 # =============================================================================
+# Act Context Formatters (moved from injection.py Phase 3.5b)
+# =============================================================================
+
+
+def format_record_for_context(record: dict, table: str | None = None) -> str:
+    """Format a single record using table-specific protocol for Act prompt context."""
+    if not record:
+        return "  (empty)"
+
+    # Get protocol for this table (or use generic)
+    protocol = TABLE_FORMAT_PROTOCOLS.get(table, {
+        "primary": "name",
+        "details": ["quantity", "unit", "location"],
+        "show_id": True,
+    })
+
+    # Special format: key-value pairs (for preferences, single-row configs)
+    if protocol.get("format") == "key_value":
+        return _format_record_key_value(record, protocol)
+
+    # Special format: meal plan (date [slot] -> recipe)
+    if protocol.get("format") == "meal_plan":
+        return format_meal_plan_record(record, protocol)
+
+    # Special format: recipe (with grouped ingredients)
+    if protocol.get("format") == "recipe":
+        return format_recipe_record(record, protocol)
+
+    # Get primary identifier
+    primary_field = protocol.get("primary", "name")
+    primary_value = record.get(primary_field) or record.get("name") or record.get("title") or "item"
+
+    parts = [f"  - {primary_value}"]
+
+    # Add configured details
+    for field in protocol.get("details", []):
+        value = record.get(field)
+        if value is not None and value != "":
+            if field in ("quantity",):
+                unit = record.get("unit", "")
+                parts.append(f"({value}{' ' + unit if unit else ''})")
+            elif field in ("location", "meal_type", "status"):
+                parts.append(f"[{value}]")
+            elif field in ("cuisine", "category"):
+                parts.append(f"({value})")
+            elif field in ("date", "due_date", "expiry_date"):
+                parts.append(f"@{value}")
+            elif field == "recipe_id":
+                label = record.get("_recipe_id_label")
+                if label:
+                    parts.append(f"recipe:{label} ({value})")
+                else:
+                    parts.append(f"recipe:{value}")
+            elif field in ("total_time", "servings"):
+                parts.append(f"{field}:{value}")
+            elif field in ("tags", "occasions", "health_tags", "flavor_tags", "equipment_tags") and isinstance(value, list):
+                parts.append(f"[{', '.join(value[:3])}{'...' if len(value) > 3 else ''}]")
+            else:
+                parts.append(f"{field}:{value}")
+
+    # Add ingredient enrichment (from joined ingredients table)
+    ingredients_data = record.get("ingredients")
+    if ingredients_data and isinstance(ingredients_data, dict):
+        ing_parts = []
+        for field in protocol.get("ingredient_details", []):
+            value = ingredients_data.get(field)
+            if value is not None and value != "" and value != []:
+                if field == "parent_category":
+                    ing_parts.append(value)
+                elif field == "tier":
+                    tier_label = {1: "common", 2: "standard", 3: "specialty"}.get(value, str(value))
+                    ing_parts.append(tier_label)
+                elif field == "family":
+                    ing_parts.append(f"family:{value}")
+                elif field == "cuisines" and isinstance(value, list) and value:
+                    ing_parts.append(f"cuisines:{','.join(value[:2])}")
+        if ing_parts:
+            parts.append(f"| {' | '.join(ing_parts)}")
+
+    # Add ID if protocol says to
+    if protocol.get("show_id", True) and record.get("id"):
+        parts.append(f"id:{record['id']}")
+
+    return " ".join(parts)
+
+
+def _format_record_key_value(record: dict, protocol: dict) -> str:
+    """Format a record as key-value pairs (for preferences, configs)."""
+    lines = ["  User Preferences:"]
+    for field in protocol.get("details", []):
+        value = record.get(field)
+        if value is not None and value != "" and value != []:
+            if isinstance(value, list):
+                value_str = ", ".join(str(v) for v in value)
+            else:
+                value_str = str(value)
+            label = field.replace("_", " ").title()
+            lines.append(f"    - {label}: {value_str}")
+    return "\n".join(lines)
+
+
+def format_records_for_context(
+    records: list[dict], table: str | None = None
+) -> list[str]:
+    """Format a list of records with table-aware formatting for Act prompt context."""
+    if not records:
+        return ["  (no records)"]
+
+    protocol = TABLE_FORMAT_PROTOCOLS.get(table, {})
+
+    # Check if we should group (e.g., recipe_ingredients by recipe_id)
+    group_by = protocol.get("group_by")
+
+    if group_by and table == "recipe_ingredients":
+        grouped: dict[str, list[str]] = defaultdict(list)
+        for rec in records:
+            key = rec.get(group_by, "unknown")
+            grouped[key].append(rec.get("name", "item"))
+
+        lines = []
+        for recipe_id, ingredients in grouped.items():
+            lines.append(f"  - recipe:{recipe_id}: {len(ingredients)} ingredients ({', '.join(ingredients[:5])}{'...' if len(ingredients) > 5 else ''})")
+        return lines
+
+    # Standard formatting
+    return [format_record_for_context(rec, table) for rec in records]
+
+
+# =============================================================================
 # Record Formatters (from injection.py)
 # =============================================================================
 

@@ -56,7 +56,7 @@ from alfred.graph.state import (
 from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
-from alfred.prompts.injection import build_act_prompt, build_act_user_prompt
+from alfred.prompts.injection import build_act_user_prompt
 from alfred.tools.crud import execute_crud
 from alfred.tools.schema import get_schema_with_fallback
 
@@ -395,8 +395,9 @@ def _format_step_results(
     the critical info (IDs, names) that Act needs for subsequent steps.
     """
     import json
-    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
-    
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+
     if not step_results:
         return "### Previous Step Results\n*No previous steps completed yet.*"
 
@@ -478,7 +479,7 @@ def _format_step_results(
                     else:
                         lines.append(_summarize_step_data(data, table))
         elif isinstance(result, list):
-            table = _infer_table_from_record(result[0]) if result else None
+            table = domain.infer_table_from_record(result[0]) if result else None
             lines.append(f"**Step {step_num}** ({len(result)} records):")
             if is_recent:
                 lines.extend(_format_step_data_clean(result, table))
@@ -576,17 +577,18 @@ def _normalize_subdomain(raw: str) -> str:
 
 def _format_step_data_clean(data: Any, table: str | None) -> list[str]:
     """Format step data in clean, readable format with IDs preserved.
-    
-    V4: IDs are now simple refs (recipe_1, inv_5) from the registry,
+
+    V4: IDs are now simple refs (item_1, item_5) from the registry,
     so we display them in full (no truncation needed).
     """
-    from alfred.prompts.injection import _format_records_for_table
-    
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+
     if isinstance(data, list):
         if not data:
             return ["  (no records)"]
-        formatted = _format_records_for_table(data, table)
-        # V4: IDs are simple refs - display in full
+        formatted = domain.format_records_for_context(data, table)
+        # IDs are simple refs - display in full
         ids = [str(r.get("id")) for r in data if isinstance(r, dict) and r.get("id")]
         if ids:
             formatted.append(f"  **IDs:** {', '.join(ids)}")
@@ -594,8 +596,7 @@ def _format_step_data_clean(data: Any, table: str | None) -> list[str]:
     elif isinstance(data, int):
         return [f"  Affected {data} records"]
     elif isinstance(data, dict):
-        from alfred.prompts.injection import _format_record_clean
-        return [_format_record_clean(data, table)]
+        return [domain.format_record_for_context(data, table)]
     else:
         return [f"  {str(data)[:200]}"]
 
@@ -646,7 +647,8 @@ def _extract_key_fields(records: list[dict]) -> str:
 
 def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int) -> str:
     """Format tool results from current step - show ACTUAL data with clean formatting."""
-    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
     
     if not tool_results:
         return ""
@@ -664,7 +666,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
         
         # Infer table from data if not provided
         if not table and isinstance(result, list) and result:
-            table = _infer_table_from_record(result[0])
+            table = domain.infer_table_from_record(result[0])
         
         table_label = f" on `{table}`" if table else ""
         lines.append(f"### Tool Call {i}: `{tool_name}`{table_label}")
@@ -678,7 +680,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
                 else:
                     lines.append(f"**Result: {len(result)} records found:**")
                     # Clean formatted records with IDs visible
-                    formatted = _format_records_for_table(result[:50], table)
+                    formatted = domain.format_records_for_context(result[:50], table)
                     lines.extend(formatted)
                     if len(result) > 50:
                         lines.append(f"  ... and {len(result) - 50} more")
@@ -694,7 +696,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
         elif tool_name == "db_create":
             if isinstance(result, list):
                 lines.append(f"**✓ Created {len(result)} records:**")
-                formatted = _format_records_for_table(result, table)
+                formatted = domain.format_records_for_context(result, table)
                 lines.extend(formatted)
                 # Show IDs created
                 ids = [str(r.get("id")) for r in result if isinstance(r, dict) and r.get("id")]
@@ -702,8 +704,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
                     lines.append(f"**Created IDs:** {ids}")
             elif isinstance(result, dict):
                 lines.append(f"**✓ Created 1 record:**")
-                from alfred.prompts.injection import _format_record_clean
-                lines.append(_format_record_clean(result, table))
+                lines.append(domain.format_record_for_context(result, table))
             else:
                 lines.append(f"**✓ Created:** `{result}`")
         elif tool_name == "db_update":
@@ -771,9 +772,10 @@ def build_act_entity_context(
     Returns:
         Formatted entity context string
     """
-    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
+    from alfred.domain import get_current_domain
     import json
-    
+    domain = get_current_domain()
+
     lines = []
 
     # Entity Source Legend (centralized in entity.py)
@@ -841,7 +843,7 @@ def build_act_entity_context(
                     
                 if isinstance(data, list):
                     if not table and data:
-                        table = _infer_table_from_record(data[0])
+                        table = domain.infer_table_from_record(data[0])
                     for record in data:
                         if isinstance(record, dict) and record.get("id"):
                             ref = str(record["id"])

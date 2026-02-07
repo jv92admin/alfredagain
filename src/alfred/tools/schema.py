@@ -61,16 +61,13 @@ def get_complexity_rules(subdomain: str) -> dict[str, str] | None:
 def get_persona_for_subdomain(subdomain: str, step_type: str = "crud") -> str:
     """Get the persona text for a subdomain.
 
-    DEPRECATED: Import from alfred.prompts.personas instead.
-    This function forwards to the canonical source for backwards compat.
+    DEPRECATED: Use domain.get_persona() instead.
 
     Args:
         subdomain: The subdomain (recipes, inventory, shopping, etc.)
         step_type: The step type (read, write, generate, analyze).
     """
-    # Forward to canonical source
-    from alfred.domain.kitchen.personas import get_persona_for_subdomain as _get_persona
-    return _get_persona(subdomain, step_type)
+    return _get_domain().get_persona(subdomain, step_type)
 
 
 def get_scope_for_subdomain(subdomain: str) -> str:
@@ -367,28 +364,20 @@ def _get_subdomain_examples():
 
 
 # Legacy constant access — for imports like `from alfred.tools.schema import FIELD_ENUMS`
-# These are consumed by web/schema_routes.py and tests. Redirect to domain.
-# TODO(Phase 3a): Update consumers to import from domain.kitchen.schema directly.
+# These are consumed by web/schema_routes.py and tools/__init__.py. Redirect to domain.
 def __getattr__(name):
-    """Module-level __getattr__ for lazy constant access."""
-    if name == "FIELD_ENUMS":
-        from alfred.domain.kitchen.schema import FIELD_ENUMS
-        return FIELD_ENUMS
-    if name == "SEMANTIC_NOTES":
-        from alfred.domain.kitchen.schema import SEMANTIC_NOTES
-        return SEMANTIC_NOTES
-    if name == "FALLBACK_SCHEMAS":
-        from alfred.domain.kitchen.schema import FALLBACK_SCHEMAS
-        return FALLBACK_SCHEMAS
-    if name == "SUBDOMAIN_SCOPE":
-        from alfred.domain.kitchen.schema import SUBDOMAIN_SCOPE
-        return SUBDOMAIN_SCOPE
-    if name == "SUBDOMAIN_REGISTRY":
-        from alfred.domain.kitchen.schema import SUBDOMAIN_REGISTRY
-        return SUBDOMAIN_REGISTRY
-    if name == "SUBDOMAIN_EXAMPLES":
-        from alfred.domain.kitchen.schema import SUBDOMAIN_EXAMPLES
-        return SUBDOMAIN_EXAMPLES
+    """Module-level __getattr__ for lazy constant access via domain config."""
+    domain = _get_domain()
+    _ATTR_MAP = {
+        "FIELD_ENUMS": "get_field_enums",
+        "SEMANTIC_NOTES": "get_semantic_notes",
+        "FALLBACK_SCHEMAS": "get_fallback_schemas",
+        "SUBDOMAIN_SCOPE": "get_subdomain_scope",
+        "SUBDOMAIN_REGISTRY": "get_subdomain_registry",
+        "SUBDOMAIN_EXAMPLES": "get_subdomain_examples",
+    }
+    if name in _ATTR_MAP:
+        return getattr(domain, _ATTR_MAP[name])()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

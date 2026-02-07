@@ -254,18 +254,42 @@ class DomainConfig(ABC):
         ...
 
     @abstractmethod
-    def get_examples(self, subdomain: str, step_type: str) -> str:
+    def get_examples(
+        self,
+        subdomain: str,
+        step_type: str,
+        step_description: str = "",
+        prev_subdomain: str | None = None,
+    ) -> str:
         """
         Get example interactions for a subdomain and step type.
 
         Args:
             subdomain: The subdomain (e.g., "recipes", "inventory")
             step_type: The step type (e.g., "read", "write", "analyze")
+            step_description: Description of the current step (for contextual matching)
+            prev_subdomain: Previous step's subdomain (for cross-domain patterns)
 
         Returns:
             Example text for the LLM
         """
         ...
+
+    def get_act_subdomain_header(self, subdomain: str, step_type: str) -> str:
+        """
+        Get the subdomain header for Act prompt context.
+
+        Combines subdomain intro, persona, and scope into a single header block
+        used at the top of Act prompts.
+
+        Args:
+            subdomain: The subdomain
+            step_type: The step type
+
+        Returns:
+            Combined header markdown, or empty string
+        """
+        return ""
 
     @abstractmethod
     def get_table_format(self, table: str) -> dict[str, Any]:
@@ -743,6 +767,48 @@ class DomainConfig(ABC):
             Ordered list of field names
         """
         return ["name", "title", "date", "description", "notes", "category"]
+
+    def format_record_for_context(self, record: dict, table: str | None = None) -> str:
+        """
+        Format a single record for Act prompt context.
+
+        Override for domain-specific rendering (e.g., table-aware formatting
+        with quantity, location, cuisine fields).
+
+        Args:
+            record: A database record dict
+            table: Optional table name for format lookup
+
+        Returns:
+            Formatted string (e.g., "  - Chicken Thighs (2 lbs) [fridge] id:inv_5")
+        """
+        if not record:
+            return "  (empty)"
+        name = record.get("name") or record.get("title") or "item"
+        parts = [f"  - {name}"]
+        if record.get("id"):
+            parts.append(f"id:{record['id']}")
+        return " ".join(parts)
+
+    def format_records_for_context(
+        self, records: list[dict], table: str | None = None
+    ) -> list[str]:
+        """
+        Format a list of records for Act prompt context.
+
+        Override for domain-specific grouping (e.g., recipe_ingredients
+        grouped by recipe_id).
+
+        Args:
+            records: List of record dicts
+            table: Optional table name for format lookup
+
+        Returns:
+            List of formatted strings, one per record or group
+        """
+        if not records:
+            return ["  (no records)"]
+        return [self.format_record_for_context(r, table) for r in records]
 
     def format_records_for_reply(
         self, records: list[dict], table_type: str | None, indent: int = 2

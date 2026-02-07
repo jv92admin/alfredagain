@@ -163,10 +163,26 @@ class KitchenConfig(DomainConfig):
         from alfred.domain.kitchen.personas import get_persona_for_subdomain
         return get_persona_for_subdomain(subdomain, step_type)
 
-    def get_examples(self, subdomain: str, step_type: str) -> str:
+    def get_examples(
+        self,
+        subdomain: str,
+        step_type: str,
+        step_description: str = "",
+        prev_subdomain: str | None = None,
+    ) -> str:
         """Get examples for subdomain. Delegates to examples module."""
         from alfred.domain.kitchen.examples import get_contextual_examples
-        return get_contextual_examples(subdomain, step_type)
+        return get_contextual_examples(
+            subdomain=subdomain,
+            step_description=step_description,
+            prev_subdomain=prev_subdomain,
+            step_type=step_type,
+        )
+
+    def get_act_subdomain_header(self, subdomain: str, step_type: str) -> str:
+        """Get subdomain intro + persona for Act prompt context."""
+        from alfred.domain.kitchen.personas import get_full_subdomain_content
+        return get_full_subdomain_content(subdomain, step_type)
 
     def get_table_format(self, table: str) -> dict[str, Any]:
         """Get formatting rules for a table."""
@@ -488,6 +504,18 @@ class KitchenConfig(DomainConfig):
             "location", "notes", "description", "instructions", "category",
             "cuisine", "difficulty", "servings", "tags", "rating",
         ]
+
+    def format_record_for_context(self, record: dict, table: str | None = None) -> str:
+        """Kitchen-specific record formatting for Act prompt context."""
+        from alfred.domain.kitchen.formatters import format_record_for_context
+        return format_record_for_context(record, table)
+
+    def format_records_for_context(
+        self, records: list[dict], table: str | None = None
+    ) -> list[str]:
+        """Kitchen-specific record list formatting for Act prompt context."""
+        from alfred.domain.kitchen.formatters import format_records_for_context
+        return format_records_for_context(records, table)
 
     def format_records_for_reply(
         self, records: list[dict], table_type: str | None, indent: int = 2

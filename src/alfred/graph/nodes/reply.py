@@ -29,7 +29,6 @@ from alfred.memory.conversation import format_condensed_context
 
 # Load prompts once at module level
 _REPLY_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "reply.md"
-_SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent / "domain" / "kitchen" / "prompts" / "system.md"
 _REPLY_PROMPT: str | None = None
 _SYSTEM_PROMPT: str | None = None
 
@@ -38,14 +37,14 @@ def _get_prompts() -> tuple[str, str]:
     """Load the reply and system prompts, injecting domain-specific content."""
     global _REPLY_PROMPT, _SYSTEM_PROMPT
     from alfred.domain import get_current_domain
+    domain = get_current_domain()
 
     if _SYSTEM_PROMPT is None:
-        _SYSTEM_PROMPT = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        _SYSTEM_PROMPT = domain.get_system_prompt()
 
     if _REPLY_PROMPT is None:
         raw = _REPLY_PROMPT_PATH.read_text(encoding="utf-8")
         # Inject domain-specific subdomain formatting guide
-        domain = get_current_domain()
         subdomain_guide = domain.get_reply_subdomain_guide()
         _REPLY_PROMPT = raw.replace("{domain_subdomain_guide}", subdomain_guide)
 
@@ -654,7 +653,7 @@ If the user wanted an update but you only read, explain that the update didn't h
 
 {format_entity_context(entity_context_section, mode="reply")}
 
-**Key:** `recipe_3` = already saved (don't offer to save). `gen_recipe_1` = generated, not saved (offer to save).
+**Key:** `item_3` = already saved (don't offer to save). `gen_item_1` = generated, not saved (offer to save).
 """
     
     # V6: Build conversation flow section for continuity
@@ -678,7 +677,7 @@ If the user wanted an update but you only read, explain that the update didn't h
 
 Generate a natural, helpful response. Lead with the outcome, be specific, be concise.
 Speak as a WITNESS - report what actually happened, not what should have happened.
-**If recommending a saved recipe (recipe_X), present IT — don't invent a new one or offer to save.**"""
+**If recommending a saved item (item_X), present IT — don't invent a new one or offer to save.**"""
 
     try:
         result = await call_llm(
@@ -719,8 +718,8 @@ def _format_execution_summary(
     - Includes single next-step suggestion
     
     V5 Change:
-    - Enriches entity refs (recipe_1, meal_1) with labels for better Reply context
-    
+    - Enriches entity refs (item_1, item_2) with labels for better Reply context
+
     Shows:
     - V4 status (batch, generated vs saved)
     - Plan overview (how many steps, completion status)
@@ -1136,7 +1135,7 @@ def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000, re
     For analyze/generate steps, preserves structure but strips IDs.
     For CRUD, extracts key human-readable fields.
     
-    V5: Enriches entity refs (recipe_1, meal_1) with labels from registry.
+    V5: Enriches entity refs (item_1, item_2) with labels from registry.
     """
     import json
     import re
@@ -1144,7 +1143,7 @@ def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000, re
     ref_labels = ref_labels or {}
     
     def _enrich_ref(value: str) -> str:
-        """Enrich a ref like 'recipe_1' with its label if available."""
+        """Enrich a ref like 'item_1' with its label if available."""
         if not isinstance(value, str):
             return value
         # Check if it looks like a ref (entity_N pattern)
