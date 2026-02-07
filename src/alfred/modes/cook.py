@@ -17,7 +17,7 @@ from alfred.tools.crud import db_read, DbReadParams, FilterClause
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "cook.md"
+_PROMPT_PATH = Path(__file__).parent.parent / "domain" / "kitchen" / "prompts" / "cook.md"
 
 # History cap: 20 messages = 10 user/assistant exchanges
 _MAX_HISTORY = 20

@@ -1,13 +1,11 @@
 """
-Alfred V2 - Database Client.
+Alfred - Database Client.
 
-Provides Supabase access with hybrid SQL + vector retrieval.
+Provides Supabase access via authenticated client.
 """
 
 from alfred.db.client import get_client
-from alfred.db.context import get_context
 
 __all__ = [
     "get_client",
-    "get_context",
 ]

@@ -462,7 +462,7 @@ class KitchenConfig(DomainConfig):
     def get_system_prompt(self) -> str:
         """Get kitchen system prompt."""
         from pathlib import Path
-        prompt_path = Path(__file__).parent.parent.parent.parent / "prompts" / "system.md"
+        prompt_path = Path(__file__).parent / "prompts" / "system.md"
         return prompt_path.read_text(encoding="utf-8")
 
     def get_quick_write_confirmation(
@@ -540,6 +540,31 @@ class KitchenConfig(DomainConfig):
         """Kitchen payload compilers for all subdomains."""
         from alfred.domain.kitchen.compilers import KITCHEN_COMPILERS
         return KITCHEN_COMPILERS
+
+    def get_think_domain_context(self) -> str:
+        """Kitchen domain context and philosophy for Think node."""
+        from alfred.domain.kitchen.prompts.think_injections import THINK_DOMAIN_CONTEXT
+        return THINK_DOMAIN_CONTEXT
+
+    def get_think_planning_guide(self) -> str:
+        """Kitchen planning guide with subdomains, linked tables, etc."""
+        from alfred.domain.kitchen.prompts.think_injections import THINK_PLANNING_GUIDE
+        return THINK_PLANNING_GUIDE
+
+    def get_act_prompt_injection(self, step_type: str) -> str:
+        """Kitchen-specific Act prompt guidance for each step type."""
+        from alfred.domain.kitchen.prompts.act_injections import ACT_INJECTIONS
+        return ACT_INJECTIONS.get(step_type, "")
+
+    def get_reply_subdomain_guide(self) -> str:
+        """Kitchen subdomain formatting guide for Reply node."""
+        from alfred.domain.kitchen.prompts.reply_guide import REPLY_SUBDOMAIN_GUIDE
+        return REPLY_SUBDOMAIN_GUIDE
+
+    def get_router_prompt_injection(self) -> str:
+        """Kitchen agent definitions for Router node."""
+        from alfred.domain.kitchen.prompts.router_content import ROUTER_CONTENT
+        return ROUTER_CONTENT
 
     def get_mode_llm_config(self) -> dict[str, dict]:
         """LLM config for bypass modes (cook, brainstorm)."""

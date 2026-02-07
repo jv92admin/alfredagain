@@ -84,10 +84,19 @@ _SYSTEM_PROMPT: str | None = None
 
 
 def _get_system_prompt() -> str:
-    """Load the think system prompt."""
+    """Load the think system prompt, injecting domain-specific content."""
     global _SYSTEM_PROMPT
     if _SYSTEM_PROMPT is None:
-        _SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
+        from alfred.domain import get_current_domain
+        raw = _PROMPT_PATH.read_text(encoding="utf-8")
+        domain = get_current_domain()
+        domain_context = domain.get_think_domain_context()
+        domain_guide = domain.get_think_planning_guide()
+        _SYSTEM_PROMPT = raw.replace(
+            "{domain_context}", domain_context
+        ).replace(
+            "{domain_planning_guide}", domain_guide
+        )
     return _SYSTEM_PROMPT
 
 

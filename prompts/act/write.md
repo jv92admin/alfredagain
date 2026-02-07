@@ -23,18 +23,18 @@ Create, update, or delete database records.
 {
   "tool": "db_create",
   "params": {
-    "table": "recipe_ingredients",
+    "table": "child_records",
     "data": [
-      {"recipe_id": "gen_recipe_1", "name": "garlic", "quantity": 2, "unit": "cloves"},
-      {"recipe_id": "gen_recipe_1", "name": "olive oil", "quantity": 2, "unit": "tbsp"},
-      {"recipe_id": "gen_recipe_2", "name": "chicken", "quantity": 1, "unit": "lb"},
-      {"recipe_id": "gen_recipe_2", "name": "rice", "quantity": 1, "unit": "cup"}
+      {"parent_id": "gen_item_1", "name": "item A", "quantity": 2, "unit": "pcs"},
+      {"parent_id": "gen_item_1", "name": "item B", "quantity": 1, "unit": "tbsp"},
+      {"parent_id": "gen_item_2", "name": "item C", "quantity": 1, "unit": "lb"},
+      {"parent_id": "gen_item_2", "name": "item D", "quantity": 1, "unit": "cup"}
     ]
   }
 }
 ```
 
-**Key:** Include ALL records for ALL items in one call. Don't do recipe 1's ingredients, then recipe 2's separately.
+**Key:** Include ALL records for ALL items in one call. Don't do item 1's children, then item 2's separately.
 
 ---
 
@@ -45,9 +45,9 @@ Modify existing record by ID:
 {
   "tool": "db_update",
   "params": {
-    "table": "shopping_list",
-    "filters": [{"field": "id", "op": "=", "value": "shop_1"}],
-    "data": {"is_purchased": true}
+    "table": "items",
+    "filters": [{"field": "id", "op": "=", "value": "item_1"}],
+    "data": {"status": "completed"}
   }
 }
 ```
@@ -63,8 +63,8 @@ Remove record by ID:
 {
   "tool": "db_delete",
   "params": {
-    "table": "inventory",
-    "filters": [{"field": "id", "op": "=", "value": "inv_5"}]
+    "table": "items",
+    "filters": [{"field": "id", "op": "=", "value": "item_5"}]
   }
 }
 ```
@@ -79,15 +79,13 @@ When creating parent + children:
 1. `db_create` parent(s) → get IDs
 2. `db_create` ALL children in one batch with parent IDs
 
-When deleting:
-- `recipes` → `recipe_ingredients`: **CASCADE** (just delete recipes)
-- Other tables: delete children first, then parent
+When deleting, check schema for cascade behavior. Some tables cascade deletes automatically; others require deleting children first.
 
 ---
 
 ## FK Handling
 
-- Use refs from "Working Set" or "Previous Step Note": `recipe_1`, `gen_recipe_1`
+- Use refs from "Working Set" or "Previous Step Note": `item_1`, `gen_item_1`
 - System translates refs to UUIDs automatically
 - If FK is optional and unavailable, use `null`
 

@@ -29,21 +29,26 @@ from alfred.memory.conversation import format_condensed_context
 
 # Load prompts once at module level
 _REPLY_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "reply.md"
-_SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "system.md"
+_SYSTEM_PROMPT_PATH = Path(__file__).parent.parent.parent / "domain" / "kitchen" / "prompts" / "system.md"
 _REPLY_PROMPT: str | None = None
 _SYSTEM_PROMPT: str | None = None
 
 
 def _get_prompts() -> tuple[str, str]:
-    """Load the reply and system prompts."""
+    """Load the reply and system prompts, injecting domain-specific content."""
     global _REPLY_PROMPT, _SYSTEM_PROMPT
-    
+    from alfred.domain import get_current_domain
+
     if _SYSTEM_PROMPT is None:
         _SYSTEM_PROMPT = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    
+
     if _REPLY_PROMPT is None:
-        _REPLY_PROMPT = _REPLY_PROMPT_PATH.read_text(encoding="utf-8")
-    
+        raw = _REPLY_PROMPT_PATH.read_text(encoding="utf-8")
+        # Inject domain-specific subdomain formatting guide
+        domain = get_current_domain()
+        subdomain_guide = domain.get_reply_subdomain_guide()
+        _REPLY_PROMPT = raw.replace("{domain_subdomain_guide}", subdomain_guide)
+
     return _SYSTEM_PROMPT, _REPLY_PROMPT
 
 

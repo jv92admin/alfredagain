@@ -19,16 +19,16 @@ Each filter: `{"field": "...", "op": "...", "value": "..."}`
 
 | Operator | Purpose | Example |
 |----------|---------|---------|
-| `=` | Exact match | `{"field": "id", "op": "=", "value": "recipe_1"}` |
+| `=` | Exact match | `{"field": "id", "op": "=", "value": "item_1"}` |
 | `!=` | Not equal | `{"field": "status", "op": "!=", "value": "expired"}` |
 | `>`, `<`, `>=`, `<=` | Comparisons | `{"field": "quantity", "op": ">", "value": 0}` |
-| `in` | Match any in list | `{"field": "id", "op": "in", "value": ["recipe_1", "recipe_2"]}` |
-| `not_in` | Exclude list | `{"field": "id", "op": "not_in", "value": ["recipe_5"]}` |
+| `in` | Match any in list | `{"field": "id", "op": "in", "value": ["item_1", "item_2"]}` |
+| `not_in` | Exclude list | `{"field": "id", "op": "not_in", "value": ["item_5"]}` |
 | `ilike` | Fuzzy text | `{"field": "name", "op": "ilike", "value": "%chicken%"}` |
-| `is_null` | Field is null | `{"field": "expiry_date", "op": "is_null", "value": true}` |
+| `is_null` | Field is null | `{"field": "due_date", "op": "is_null", "value": true}` |
 | `contains` | Array contains | `{"field": "occasions", "op": "contains", "value": ["weeknight"]}` |
 
-**Note:** Use simple refs like `recipe_1`, `inv_5`. System translates to UUIDs automatically.
+**Note:** Use simple refs like `item_1`, `item_5`. System translates to UUIDs automatically.
 
 ---
 

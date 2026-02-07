@@ -339,30 +339,39 @@ def _load_prompt(filename: str) -> str:
 def _get_system_prompt(step_type: str = "read") -> str:
     """
     Build the Act system prompt from layers.
-    
+
     Layers (Act is execution, not user-facing — no system.md):
     1. base.md - Act's role in Alfred (execution engine)
     2. crud.md - Tools, filters, operators (only for read/write)
     3. {step_type}.md - Mechanics for this step type
-    
+    4. Domain-specific guidance (from DomainConfig.get_act_prompt_injection)
+
     Subdomain content (persona, user profile, schema) is added to user_prompt.
     """
+    from alfred.domain import get_current_domain
+
     base = _load_prompt("base.md")
     step_type_content = _load_prompt(f"{step_type}.md")
-    
+
     # Build layers: base → (crud) → step_type
     parts = [base]
-    
+
     # CRUD steps need the tools reference
     if step_type in ("read", "write"):
         crud = _load_prompt("crud.md")
         if crud:
             parts.append(crud)
-    
+
     # Add step-type-specific content (read.md, write.md, analyze.md, generate.md)
     if step_type_content:
         parts.append(step_type_content)
-    
+
+    # Add domain-specific guidance (examples, patterns, table-specific rules)
+    domain = get_current_domain()
+    domain_injection = domain.get_act_prompt_injection(step_type)
+    if domain_injection:
+        parts.append(domain_injection)
+
     return "\n\n---\n\n".join(parts)
 
 

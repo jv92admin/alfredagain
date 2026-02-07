@@ -84,8 +84,8 @@ Summarize updates:
 
 **Critical Rules**:
 - **Proposals ≠ Completed actions**
-  - "I'll save the recipes" → "Proposed to save recipes"
-  - "Done! I saved the recipes." → "Saved recipes: [names]"
+  - "I'll save the items" → "Proposed to save items"
+  - "Done! I saved the items." → "Saved items: [names]"
 - Use EXACT entity names from the text
 
 ### 2. Conversation Compression (`_compress_turns_to_narrative`)
@@ -98,7 +98,7 @@ Summarize updates:
 
 **Critical Rules**:
 - Focus on conversation arc, not entity IDs
-- "User explored meal planning, decided on fish recipes, saved 3 options"
+- "User explored options, decided on a direction, saved 3 items"
 - NO UUIDs, NO technical details
 - This is for Understand's narrative context
 
@@ -108,16 +108,16 @@ Summarize updates:
 
 ```json
 {
-  "turn_summary": "Created 3 fish recipes, saved to database",
+  "turn_summary": "Created 3 items, saved to database",
   "entities_created": [
-    {"id": "abc123", "type": "recipe", "label": "Honey Glazed Cod"}
+    {"id": "abc123", "type": "item", "label": "Example Item"}
   ],
   "entities_updated": [],
   "entities_deleted": [],
-  "artifacts_generated": {"recipes": 3},
-  "artifacts_saved": {"recipes": 3},
+  "artifacts_generated": {"items": 3},
+  "artifacts_saved": {"items": 3},
   "errors": [],
-  "next_step_suggestion": "Would you like to add these to a meal plan?"
+  "next_step_suggestion": "Would you like to do anything else with these?"
 }
 ```
 

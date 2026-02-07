@@ -12,27 +12,12 @@ Fetch data from database to inform current or later steps.
 
 | Think said | You do |
 |-----------|--------|
-| "Read saved recipes" | Read ALL recipes (`filters: []`) |
-| "Read recipes matching 'chicken'" | Filter by `name ilike %chicken%` |
-| "Read user's inventory" | Read ALL inventory items |
-| "Read what's in my pantry" | Read ALL inventory items (`filters: []`) |
+| "Read all items" | Read ALL items (`filters: []`) |
+| "Read items matching 'X'" | Filter by `name ilike %X%` |
+| "Read user's data" | Read ALL rows (`filters: []`) |
 
-**Wrong:** Think says "read recipes" → you add tag/cuisine filters based on conversation context.
-**Right:** Think says "read recipes" → you read recipes. Period.
-
-### ⚠️ Broader Intent Before Filtering
-
-When reading inventory, **default to ALL items** unless user explicitly requests a specific location.
-
-| User says | Intent | Filter |
-|-----------|--------|--------|
-| "What do I have?" | All inventory | `filters: []` |
-| "What's in my pantry?" | All inventory | `filters: []` |
-| "Show my kitchen" | All inventory | `filters: []` |
-| "What's in my fridge?" | Specific location | `location = 'fridge'` |
-| "What's in my freezer?" | Specific location | `location = 'freezer'` |
-
-**"Pantry" and "kitchen" are colloquial terms for all food inventory.**
+**Wrong:** Think says "read items" → you add extra filters based on conversation context.
+**Right:** Think says "read items" → you read items. Period.
 
 If filtering is needed, Think will specify it in the step description or a later `analyze` step will narrow down.
 
@@ -65,9 +50,9 @@ Entity Context shows what entities exist and their IDs. Use it to:
   "action": "tool_call",
   "tool": "db_read",
   "params": {
-    "table": "recipes",
+    "table": "items",
     "filters": [
-      {"field": "name", "op": "ilike", "value": "%chicken%"}
+      {"field": "name", "op": "ilike", "value": "%keyword%"}
     ],
     "limit": 10
   }
@@ -85,9 +70,9 @@ When prior steps or turns have loaded entities, reference them by ID:
 **Fetch specific entities:**
 ```json
 {
-  "table": "recipes",
+  "table": "items",
   "filters": [
-    {"field": "id", "op": "in", "value": ["recipe_1", "recipe_2"]}
+    {"field": "id", "op": "in", "value": ["item_1", "item_2"]}
   ]
 }
 ```
@@ -95,9 +80,9 @@ When prior steps or turns have loaded entities, reference them by ID:
 **Exclude specific entities:**
 ```json
 {
-  "table": "recipes",
+  "table": "items",
   "filters": [
-    {"field": "id", "op": "not_in", "value": ["recipe_5", "recipe_6"]}
+    {"field": "id", "op": "not_in", "value": ["item_5", "item_6"]}
   ]
 }
 ```
@@ -106,28 +91,15 @@ When prior steps or turns have loaded entities, reference them by ID:
 
 ## Advanced Patterns
 
-### Semantic Search (Recipes only)
-
-Find recipes by intent, not keywords:
-```json
-{
-  "table": "recipes",
-  "filters": [
-    {"field": "_semantic", "op": "similar", "value": "quick weeknight dinner"}
-  ]
-}
-```
-**Note:** Only works for `recipes` table. Uses embeddings for conceptual matching.
-
 ### OR Logic
 
 Use `or_filters` (top-level param) for multiple keywords:
 ```json
 {
-  "table": "recipes",
+  "table": "items",
   "or_filters": [
-    {"field": "name", "op": "ilike", "value": "%chicken%"},
-    {"field": "name", "op": "ilike", "value": "%rice%"}
+    {"field": "name", "op": "ilike", "value": "%keyword1%"},
+    {"field": "name", "op": "ilike", "value": "%keyword2%"}
   ]
 }
 ```
@@ -136,7 +108,7 @@ Use `or_filters` (top-level param) for multiple keywords:
 
 ```json
 {
-  "table": "meal_plans",
+  "table": "events",
   "filters": [
     {"field": "date", "op": ">=", "value": "2026-01-01"},
     {"field": "date", "op": "<=", "value": "2026-01-07"}
@@ -147,10 +119,8 @@ Use `or_filters` (top-level param) for multiple keywords:
 ### Array Contains
 
 ```json
-{"field": "occasions", "op": "contains", "value": ["weeknight"]}
+{"field": "tags", "op": "contains", "value": ["weeknight"]}
 ```
-
-**Note:** `tags` field is NOT reliably queryable — use semantic search or read all and analyze instead.
 
 ### Column Selection
 
@@ -178,4 +148,4 @@ If selecting specific columns:
 
 5. **Include names.** When selecting specific columns, always include `name` or `title`.
 
-6. **Match step intent for depth.** For recipes: only fetch `instructions` field if step explicitly needs it (e.g., "with instructions", "full recipe"). Otherwise save tokens.
+6. **Match step intent for depth.** Only fetch verbose fields if the step explicitly needs them. Otherwise save tokens.

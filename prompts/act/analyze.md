@@ -31,26 +31,26 @@ Reason over data from previous steps. Make decisions, comparisons, or computatio
 
 ### Compare Two Lists
 ```
-Input: inventory items, shopping list items
-Output: items on shopping list that are already in inventory
+Input: list A, list B
+Output: items in both lists (overlap / duplicates)
 ```
 
 ### Filter by Criteria
 ```
-Input: list of recipes
-Output: recipes that match user's dietary restrictions
+Input: list of items
+Output: items that match specified criteria or constraints
 ```
 
 ### Compute Differences
 ```
-Input: recipe ingredients, inventory items
-Output: ingredients needed that aren't in inventory
+Input: required items, available items
+Output: items needed that aren't available
 ```
 
 ### Make Decisions
 ```
-Input: available recipes, meal plan requirements
-Output: which recipes to use, what gaps need new recipes
+Input: available options, requirements
+Output: which options to use, what gaps need new content
 ```
 
 ---
@@ -76,21 +76,20 @@ Output: which recipes to use, what gaps need new recipes
 If your analysis hits an ambiguity or requires a decision only the user can make, use `ask_user`. **Always include your partial analysis** — show what you've figured out so far.
 
 **When to ask:**
-- Multiple valid interpretations (which protein to prioritize?)
+- Multiple valid interpretations
 - Missing critical info (dates, quantities, preferences)
-- Trade-offs that need human judgment (use all chicken now vs save some?)
+- Trade-offs that need human judgment
 
 **Format:**
 
 ```json
 {
   "action": "ask_user",
-  "question": "I see 6 recipes that work with your inventory. Should I prioritize using the chicken (expires Jan 15) or the cod (expires Jan 17)?",
+  "question": "I found 6 options that work. Should I prioritize X or Y?",
   "data": {
     "partial_analysis": {
-      "viable_recipes": 6,
-      "expiring_proteins": ["chicken (Jan 15)", "cod (Jan 17)"],
-      "decision_needed": "protein_priority"
+      "viable_options": 6,
+      "decision_needed": "priority"
     }
   }
 }

@@ -857,6 +857,72 @@ class DomainConfig(ABC):
         """
         return {}  # Default: no bypass mode LLM configs
 
+    def get_act_prompt_injection(self, step_type: str) -> str:
+        """
+        Get domain-specific guidance to append to Act node prompts.
+
+        Called for each step type (read, write, analyze, generate).
+        Returns markdown text appended after the core Act prompt layers.
+
+        Args:
+            step_type: The act step type (read, write, analyze, generate)
+
+        Returns:
+            Markdown string with domain-specific examples and guidance,
+            or empty string for no injection.
+        """
+        return ""  # Default: no domain-specific Act guidance
+
+    def get_think_domain_context(self) -> str:
+        """
+        Get domain-specific context/philosophy for Think node.
+
+        Replaces the {domain_context} placeholder in think.md.
+        Contains the domain's purpose, philosophy, and what it enables.
+
+        Returns:
+            Markdown string with domain context.
+        """
+        return ""  # Default: no domain-specific Think context
+
+    def get_think_planning_guide(self) -> str:
+        """
+        Get domain-specific planning guide for Think node.
+
+        Replaces the {domain_planning_guide} placeholder in think.md.
+        Contains subdomains, linked tables, complex domain descriptions,
+        and domain-specific planning patterns.
+
+        Returns:
+            Markdown string with planning guide content.
+        """
+        return ""  # Default: no domain-specific planning guide
+
+    def get_reply_subdomain_guide(self) -> str:
+        """
+        Get domain-specific subdomain formatting guide for Reply node.
+
+        Returns markdown describing how to present each subdomain's data
+        to the user (e.g., inventory grouped by location, recipes in
+        magazine-style format). Injected into reply prompt.
+
+        Returns:
+            Markdown string with subdomain presentation rules.
+        """
+        return ""  # Default: no domain-specific reply formatting
+
+    def get_router_prompt_injection(self) -> str:
+        """
+        Get domain-specific content for Router prompt.
+
+        Returns markdown with available agents, their descriptions,
+        and routing examples. Injected into router prompt.
+
+        Returns:
+            Markdown string with agent definitions and examples.
+        """
+        return ""  # Default: no domain-specific router content
+
     def get_handoff_system_prompts(self) -> dict[str, str]:
         """
         Get system prompts for bypass mode handoff summaries.

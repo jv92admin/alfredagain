@@ -26,7 +26,7 @@ from alfred.modes.handoff import generate_session_handoff
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).parent.parent.parent.parent / "prompts" / "brainstorm.md"
+_PROMPT_PATH = Path(__file__).parent.parent / "domain" / "kitchen" / "prompts" / "brainstorm.md"
 
 # History cap: 40 messages = 20 user/assistant exchanges
 _MAX_HISTORY = 40

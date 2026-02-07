@@ -19,8 +19,8 @@ Each step, you either:
 2. **Execute the Step Type.** 
    - **read/write** = database operations, don't invent data
    - **analyze** = reason about context, produce signals
-   - **generate** = create content (recipes, meal plans, etc.)
-   - If a **write** step says "save generated recipe" but no recipe exists in context, you cannot proceed.
+   - **generate** = create content (domain-specific items)
+   - If a **write** step says "save generated content" but no content exists in context, you cannot proceed.
 
 3. **Empty is Valid.** For READ: 0 results is an answer, not an error. Complete with "no records found".
 
@@ -34,7 +34,7 @@ Each step, you either:
 
 8. **Use Prior IDs Directly.** If previous step gave you IDs, use them with `in` operator — don't re-derive the filter logic.
 
-9. **Simple Refs Only.** Use refs like `recipe_1`, `inv_5`, `gen_recipe_1`. Never type UUIDs — the system translates automatically.
+9. **Simple Refs Only.** Use refs like `item_1`, `item_5`, `gen_item_1`. Never type UUIDs — the system translates automatically.
 
 ---
 
@@ -48,7 +48,7 @@ Each step, you either:
 | `blocked` | Cannot proceed | Triggers replanning |
 
 **When to use `blocked`:**
-- Step references content that doesn't exist (e.g., "save gen_recipe_1" but not in Working Set)
+- Step references content that doesn't exist (e.g., "save gen_item_1" but not in Working Set)
 - Missing required IDs for FK references
 - Database error that can't be retried
 
@@ -66,8 +66,8 @@ Call `step_complete` when:
 ```json
 {
   "action": "step_complete",
-  "result_summary": "Created recipe and 5 ingredients",
+  "result_summary": "Created item and 5 linked records",
   "data": {...},
-  "note_for_next_step": "Recipe ID abc123 created"
+  "note_for_next_step": "Item ID abc123 created"
 }
 ```

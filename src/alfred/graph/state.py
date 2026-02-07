@@ -49,7 +49,7 @@ class EntityRef(BaseModel):
     - LLMs never fabricate IDs
     """
 
-    type: str  # "ingredient", "recipe", "meal_plan", "inventory_item"
+    type: str  # Entity type from domain config
     id: str  # UUID
     label: str  # Human-readable for LLM context
     source: str  # "db_lookup", "user_input", "generated"
@@ -89,7 +89,7 @@ class ThinkStep(BaseModel):
     
     description: str  # Natural language step description
     step_type: Literal["read", "analyze", "generate", "write"]
-    subdomain: str  # "inventory", "recipes", "shopping", "meal_plans", "preferences"
+    subdomain: str  # Domain-specific subdomain (from DomainConfig.subdomains)
     group: int = 0  # Execution group (same group = can run in parallel)
     
     @property
@@ -120,8 +120,8 @@ class EntityMention(BaseModel):
     Represents a user's reference to an entity with resolution info.
     """
     
-    text: str  # Raw text from user ("that recipe", "the cod dish")
-    entity_type: str | None = None  # Inferred type (recipe, meal_plan, etc.)
+    text: str  # Raw text from user ("that item", "the one we discussed")
+    entity_type: str | None = None  # Inferred type from domain entities
     
     # Resolution result
     resolution: Literal["exact", "inferred", "ambiguous", "unknown"] = "unknown"
@@ -158,7 +158,7 @@ class RetentionDecision(BaseModel):
     Used when Understand decides an entity beyond the automatic 2-turn window
     should remain active because it's still relevant to the user's goal.
     """
-    ref: str  # Entity ref (e.g., "gen_meal_plan_1")
+    ref: str  # Entity ref (e.g., "gen_item_1")
     reason: str  # Why it's still relevant (e.g., "User's ongoing weekly meal plan goal")
 
 
@@ -199,7 +199,7 @@ class UnderstandOutput(BaseModel):
     what matters and forgets what doesn't across multi-turn conversations.
     
     Understand handles:
-    - Entity reference resolution ("that recipe" → specific ref)
+    - Entity reference resolution ("that item" → specific ref)
     - Entity context CURATION (what stays active beyond automatic 2-turn window)
     - Disambiguation detection
     - Quick mode detection (for simple READs)
@@ -238,8 +238,8 @@ class UnderstandOutput(BaseModel):
     # Quick mode detection (for simple single-domain READs)
     quick_mode: bool = False  # True if this is a simple 1-step query
     quick_mode_confidence: float = 0.0  # Confidence gating
-    quick_intent: str | None = None  # Plaintext intent: "Show user their inventory"
-    quick_subdomain: str | None = None  # Target subdomain: "inventory", "shopping", etc.
+    quick_intent: str | None = None  # Plaintext intent: "Show user their items"
+    quick_subdomain: str | None = None  # Target subdomain from domain config
 
 
 class ThinkOutput(BaseModel):
@@ -308,7 +308,7 @@ class ThinkOutput(BaseModel):
 class BatchItem(BaseModel):
     """A single item in a batch operation."""
     
-    ref: str  # Reference ID (gen_recipe_1, recipe_1, etc.)
+    ref: str  # Reference ID (gen_item_1, item_1, etc.)
     label: str  # Human-readable label
     status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
     result_id: str | None = None  # DB ID when created
@@ -520,7 +520,7 @@ class StepExecutionSummary(BaseModel):
     step_type: str  # "read" | "analyze" | "generate" | "write"
     subdomain: str
     description: str  # From the plan
-    outcome: str  # "Found 5 recipes" | "Generated 3 options"
+    outcome: str  # "Found 5 items" | "Generated 3 options"
     entities_involved: list[str] = Field(default_factory=list)  # Refs touched
     note: str | None = None  # Act's note_for_next_step
 
@@ -549,7 +549,7 @@ class TurnExecutionSummary(BaseModel):
     
     # What Think decided
     think_decision: str = ""  # "plan_direct" | "propose" | "clarify"
-    think_goal: str = ""  # "Find vegetarian recipes"
+    think_goal: str = ""  # Natural language goal
     
     # What steps executed
     steps: list[StepExecutionSummary] = Field(default_factory=list)
@@ -574,28 +574,28 @@ class ConversationContext(TypedDict, total=False):
     - Older turns: compressed to history_summary
     - Last FULL_DETAIL_STEPS step results: full data in step_results
     - Older steps: compressed to step_summaries (Act can retrieve via tool)
-    - active_entities: EntityRefs for "that recipe" resolution
+    - active_entities: EntityRefs for anaphoric reference resolution
     """
 
     # High-level summary of current engagement
-    engagement_summary: str  # "Helping with meal planning, saved 2 recipes..."
+    engagement_summary: str  # High-level summary of current engagement
 
     # Last N exchanges - full text (N = FULL_DETAIL_TURNS)
     recent_turns: list[dict]  # ConversationTurn as dict
 
     # Older exchanges - compressed
-    history_summary: str  # "Earlier discussed pasta, added milk to pantry..."
+    history_summary: str  # Compressed summary of older conversation turns
     
     # Older step summaries (for reference, Act can retrieve full data)
     step_summaries: list[dict]  # StepSummary as dict
 
     # Content archive for generated content (persists across turns)
-    # Allows "save those recipes we discussed" to work in later turns
-    # Keys: "generated_recipes", "generated_meal_plan", "analysis_result", etc.
+    # Allows "save those items we discussed" to work in later turns
+    # Keys: domain-specific archive keys (e.g., "generated_items", "analysis_result")
     content_archive: dict[str, Any]
     
-    # Tracked entities for "that recipe" resolution
-    # Key is entity type ("recipe", "inventory_item", etc.)
+    # Tracked entities for anaphoric resolution ("that item")
+    # Key is entity type, value is the most recent entity of that type
     # Value is the most recent entity of that type
     active_entities: dict[str, dict]  # EntityRef as dict
     
@@ -613,7 +613,7 @@ class ConversationContext(TypedDict, total=False):
     turn_summaries: list[dict]  # TurnExecutionSummary as dict
     
     # V6: Compressed older reasoning (when turn_summaries exceeds 2)
-    reasoning_summary: str  # "Earlier: explored recipes, narrowed to fish options..."
+    reasoning_summary: str  # Compressed older reasoning trace
 
 
 # =============================================================================
@@ -677,7 +677,7 @@ class AlfredState(TypedDict, total=False):
     current_batch_manifest: dict | None  # BatchManifest.model_dump()
     
     # V4 CONSOLIDATION: Session ID Registry - SINGLE SOURCE OF TRUTH
-    # PERSISTS ACROSS TURNS. LLMs only see simple refs (recipe_1, inv_5).
+    # PERSISTS ACROSS TURNS. LLMs only see simple refs (item_1, item_5).
     # Populated by CRUD layer on db_read/db_create. Used for all ID translation.
     # Also stores temporal tracking (turn_created, turn_last_ref) and pending artifacts.
     id_registry: dict | None  # SessionIdRegistry.to_dict()
@@ -694,7 +694,7 @@ class AlfredState(TypedDict, total=False):
     group_results: dict[int, list[dict]]
 
     # Content archive (persists across turns for generate/analyze step results)
-    # Keys: "turn_{turn_num}_step_{step_num}" or descriptive like "recipes_generated"
+    # Keys: "turn_{turn_num}_step_{step_num}" or descriptive domain-specific keys
     # Allows Act to retrieve generated content from previous turns
     content_archive: dict[str, Any]
 
