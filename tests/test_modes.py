@@ -208,7 +208,7 @@ class TestCookModeInit:
         mock_stream = _make_stream_chunks(["Let's", " get", " cooking!"])
 
         async def _test():
-            with patch("alfred.modes.cook.db_read", new_callable=AsyncMock) as mock_read, \
+            with patch("alfred.domain.kitchen.modes.cook.db_read", new_callable=AsyncMock) as mock_read, \
                  patch("alfred.llm.client.get_raw_async_client") as mock_client_fn, \
                  patch("alfred.llm.client.log_prompt"):
                 mock_read.return_value = [SAMPLE_RECIPE]
@@ -216,7 +216,7 @@ class TestCookModeInit:
                 mock_client.chat.completions.create.return_value = mock_stream
                 mock_client_fn.return_value = mock_client
 
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
 
                 conversation = {}
                 events = await _collect_events(run_cook_session(
@@ -244,7 +244,7 @@ class TestCookModeInit:
 
     def test_init_no_recipe_id_returns_error(self):
         async def _test():
-            from alfred.modes.cook import run_cook_session
+            from alfred.domain.kitchen.modes.cook import run_cook_session
             conversation = {}
             return await _collect_events(run_cook_session(
                 user_message="Let's cook!",
@@ -259,9 +259,9 @@ class TestCookModeInit:
 
     def test_init_recipe_not_found_returns_error(self):
         async def _test():
-            with patch("alfred.modes.cook.db_read", new_callable=AsyncMock) as mock_read:
+            with patch("alfred.domain.kitchen.modes.cook.db_read", new_callable=AsyncMock) as mock_read:
                 mock_read.return_value = []
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
                 conversation = {}
                 return await _collect_events(run_cook_session(
                     user_message="Let's cook!",
@@ -288,7 +288,7 @@ class TestCookModeChatTurn:
                 mock_client.chat.completions.create.return_value = mock_stream
                 mock_client_fn.return_value = mock_client
 
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
 
                 conversation = {
                     "active_mode": "cook",
@@ -312,7 +312,7 @@ class TestCookModeChatTurn:
 
     def test_chat_without_cook_context_returns_error(self):
         async def _test():
-            from alfred.modes.cook import run_cook_session
+            from alfred.domain.kitchen.modes.cook import run_cook_session
             conversation = {"active_mode": "plan"}
             return await _collect_events(run_cook_session(
                 user_message="test",
@@ -332,7 +332,7 @@ class TestCookModeChatTurn:
                 mock_client.chat.completions.create.side_effect = Exception("LLM down")
                 mock_client_fn.return_value = mock_client
 
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
 
                 conversation = {
                     "active_mode": "cook",
@@ -366,10 +366,10 @@ class TestCookModeExit:
         )
 
         async def _test():
-            with patch("alfred.modes.cook.generate_session_handoff", new_callable=AsyncMock) as mock_fn:
+            with patch("alfred.domain.kitchen.modes.cook.generate_session_handoff", new_callable=AsyncMock) as mock_fn:
                 mock_fn.return_value = mock_handoff
 
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
 
                 conversation = {
                     "active_mode": "cook",
@@ -410,9 +410,9 @@ class TestCookModeExit:
         )
 
         async def _test():
-            with patch("alfred.modes.cook.generate_session_handoff", new_callable=AsyncMock) as mock_fn:
+            with patch("alfred.domain.kitchen.modes.cook.generate_session_handoff", new_callable=AsyncMock) as mock_fn:
                 mock_fn.return_value = mock_handoff
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
                 conversation = {
                     "active_mode": "cook",
                     "cook_context": "Recipe context",
@@ -436,7 +436,7 @@ class TestCookModeExit:
 
     def test_exit_with_empty_history(self):
         async def _test():
-            from alfred.modes.cook import run_cook_session
+            from alfred.domain.kitchen.modes.cook import run_cook_session
             conversation = {
                 "active_mode": "cook",
                 "cook_context": "Recipe context",
@@ -471,8 +471,8 @@ class TestBrainstormModeInit:
         mock_stream = _make_stream_chunks(["Let's", " brainstorm!"])
 
         async def _test():
-            with patch("alfred.modes.brainstorm.get_cached_profile", new_callable=AsyncMock) as mock_prof, \
-                 patch("alfred.modes.brainstorm.get_cached_dashboard", new_callable=AsyncMock) as mock_dash, \
+            with patch("alfred.domain.kitchen.modes.brainstorm.get_cached_profile", new_callable=AsyncMock) as mock_prof, \
+                 patch("alfred.domain.kitchen.modes.brainstorm.get_cached_dashboard", new_callable=AsyncMock) as mock_dash, \
                  patch("alfred.llm.client.get_raw_async_client") as mock_client_fn, \
                  patch("alfred.llm.client.log_prompt"):
                 mock_prof.return_value = mock_profile
@@ -481,7 +481,7 @@ class TestBrainstormModeInit:
                 mock_client.chat.completions.create.return_value = mock_stream
                 mock_client_fn.return_value = mock_client
 
-                from alfred.modes.brainstorm import run_brainstorm
+                from alfred.domain.kitchen.modes.brainstorm import run_brainstorm
 
                 conversation = {}
                 events = await _collect_events(run_brainstorm(
@@ -514,9 +514,9 @@ class TestBrainstormModeExit:
         )
 
         async def _test():
-            with patch("alfred.modes.brainstorm.generate_session_handoff", new_callable=AsyncMock) as mock_fn:
+            with patch("alfred.domain.kitchen.modes.brainstorm.generate_session_handoff", new_callable=AsyncMock) as mock_fn:
                 mock_fn.return_value = mock_handoff
-                from alfred.modes.brainstorm import run_brainstorm
+                from alfred.domain.kitchen.modes.brainstorm import run_brainstorm
                 conversation = {
                     "active_mode": "brainstorm",
                     "brainstorm_context": "Kitchen context",
@@ -651,7 +651,7 @@ class TestPlanStatePreservation:
         mock_stream = _make_stream_chunks(["ok"])
 
         async def _test():
-            with patch("alfred.modes.cook.db_read", new_callable=AsyncMock) as mock_read, \
+            with patch("alfred.domain.kitchen.modes.cook.db_read", new_callable=AsyncMock) as mock_read, \
                  patch("alfred.llm.client.get_raw_async_client") as mock_client_fn, \
                  patch("alfred.llm.client.log_prompt"):
                 mock_read.return_value = [SAMPLE_RECIPE]
@@ -659,7 +659,7 @@ class TestPlanStatePreservation:
                 mock_client.chat.completions.create.return_value = mock_stream
                 mock_client_fn.return_value = mock_client
 
-                from alfred.modes.cook import run_cook_session
+                from alfred.domain.kitchen.modes.cook import run_cook_session
 
                 conversation = {
                     "id_registry": {"recipe_1": "uuid-123"},

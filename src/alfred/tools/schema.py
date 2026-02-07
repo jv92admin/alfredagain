@@ -110,30 +110,6 @@ def get_scope_for_subdomain(subdomain: str) -> str:
     return "\n".join(lines)
 
 
-def get_subdomain_dependencies_summary() -> str:
-    """
-    Get a compact summary of subdomain dependencies for Think node.
-    
-    This helps Think understand relationships between domains when planning.
-    
-    Returns:
-        Markdown-formatted summary of key domain relationships
-    """
-    lines = [
-        "## DOMAIN KNOWLEDGE",
-        "",
-        "Key relationships between data domains:",
-        "",
-        "- **Meal plans → Recipes**: Real meals (breakfast/lunch/dinner/snack) should have recipes. Exception: `prep` and `other` meal types don't require recipes.",
-        "- **Recipes → Recipe Ingredients**: Always created together as one unit. Recipe saves include ingredients.",
-        "- **Shopping ← Multiple sources**: Shopping lists are influenced by recipes, meal plans, and inventory. Check what exists before adding.",
-        "- **Tasks ← Meal plans**: Tasks often flow from meal plans (prep reminders, shopping tasks). Prefer linking to meal_plan_id.",
-        "- **Inventory ↔ Shopping**: Items in inventory shouldn't need to be on shopping list. Cross-check when adding.",
-        "",
-        "**About Cooking Schedule:** The user's cooking schedule describes WHEN THEY COOK (batch cook, prep), not when they eat. 'weekends only' = they cook on weekends (maybe batch for the week). 'dinner wednesdays' = they cook dinner on Wednesdays.",
-    ]
-    return "\n".join(lines)
-
 
 # =============================================================================
 # Schema Fetching

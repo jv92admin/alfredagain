@@ -62,7 +62,7 @@ async def run_workflow_background(
 
         # Mode routing: cook/brainstorm bypass the graph
         if mode == "cook":
-            from alfred.modes.cook import run_cook_session
+            from alfred.domain.kitchen.modes.cook import run_cook_session
 
             generator = run_cook_session(
                 user_message=message,
@@ -72,7 +72,7 @@ async def run_workflow_background(
                 access_token=access_token,
             )
         elif mode == "brainstorm":
-            from alfred.modes.brainstorm import run_brainstorm
+            from alfred.domain.kitchen.modes.brainstorm import run_brainstorm
 
             generator = run_brainstorm(
                 user_message=message,

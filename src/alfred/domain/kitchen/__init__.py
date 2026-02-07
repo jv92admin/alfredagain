@@ -535,8 +535,8 @@ class KitchenConfig(DomainConfig):
     @property
     def bypass_modes(self) -> dict[str, type]:
         """Get graph-bypass mode handlers."""
-        from alfred.modes.cook import run_cook_session
-        from alfred.modes.brainstorm import run_brainstorm
+        from alfred.domain.kitchen.modes.cook import run_cook_session
+        from alfred.domain.kitchen.modes.brainstorm import run_brainstorm
         # Note: These are functions, not classes. The type annotation
         # is flexible - in practice these are async generator functions.
         return {

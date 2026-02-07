@@ -57,32 +57,32 @@ class AgentProtocol(ABC):
        Example: The main "main" agent runs the full Think→Act→Reply graph
 
     2. **Streaming (bypass mode)**: Yields chunks directly, skips graph
-       Example: CookAgent wraps run_cook_session() for step-by-step guidance
+       Example: A bypass-mode agent wraps a domain mode runner for guided sessions
 
     The `is_streaming` property determines which processing model applies.
 
     Example Implementation:
     ```python
-    class CookAgent(AgentProtocol):
+    class BypassAgent(AgentProtocol):
         @property
         def name(self) -> str:
-            return "cook"
+            return "guided_session"
 
         @property
         def description(self) -> str:
-            return "Step-by-step cooking guidance for a specific recipe"
+            return "Step-by-step guidance for a specific task"
 
         @property
         def capabilities(self) -> list[str]:
-            return ["cooking guidance", "substitution advice", "timing help"]
+            return ["guided workflow", "context-aware advice", "step tracking"]
 
         @property
         def is_streaming(self) -> bool:
             return True  # Bypass mode - yields chunks directly
 
         async def process_streaming(self, state: AgentState) -> AsyncIterator[StreamEvent]:
-            from alfred.modes.cook import run_cook_session
-            async for event in run_cook_session(...):
+            from alfred.domain.{name}.modes.{mode} import run_{mode}_session
+            async for event in run_{mode}_session(...):
                 yield StreamEvent(type=event["type"], data=event)
     ```
     """
@@ -169,13 +169,12 @@ class AgentRouter(ABC):
 
     Example Implementation:
     ```python
-    class KitchenRouter(AgentRouter):
+    class DomainRouter(AgentRouter):
         async def route(self, message: str, context: dict) -> str:
-            # Check if in a special mode
-            if context.get("mode") == "cook":
-                return "cook"
-            if context.get("mode") == "brainstorm":
-                return "brainstorm"
+            # Check if in a bypass mode registered by the domain
+            mode = context.get("mode")
+            if mode in domain.bypass_modes:
+                return mode
             # Default to main agent
             return "main"
     ```
