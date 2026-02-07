@@ -301,15 +301,8 @@ def _format_understand_clarification(understand_output) -> str:
 # =============================================================================
 
 
-# Empty result responses by subdomain
-EMPTY_RESPONSES = {
-    "inventory": "Your pantry is empty. Want me to help you add some items?",
-    "shopping": "Your shopping list is empty.",
-    "recipes": "No recipes saved yet. Want me to suggest some?",
-    "tasks": "No tasks on your list.",
-    "meal_plans": "No meal plans scheduled.",
-    "preferences": "No preferences set yet.",
-}
+# Re-export from canonical location for backwards compat
+from alfred.domain.kitchen.formatters import EMPTY_RESPONSES  # noqa: F401
 
 
 def _format_quick_response(intent: str, subdomain: str, result: Any) -> str | None:
@@ -357,109 +350,14 @@ def _format_quick_response(intent: str, subdomain: str, result: Any) -> str | No
     return None
 
 
-def _format_inventory_list(items: list) -> str:
-    """Format inventory items for display."""
-    if not items:
-        return EMPTY_RESPONSES["inventory"]
-    
-    lines = ["Here's what's in your pantry:\n"]
-    
-    # Group by location if available
-    by_location: dict[str, list] = {}
-    for item in items:
-        loc = item.get("location", "other") or "other"
-        if loc not in by_location:
-            by_location[loc] = []
-        by_location[loc].append(item)
-    
-    for location, loc_items in by_location.items():
-        if len(by_location) > 1:
-            lines.append(f"\n**{location.title()}:**")
-        for item in loc_items:
-            name = item.get("name", "Unknown")
-            qty = item.get("quantity", "")
-            unit = item.get("unit", "")
-            qty_str = f" ({qty} {unit})" if qty else ""
-            lines.append(f"- {name}{qty_str}")
-    
-    return "\n".join(lines)
-
-
-def _format_recipe_list(recipes: list) -> str:
-    """Format recipe list for display."""
-    if not recipes:
-        return EMPTY_RESPONSES["recipes"]
-    
-    lines = [f"You have {len(recipes)} recipe{'s' if len(recipes) > 1 else ''} saved:\n"]
-    
-    for recipe in recipes[:20]:  # Limit display
-        name = recipe.get("name", "Untitled")
-        cuisine = recipe.get("cuisine", "")
-        cuisine_str = f" ({cuisine})" if cuisine else ""
-        lines.append(f"- **{name}**{cuisine_str}")
-    
-    if len(recipes) > 20:
-        lines.append(f"\n...and {len(recipes) - 20} more.")
-    
-    return "\n".join(lines)
-
-
-def _format_shopping_list(items: list) -> str:
-    """Format shopping list for display."""
-    if not items:
-        return EMPTY_RESPONSES["shopping"]
-    
-    lines = [f"Your shopping list ({len(items)} item{'s' if len(items) > 1 else ''}):\n"]
-    
-    for item in items:
-        name = item.get("name", "Unknown")
-        qty = item.get("quantity", "")
-        unit = item.get("unit", "")
-        qty_str = f" ({qty} {unit})" if qty else ""
-        checked = "☑" if item.get("checked") else "☐"
-        lines.append(f"{checked} {name}{qty_str}")
-    
-    return "\n".join(lines)
-
-
-def _format_task_list(tasks: list) -> str:
-    """Format task list for display."""
-    if not tasks:
-        return EMPTY_RESPONSES["tasks"]
-    
-    lines = [f"Your tasks ({len(tasks)}):\n"]
-    
-    for task in tasks:
-        desc = task.get("description", "No description")
-        done = "✓" if task.get("completed") else "○"
-        lines.append(f"{done} {desc}")
-    
-    return "\n".join(lines)
-
-
-def _format_meal_plan_list(plans: list) -> str:
-    """Format meal plan list for display."""
-    if not plans:
-        return EMPTY_RESPONSES["meal_plans"]
-    
-    lines = [f"Your meal plans ({len(plans)} scheduled):\n"]
-    
-    # Group by date
-    by_date: dict[str, list] = {}
-    for plan in plans:
-        date = plan.get("date", "Unknown")
-        if date not in by_date:
-            by_date[date] = []
-        by_date[date].append(plan)
-    
-    for date, date_plans in sorted(by_date.items()):
-        lines.append(f"\n**{date}:**")
-        for plan in date_plans:
-            meal_type = plan.get("meal_type", "meal")
-            notes = plan.get("notes", "")
-            lines.append(f"- {meal_type.title()}: {notes or '(no details)'}")
-    
-    return "\n".join(lines)
+# Delegate to canonical formatters in domain/kitchen/formatters.py
+from alfred.domain.kitchen.formatters import (  # noqa: F401, E402
+    format_inventory_summary as _format_inventory_list,
+    format_recipe_summary as _format_recipe_list,
+    format_shopping_summary as _format_shopping_list,
+    format_task_summary as _format_task_list,
+    format_meal_plan_summary as _format_meal_plan_list,
+)
 
 
 async def _quick_llm_response(
@@ -1166,9 +1064,8 @@ def _summarize_dict(d: dict) -> str:
 # Human-Readable Formatting for Reply (strips IDs, keeps useful fields)
 # =============================================================================
 
-# Fields to strip from Reply output (internal/technical)
-_STRIP_FIELDS = {"id", "user_id", "ingredient_id", "recipe_id", "meal_plan_id", 
-                 "parent_recipe_id", "created_at", "updated_at", "is_purchased"}
+# Re-export from canonical location
+from alfred.domain.kitchen.formatters import REPLY_STRIP_FIELDS as _STRIP_FIELDS  # noqa: F811, E402
 
 # Fields to keep and display (human-readable)
 _PRIORITY_FIELDS = ["name", "title", "date", "meal_type", "quantity", "unit", 

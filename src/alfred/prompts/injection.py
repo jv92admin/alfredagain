@@ -29,8 +29,8 @@ from datetime import date
 from typing import Any, TYPE_CHECKING
 
 from alfred.core.modes import Mode, MODE_CONFIG
-from alfred.prompts.personas import get_persona_for_subdomain, get_full_subdomain_content
-from alfred.prompts.examples import get_contextual_examples
+from alfred.domain.kitchen.personas import get_persona_for_subdomain, get_full_subdomain_content
+from alfred.domain.kitchen.examples import get_contextual_examples
 
 # V4 CONSOLIDATION: Only SessionIdRegistry needed now
 if TYPE_CHECKING:
@@ -824,52 +824,9 @@ def _infer_table_from_record(record: dict) -> str | None:
 
 # Define how each table should be formatted for LLM consumption
 # Format: {table: {primary: str, details: [str], show_id: bool}}
-_TABLE_FORMAT_PROTOCOLS = {
-    "inventory": {
-        "primary": "name",
-        "details": ["quantity", "location", "expiry_date"],  # unit folded into quantity display
-        "ingredient_details": ["parent_category", "family", "tier"],  # From joined ingredients table
-        "show_id": True,
-    },
-    "shopping_list": {
-        "primary": "name",
-        "details": ["quantity", "unit", "category"],
-        "ingredient_details": ["parent_category", "family", "tier"],  # From joined ingredients table
-        "show_id": True,
-    },
-    "recipes": {
-        "primary": "name",
-        "details": ["cuisine", "total_time", "servings", "occasions", "health_tags", "source_url"],
-        "show_id": True,  # Critical for FK references
-        "format": "recipe",  # Custom format with grouped ingredients
-    },
-    "recipe_ingredients": {
-        "primary": "name",
-        "details": ["quantity", "unit", "notes", "is_optional"],
-        "show_id": False,  # Not needed, use recipe_id
-        "group_by": "recipe_id",  # Hint to group these
-    },
-    "meal_plans": {
-        "primary": "date",
-        "details": ["meal_type", "recipe_id", "notes", "servings"],  # Include notes for planning context
-        "show_id": True,
-        "format": "meal_plan",  # Custom format: date [slot] → recipe
-    },
-    "tasks": {
-        "primary": "title",
-        "details": ["due_date", "status", "category"],
-        "show_id": True,
-    },
-    "preferences": {
-        "primary": None,  # Special: no single primary, show as key-value pairs
-        "details": ["dietary_restrictions", "allergies", "favorite_cuisines", "cooking_skill_level"],
-        "show_id": False,
-        "format": "key_value",  # Special format mode
-    },
-}
-
-# Fields to always strip (internal noise)
-_STRIP_FIELDS = {"user_id", "created_at", "updated_at", "ingredient_id"}
+# Re-export from canonical location
+from alfred.domain.kitchen.formatters import TABLE_FORMAT_PROTOCOLS as _TABLE_FORMAT_PROTOCOLS  # noqa: E402
+from alfred.domain.kitchen.formatters import INJECTION_STRIP_FIELDS as _STRIP_FIELDS  # noqa: E402
 
 
 def _format_record_clean(record: dict, table: str | None = None) -> str:
@@ -975,155 +932,11 @@ def _format_record_key_value(record: dict, protocol: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_meal_plan_record(record: dict, protocol: dict) -> str:
-    """
-    Format a meal plan record: date [slot] → recipe (servings) notes id:meal_1
-
-    Examples:
-    - 2026-01-12 [lunch] → Butter Chicken (recipe_1) (servings: 2) id:meal_1
-    - 2026-01-13 [dinner] → recipe_2 (servings: 1) notes:"Leftovers from lunch" id:meal_2
-    - 2026-01-14 [other] → notes:"Make chicken stock" (servings: 4) id:meal_3
-    """
-    date = record.get("date", "no-date")
-    meal_type = record.get("meal_type", "meal")
-    recipe_ref = record.get("recipe_id")
-    notes = record.get("notes")
-    servings = record.get("servings")
-    meal_id = record.get("id", "")
-
-    # Try to get enriched recipe name
-    recipe_label = record.get("_recipe_id_label")
-
-    # Determine main content: recipe or notes-only
-    if recipe_ref:
-        if recipe_label:
-            content = f"{recipe_label} ({recipe_ref})"
-        else:
-            content = recipe_ref
-    elif notes:
-        content = f'notes:"{notes}"'  # Notes-only meal (prep session, etc.)
-    else:
-        content = "no-recipe"
-
-    # Format: date [slot] → content
-    parts = [f"  - {date} [{meal_type}] → {content}"]
-
-    # Add servings if present
-    if servings:
-        parts.append(f"(servings: {servings})")
-
-    # Add notes if present AND there's also a recipe (notes alongside recipe)
-    # Notes-only meals are already shown in content above
-    if notes and recipe_ref:
-        parts.append(f'notes:"{notes}"')
-
-    if meal_id:
-        parts.append(f"id:{meal_id}")
-
-    return " ".join(parts)
+# Delegate to canonical location
+from alfred.domain.kitchen.formatters import format_meal_plan_record as _format_meal_plan_record  # noqa: E402
 
 
-def _format_recipe_record(record: dict, protocol: dict) -> str:
-    """
-    Format a recipe record with grouped ingredients.
-    
-    Output format:
-    ```
-    recipe_1 (Chicken Tikka):
-      cuisine: indian | time: 45min | servings: 4
-      occasions: weeknight | health: high-protein
-      proteins: chicken
-      vegetables: onion, bell pepper
-      dairy: yogurt
-      spices: garam masala, turmeric
-      [instructions: 8 steps]  # only if present
-    ```
-    """
-    lines = []
-    
-    # Line 1: Name and ID
-    name = record.get("name", "Recipe")
-    recipe_id = record.get("id", "")
-    lines.append(f"  {recipe_id} ({name}):")
-    
-    # Line 2: Core metadata
-    meta_parts = []
-    if record.get("cuisine"):
-        meta_parts.append(f"cuisine: {record['cuisine']}")
-    
-    # Combine prep + cook time if available
-    prep = record.get("prep_time_minutes") or record.get("prep_time")
-    cook = record.get("cook_time_minutes") or record.get("cook_time")
-    total = record.get("total_time")
-    if total:
-        meta_parts.append(f"time: {total}")
-    elif prep or cook:
-        time_str = f"{prep or 0}+{cook or 0}min"
-        meta_parts.append(f"time: {time_str}")
-    
-    if record.get("servings"):
-        meta_parts.append(f"servings: {record['servings']}")
-    if record.get("difficulty"):
-        meta_parts.append(f"difficulty: {record['difficulty']}")
-    
-    if meta_parts:
-        lines.append(f"    {' | '.join(meta_parts)}")
-    
-    # Line 3: Tags (occasions, health)
-    tag_parts = []
-    if record.get("occasions"):
-        tag_parts.append(f"occasions: {', '.join(record['occasions'][:3])}")
-    if record.get("health_tags"):
-        tag_parts.append(f"health: {', '.join(record['health_tags'][:3])}")
-    if record.get("flavor_tags"):
-        tag_parts.append(f"flavor: {', '.join(record['flavor_tags'][:2])}")
-    if record.get("equipment_tags"):
-        tag_parts.append(f"equipment: {', '.join(record['equipment_tags'][:2])}")
-    
-    if tag_parts:
-        lines.append(f"    {' | '.join(tag_parts)}")
-    
-    # Ingredients grouped by category
-    ingredients = record.get("recipe_ingredients", [])
-    if ingredients:
-        # Group by category
-        from collections import defaultdict
-        by_category = defaultdict(list)
-        for ing in ingredients:
-            cat = ing.get("category") or "other"
-            name = ing.get("name", "?")
-            by_category[cat].append(name)
-        
-        # Display each category
-        # Priority order for display
-        category_order = ["proteins", "vegetables", "produce", "fruits", "dairy", "cheese", 
-                         "grains", "rice", "pasta", "pantry", "canned", "spices", 
-                         "cuisine_indian", "cuisine_thai", "cuisine_mexican", "other"]
-        
-        displayed_cats = set()
-        for cat in category_order:
-            if cat in by_category:
-                names = by_category[cat]
-                # Dedupe and join
-                unique_names = list(dict.fromkeys(names))  # preserve order, dedupe
-                lines.append(f"    {cat}: {', '.join(unique_names)}")
-                displayed_cats.add(cat)
-        
-        # Any remaining categories
-        for cat, names in by_category.items():
-            if cat not in displayed_cats:
-                unique_names = list(dict.fromkeys(names))
-                lines.append(f"    {cat}: {', '.join(unique_names)}")
-    
-    # Instructions (only if present)
-    instructions = record.get("instructions")
-    if instructions:
-        if isinstance(instructions, list):
-            lines.append(f"    [instructions: {len(instructions)} steps]")
-        else:
-            lines.append(f"    [instructions: included]")
-    
-    return "\n".join(lines)
+from alfred.domain.kitchen.formatters import format_recipe_record as _format_recipe_record  # noqa: E402
 
 
 def _format_records_for_table(records: list[dict], table: str | None = None) -> list[str]:
@@ -1353,7 +1166,7 @@ def build_act_quick_prompt(
         Tuple of (system_prompt, user_prompt)
     """
     from pathlib import Path
-    from alfred.prompts.personas import get_subdomain_intro, get_persona_for_subdomain
+    from alfred.domain.kitchen.personas import get_subdomain_intro, get_persona_for_subdomain
     
     # === SYSTEM PROMPT: Load Act's prompts, same as Act ===
     prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "act"

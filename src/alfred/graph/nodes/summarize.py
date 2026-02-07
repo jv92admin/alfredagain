@@ -415,19 +415,21 @@ def _extract_entity_names(response: str) -> list[str]:
     Extract likely entity names from a response using simple patterns.
     
     Looks for:
-    - **Bold headings** (common for recipe names)
+    - **Bold headings** (common for entity names)
     - Numbered/bulleted lists with names
     - Quoted names
     """
     import re
     names = []
     
-    # Pattern 1: **Bold text** (recipe/entity names in markdown)
+    # Pattern 1: **Bold text** (entity names in markdown)
     bold_matches = re.findall(r'\*\*([^*]+)\*\*', response)
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    skip_words = domain.get_bold_skip_words()
     for match in bold_matches:
-        # Filter out common non-entity bold text
-        if len(match) > 5 and len(match) < 100 and not any(skip in match.lower() for skip in 
-            ['ingredient', 'instruction', 'serve', 'step', 'note', 'tip', 'prep', 'cook time']):
+        # Filter out common non-entity bold text (section headings etc.)
+        if len(match) > 5 and len(match) < 100 and not any(skip in match.lower() for skip in skip_words):
             names.append(match.strip())
     
     # Pattern 2: Lines starting with - or * followed by a name (bulleted lists)
@@ -815,14 +817,10 @@ def _build_summarize_output(
 
 
 def _infer_artifact_type(artifact: dict) -> str:
-    """Infer artifact type from structure."""
-    if "instructions" in artifact or "cuisine" in artifact:
-        return "recipe"
-    if "meal_type" in artifact and "date" in artifact:
-        return "meal_plan"
-    if "due_date" in artifact or ("title" in artifact and "status" in artifact):
-        return "task"
-    return "item"
+    """Infer artifact type from structure. Delegates to domain config."""
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    return domain.infer_entity_type_from_artifact(artifact)
 
 
 def _count_saved_in_result(result: Any) -> dict[str, int]:
@@ -842,16 +840,10 @@ def _count_saved_in_result(result: Any) -> dict[str, int]:
 
 
 def _table_to_type(table: str) -> str:
-    """Convert table name to entity type."""
-    mapping = {
-        "recipes": "recipe",
-        "recipe_ingredients": "ingredient",
-        "meal_plans": "meal_plan",
-        "tasks": "task",
-        "inventory": "inventory",
-        "shopping_list": "shopping",
-    }
-    return mapping.get(table, table)
+    """Convert table name to entity type. Uses domain config."""
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    return domain.table_to_type.get(table, table)
 
 
 # =============================================================================

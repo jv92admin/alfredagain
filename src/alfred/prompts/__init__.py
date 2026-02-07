@@ -8,7 +8,7 @@ This module provides:
 """
 
 from alfred.prompts.injection import build_act_prompt, get_verbosity_label
-from alfred.prompts.personas import (
+from alfred.domain.kitchen.personas import (
     SUBDOMAIN_INTRO,
     SUBDOMAIN_PERSONAS,
     SUBDOMAIN_SCOPE,
@@ -18,7 +18,7 @@ from alfred.prompts.personas import (
     get_subdomain_dependencies_summary,
     get_full_subdomain_content,
 )
-from alfred.prompts.examples import get_contextual_examples
+from alfred.domain.kitchen.examples import get_contextual_examples
 
 __all__ = [
     # Injection

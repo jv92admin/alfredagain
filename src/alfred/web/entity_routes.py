@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from alfred.db.client import get_authenticated_client
-from alfred.tools.crud import USER_OWNED_TABLES
+from alfred.domain.kitchen.crud_middleware import USER_OWNED_TABLES
 from alfred.web.auth import AuthenticatedUser, get_current_user
 
 router = APIRouter(prefix="/entities", tags=["entities"])

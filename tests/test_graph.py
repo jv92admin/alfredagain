@@ -58,12 +58,12 @@ class TestStateModels:
     def test_router_output_creation(self):
         """RouterOutput should be creatable with required fields."""
         output = RouterOutput(
-            agent="pantry",
+            agent="main",
             goal="Add milk to inventory",
             complexity="low",
             context_needs=["inventory"],
         )
-        assert output.agent == "pantry"
+        assert output.agent == "main"
         assert output.complexity == "low"
 
     def test_think_output_with_planned_step(self):

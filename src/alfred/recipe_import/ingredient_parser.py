@@ -204,7 +204,7 @@ async def parse_and_link_ingredients(
     Returns:
         List of dicts ready for recipe_ingredients table with ingredient_id
     """
-    from alfred.tools.ingredient_lookup import lookup_ingredient
+    from alfred.domain.kitchen.tools.ingredient_lookup import lookup_ingredient
 
     # Parse raw strings
     parsed = await parse_ingredients_batch(raw_ingredients)

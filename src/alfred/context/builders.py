@@ -255,9 +255,8 @@ class ThinkContext:
         ref_active_reason = self.registry_data.get("ref_active_reason", {})
         ref_turn_created = self.registry_data.get("ref_turn_created", {})
         pending_artifacts = self.registry_data.get("pending_artifacts", {})
-        # Recipe detail tracking
-        ref_recipe_last_read_level = self.registry_data.get("ref_recipe_last_read_level", {})
-        ref_recipe_last_full_turn = self.registry_data.get("ref_recipe_last_full_turn", {})
+        # Generic detail tracking (keyed by ref → {"level": ..., "full_turn": ...})
+        ref_detail_tracking = self.registry_data.get("ref_detail_tracking", {})
 
         # Get active entities split by source
         recent_refs, retained_refs = self._get_active_entities()
@@ -290,38 +289,43 @@ class ThinkContext:
 
         # Section 2: Active Entities (last 2 turns - automatic)
         # Filter out: entities shown in Generated Content section
-        from alfred.context.entity import SOURCE_TAG_LEGEND, RECIPE_DATA_LEGEND
+        from alfred.context.entity import SOURCE_TAG_LEGEND
+        from alfred.domain import get_current_domain
         recent_display = [r for r in recent_refs if r not in generated_refs]
         if recent_display:
             lines.append("## ACTIVE ENTITIES")
             lines.append("Act has data for these. Plan reads only when data is missing from this section.")
             lines.append(SOURCE_TAG_LEGEND)
-            # Only show recipe-specific read level guidance when recipes are present
-            has_recipes = any(
-                ref_types.get(r) == "recipe" for r in recent_display
-            )
-            if has_recipes:
-                lines.append(RECIPE_DATA_LEGEND)
+            # Phase 2: Get entity-specific legends from domain config
+            domain = get_current_domain()
+            entity_types_present = set(ref_types.get(r) for r in recent_display)
+            for entity_type in entity_types_present:
+                legend = domain.get_entity_data_legend(entity_type)
+                if legend:
+                    lines.append(legend)
             lines.append("")
             for ref in recent_display:
                 label = ref_labels.get(ref, ref)
                 entity_type = ref_types.get(ref, "unknown")
                 action = ref_actions.get(ref, "-")
                 last_ref = ref_turn_last_ref.get(ref, "?")
-                # Recipe detail level tracking
-                if entity_type == "recipe":
-                    level = ref_recipe_last_read_level.get(ref)
-                    if level:
-                        action = f"{action}:{level}"
-                        if level != "full":
-                            last_full_turn = ref_recipe_last_full_turn.get(ref)
-                            if last_full_turn:
-                                action = f"{action} (last_full:T{last_full_turn})"
+                # Detail level tracking (driven by domain config, not entity-specific)
+                tracking = ref_detail_tracking.get(ref, {})
+                detail_level = tracking.get("level")
+                if detail_level:
+                    action = f"{action}:{detail_level}"
+                    if detail_level != "full":
+                        last_full_turn = tracking.get("full_turn")
+                        if last_full_turn:
+                            action = f"{action} (last_full:T{last_full_turn})"
                 # Stub indicator: created:user entities that haven't been read
                 stub_marker = ""
                 if action.startswith("created:user") or action.startswith("updated:user"):
-                    # No read level means Act has no data for this entity
-                    if entity_type == "recipe" and not ref_recipe_last_read_level.get(ref):
+                    # No detail tracking means Act has no data for this entity
+                    etype = ref_types.get(ref, "")
+                    table_name = domain.type_to_table.get(etype, "")
+                    entity_def = domain.entities.get(table_name)
+                    if entity_def and entity_def.detail_tracking and not tracking:
                         stub_marker = " (no details)"
                 lines.append(f"- `{ref}`: {label}{stub_marker} ({entity_type}) [{action}] T{last_ref}")
             lines.append("")

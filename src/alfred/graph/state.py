@@ -64,7 +64,8 @@ class EntityRef(BaseModel):
 class RouterOutput(BaseModel):
     """Output from the Router node."""
 
-    agent: Literal["pantry", "coach", "cellar"]
+    # Phase 2: Changed from Literal to str to support domain-agnostic agents
+    agent: str  # Domain-specific agent name (e.g., "main" for kitchen, "fpl_main" for FPL)
     goal: str  # Natural language
     complexity: Literal["low", "medium", "high"]
     # NOTE: No context_needs - Act handles ALL data access via CRUD

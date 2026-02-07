@@ -36,7 +36,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from alfred.tools.ingredient_lookup import lookup_ingredient, IngredientMatch
+from alfred.domain.kitchen.tools.ingredient_lookup import lookup_ingredient, IngredientMatch
 
 logger = logging.getLogger(__name__)
 

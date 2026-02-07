@@ -101,7 +101,7 @@ async def call_llm(
             user_prompt="Add milk to my pantry",
             complexity="low",
         )
-        print(result.agent)  # "pantry"
+        print(result.agent)  # "main"
     """
     client = get_client()
 

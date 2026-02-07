@@ -513,7 +513,7 @@ async def enrich_with_ingredient_id(
 
     if use_resolver:
         # Use the full resolver for complex inputs (extracts modifiers, qty, unit)
-        from alfred.tools.ingredient_resolver import resolve_and_enrich
+        from alfred.domain.kitchen.tools.ingredient_resolver import resolve_and_enrich
         return await resolve_and_enrich(data, use_resolver=True)
 
     # Simple lookup (no parsing)

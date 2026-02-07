@@ -30,12 +30,6 @@ SOURCE_TAG_LEGEND = (
     "`[linked]` = auto-registered from FK"
 )
 
-RECIPE_DATA_LEGEND = (
-    "**For recipes:** "
-    "`[read:full]` = has instructions + ingredients, "
-    "`[read:summary]` = metadata only (re-read with instructions for details)"
-)
-
 
 @dataclass
 class EntitySnapshot:

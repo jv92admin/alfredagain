@@ -17,10 +17,23 @@ See docs/session-id-registry-spec.md for full architecture.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import logging
 
+if TYPE_CHECKING:
+    from alfred.domain.base import DomainConfig
+
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Domain Configuration (Phase 2: Use DomainConfig instead of hardcoded mappings)
+# =============================================================================
+
+def _get_domain() -> "DomainConfig":
+    """Get the current domain configuration."""
+    from alfred.domain import get_current_domain
+    return get_current_domain()
 
 
 @dataclass
@@ -71,12 +84,10 @@ class SessionIdRegistry:
     # V4: Entity type per ref
     ref_types: dict[str, str] = field(default_factory=dict)
 
-    # V7: Deterministic recipe detail tracking (what was actually returned by CRUD)
-    # This helps Think/Act know whether a recipe was last read with instructions or not.
-    # NOTE: This is NOT a guarantee that full data is currently "loaded" for Act; it is only
-    # a record of what the last read returned.
-    ref_recipe_last_read_level: dict[str, str] = field(default_factory=dict)  # "summary" | "full"
-    ref_recipe_last_full_turn: dict[str, int] = field(default_factory=dict)   # turn when instructions were last included
+    # V7: Deterministic detail tracking for entities with detail_tracking=True.
+    # Tracks read level (summary vs full) per ref, determined by domain.detect_detail_level().
+    # Keys: ref, Values: {"level": "summary"|"full", "full_turn": <int>}
+    ref_detail_tracking: dict[str, dict[str, Any]] = field(default_factory=dict)
     
     # V4 CONSOLIDATION: Temporal tracking (replaces EntityContextModel/WorkingSet)
     ref_turn_created: dict[str, int] = field(default_factory=dict)   # When first seen
@@ -201,14 +212,16 @@ class SessionIdRegistry:
                 self.ref_actions[ref] = "read"
                 self.ref_types[ref] = entity_type
 
-                # V7: Recipe detail level tracking (summary vs full instructions)
-                # Determined purely from the returned DB record shape.
-                if entity_type == "recipe":
-                    if "instructions" in record:
-                        self.ref_recipe_last_read_level[ref] = "full"
-                        self.ref_recipe_last_full_turn[ref] = self.current_turn
-                    else:
-                        self.ref_recipe_last_read_level[ref] = "summary"
+                # V7: Detail level tracking for entities with detail_tracking=True.
+                # Determined purely from the returned DB record shape via domain config.
+                domain = _get_domain()
+                detail_level = domain.detect_detail_level(entity_type, record)
+                if detail_level is not None:
+                    tracking = self.ref_detail_tracking.get(ref, {})
+                    tracking["level"] = detail_level
+                    if detail_level == "full":
+                        tracking["full_turn"] = self.current_turn
+                    self.ref_detail_tracking[ref] = tracking
                 
                 # Compute label based on entity type
                 label = self._compute_entity_label(record, entity_type, ref)
@@ -257,34 +270,41 @@ class SessionIdRegistry:
                         logger.info(f"SessionRegistry: Lazy-registered {fk_ref} → {fk_uuid[:8]}... (via {fk_field})")
             
             # Handle nested relations (e.g., recipe_ingredients inside recipes)
-            # These need their IDs registered so Act can target them for updates
-            if "recipe_ingredients" in record and isinstance(record["recipe_ingredients"], list):
-                translated_ingredients = []
-                for ing in record["recipe_ingredients"]:
-                    if isinstance(ing, dict) and "id" in ing and ing["id"]:
-                        ing_copy = ing.copy()
-                        ing_uuid = str(ing["id"])
-                        
-                        if ing_uuid in self.uuid_to_ref:
-                            ing_ref = self.uuid_to_ref[ing_uuid]
+            # These need their IDs registered so Act can target them for updates.
+            # Driven by EntityDefinition.nested_relations from domain config.
+            domain = _get_domain()
+            entity_def = domain.entities.get(table)
+            nested_keys = (entity_def.nested_relations or []) if entity_def else []
+            for nested_key in nested_keys:
+                if nested_key not in record or not isinstance(record[nested_key], list):
+                    continue
+                nested_entity = domain.entities.get(nested_key)
+                nested_type = nested_entity.type_name if nested_entity else nested_key.rstrip("s")
+                translated_nested = []
+                for item in record[nested_key]:
+                    if isinstance(item, dict) and "id" in item and item["id"]:
+                        item_copy = item.copy()
+                        item_uuid = str(item["id"])
+
+                        if item_uuid in self.uuid_to_ref:
+                            item_ref = self.uuid_to_ref[item_uuid]
                         else:
-                            ing_ref = self._next_ref("ri")
-                            self.ref_to_uuid[ing_ref] = ing_uuid
-                            self.uuid_to_ref[ing_uuid] = ing_ref
-                            self.ref_actions[ing_ref] = "read"
-                            self.ref_types[ing_ref] = "ri"
-                            self.ref_labels[ing_ref] = ing.get("name", ing_ref)
-                            if ing_ref not in self.ref_turn_created:
-                                self.ref_turn_created[ing_ref] = self.current_turn
-                            self.ref_turn_last_ref[ing_ref] = self.current_turn
-                            logger.info(f"SessionRegistry: Registered nested {ing_ref} → {ing_uuid[:8]}...")
-                        
-                        ing_copy["id"] = ing_ref
-                        translated_ingredients.append(ing_copy)
+                            item_ref = self._next_ref(nested_type)
+                            self.ref_to_uuid[item_ref] = item_uuid
+                            self.uuid_to_ref[item_uuid] = item_ref
+                            self.ref_actions[item_ref] = "read"
+                            self.ref_types[item_ref] = nested_type
+                            self.ref_labels[item_ref] = item.get("name", item_ref)
+                            if item_ref not in self.ref_turn_created:
+                                self.ref_turn_created[item_ref] = self.current_turn
+                            self.ref_turn_last_ref[item_ref] = self.current_turn
+                            logger.info(f"SessionRegistry: Registered nested {item_ref} → {item_uuid[:8]}...")
+
+                        item_copy["id"] = item_ref
+                        translated_nested.append(item_copy)
                     else:
-                        # Ingredient without ID (summary view) - keep as-is
-                        translated_ingredients.append(ing)
-                new_record["recipe_ingredients"] = translated_ingredients
+                        translated_nested.append(item)
+                new_record[nested_key] = translated_nested
             
             translated.append(new_record)
         
@@ -641,9 +661,9 @@ class SessionIdRegistry:
         translated = data.copy()
         fk_fields = self._get_fk_fields(table)
         
-        # Also check common FK patterns
-        fk_fields = set(fk_fields) | {"recipe_id", "meal_plan_id", "task_id", 
-                                       "ingredient_id", "parent_recipe_id"}
+        # Also include all known FK fields from domain config (covers cross-table refs)
+        domain = _get_domain()
+        fk_fields = set(fk_fields) | set(domain.get_fk_enrich_map().keys())
         
         for fk_field in fk_fields:
             if fk_field in translated and translated[fk_field]:
@@ -781,85 +801,59 @@ class SessionIdRegistry:
     
     def _table_to_type(self, table: str) -> str:
         """Convert table name to entity type (singular, for refs)."""
-        mapping = {
-            "recipes": "recipe",
-            "recipe_ingredients": "ri",  # Short for readability
-            "inventory": "inv",
-            "shopping_list": "shop",
-            "meal_plans": "meal",
-            "tasks": "task",
-            "preferences": "pref",
-            "ingredients": "ing",
-        }
-        return mapping.get(table, table.rstrip("s"))
+        # Phase 2: Use domain config instead of hardcoded mapping
+        domain = _get_domain()
+        return domain.table_to_type.get(table, table.rstrip("s"))
     
     def _get_fk_fields(self, table: str) -> list[str]:
         """Get FK fields for a table."""
-        fk_map = {
-            "recipe_ingredients": ["recipe_id", "ingredient_id"],
-            "meal_plans": ["recipe_id"],
-            "tasks": ["recipe_id", "meal_plan_id"],
-        }
-        return fk_map.get(table, [])
+        # Phase 2: Use domain config instead of hardcoded mapping
+        domain = _get_domain()
+        entity = domain.entities.get(table)
+        if entity:
+            return entity.fk_fields
+        return []
     
     def _fk_field_to_type(self, fk_field: str) -> str:
         """Convert FK field name to entity type for lazy registration."""
-        # FK field naming convention: <entity_type>_id
-        fk_type_map = {
-            "recipe_id": "recipe",
-            "ingredient_id": "ing",
-            "meal_plan_id": "meal",
-            "task_id": "task",
-            "parent_recipe_id": "recipe",
-        }
-        return fk_type_map.get(fk_field, fk_field.replace("_id", ""))
+        # Phase 2: Derive from domain config
+        # FK field naming convention: <table>_id -> look up entity type
+        domain = _get_domain()
+
+        # Handle special cases first (parent_recipe_id -> recipe)
+        if fk_field == "parent_recipe_id":
+            fk_field = "recipe_id"
+
+        # Extract table name from FK field (e.g., "recipe_id" -> "recipes")
+        base_name = fk_field.replace("_id", "")
+
+        # Try common pluralizations
+        for table_name in [base_name + "s", base_name + "es", base_name]:
+            entity = domain.entities.get(table_name)
+            if entity:
+                return entity.type_name
+
+        # Fallback: just strip _id
+        return base_name
     
     def _compute_entity_label(self, record: dict, entity_type: str, ref: str) -> str:
         """
         Compute a human-readable label for an entity based on its type.
-        
-        Different entity types use different fields for their labels:
-        - recipes: name
-        - tasks: title  
-        - meal_plans: date [meal_type]
-        - inventory: name
+
+        Phase 2: Delegates to domain config for domain-specific label computation.
         """
-        # Standard name/title fields
-        if record.get("name"):
-            return record["name"]
-        if record.get("title"):
-            return record["title"]
-        
-        # Special handling for meal_plans: "Jan 12 [lunch]"
-        if entity_type == "meal" and record.get("date"):
-            date = record["date"]
-            meal_type = record.get("meal_type", "meal")
-            # Try to make date more readable if it's a string
-            try:
-                from datetime import datetime
-                if isinstance(date, str):
-                    dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
-                    date = dt.strftime("%b %d")  # "Jan 12"
-            except:
-                pass  # Keep original date string
-            return f"{date} [{meal_type}]"
-        
-        return ref
+        domain = _get_domain()
+        return domain.compute_entity_label(record, entity_type, ref)
     
     def _fk_field_to_enrich_info(self, fk_field: str) -> tuple[str, str] | None:
         """
         Get (table, name_column) for enriching lazy-registered FK refs.
-        
+
         Returns None if the FK type doesn't support name enrichment.
         """
-        # Maps FK field → (target_table, name_column)
-        fk_enrich_map = {
-            "recipe_id": ("recipes", "name"),
-            "ingredient_id": ("ingredients", "name"),
-            "meal_plan_id": ("meal_plans", None),  # No single name field
-            "task_id": ("tasks", "title"),
-            "parent_recipe_id": ("recipes", "name"),
-        }
+        # Phase 2: Use domain config
+        domain = _get_domain()
+        fk_enrich_map = domain.get_fk_enrich_map()
         return fk_enrich_map.get(fk_field)
     
     # =========================================================================
@@ -954,7 +948,14 @@ class SessionIdRegistry:
         """
         import re
         touched = 0
-        ref_pattern = re.compile(r'\b(recipe_\d+|inv_\d+|task_\d+|meal_plan_\d+|gen_\w+_\d+)\b')
+        # Build ref pattern dynamically from domain entity type names
+        domain = _get_domain()
+        type_names = sorted(
+            {e.type_name for e in domain.entities.values()},
+            key=len, reverse=True,  # Longest first for correct regex matching
+        )
+        type_alts = "|".join(re.escape(t) for t in type_names) if type_names else r"\w+"
+        ref_pattern = re.compile(rf'\b({type_alts})_\d+\b|\bgen_\w+_\d+\b')
         
         # Extract from data dict (recursively)
         def extract_refs_from_dict(d: dict | list | str) -> set[str]:
@@ -1125,9 +1126,8 @@ class SessionIdRegistry:
             "ref_actions": self.ref_actions,
             "ref_labels": self.ref_labels,
             "ref_types": self.ref_types,
-            # V7: Recipe detail tracking
-            "ref_recipe_last_read_level": self.ref_recipe_last_read_level,
-            "ref_recipe_last_full_turn": self.ref_recipe_last_full_turn,
+            # V7: Generic detail tracking (keyed by ref, values are dicts)
+            "ref_detail_tracking": self.ref_detail_tracking,
             # V4 CONSOLIDATION: Temporal tracking
             "ref_turn_created": self.ref_turn_created,
             "ref_turn_last_ref": self.ref_turn_last_ref,
@@ -1150,8 +1150,7 @@ class SessionIdRegistry:
         registry.ref_actions = data.get("ref_actions", {})
         registry.ref_labels = data.get("ref_labels", {})
         registry.ref_types = data.get("ref_types", {})
-        registry.ref_recipe_last_read_level = data.get("ref_recipe_last_read_level", {})
-        registry.ref_recipe_last_full_turn = data.get("ref_recipe_last_full_turn", {})
+        registry.ref_detail_tracking = data.get("ref_detail_tracking", {})
         # V4 CONSOLIDATION: Temporal tracking
         registry.ref_turn_created = data.get("ref_turn_created", {})
         registry.ref_turn_last_ref = data.get("ref_turn_last_ref", {})

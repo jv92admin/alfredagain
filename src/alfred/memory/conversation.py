@@ -188,20 +188,12 @@ def estimate_context_tokens(context: ConversationContext) -> int:
 # Entity Extraction
 # =============================================================================
 
-# Map table names to entity types
-TABLE_TO_ENTITY_TYPE = {
-    "inventory": "inventory",
-    "ingredients": "ingredient",
-    "recipes": "recipe",
-    "recipe_ingredients": "recipe_ingredient",
-    "shopping_list": "shopping_list",
-    "meal_plans": "meal_plan",
-    "tasks": "task",
-    "preferences": "preference",
-    # Generated content types (from step results, not DB)
-    "salad_recipes": "recipe",
-    "recipes_with_chickpeas": "recipe",
-}
+
+def _get_table_to_entity_type() -> dict[str, str]:
+    """Get table → entity type mapping from domain config. Phase 2."""
+    from alfred.domain import get_current_domain
+    return get_current_domain().table_to_type
+
 
 
 def extract_entities_from_result(
@@ -223,7 +215,8 @@ def extract_entities_from_result(
         List of EntityRef objects
     """
     entities = []
-    entity_type = TABLE_TO_ENTITY_TYPE.get(table or "", "unknown")
+    table_to_type = _get_table_to_entity_type()
+    entity_type = table_to_type.get(table or "", "unknown")
     
     if isinstance(result, dict):
         # Check if it's a direct record with ID
@@ -243,7 +236,7 @@ def extract_entities_from_result(
                     for item in value:
                         if isinstance(item, dict) and "id" in item:
                             # Try to infer entity type from the key
-                            inferred_type = TABLE_TO_ENTITY_TYPE.get(key, entity_type)
+                            inferred_type = table_to_type.get(key, entity_type)
                             entities.append(EntityRef(
                                 type=inferred_type,
                                 id=str(item["id"]),

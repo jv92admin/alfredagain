@@ -6,7 +6,7 @@ Exposes backend schema infrastructure to the frontend for schema-driven UI.
 
 from fastapi import APIRouter, HTTPException
 
-from alfred.tools.schema import SUBDOMAIN_REGISTRY, FIELD_ENUMS
+from alfred.domain.kitchen.schema import SUBDOMAIN_REGISTRY, FIELD_ENUMS
 from alfred.models.entities import (
     InventoryCreate,
     InventoryUpdate,
