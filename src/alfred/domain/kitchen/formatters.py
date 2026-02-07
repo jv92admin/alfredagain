@@ -456,3 +456,132 @@ def format_meal_plan_summary(plans: list) -> str:
             lines.append(f"- {meal_type.title()}: {notes or '(no details)'}")
 
     return "\n".join(lines)
+
+
+# =============================================================================
+# Record Formatting for Reply (from reply.py)
+# =============================================================================
+
+
+def format_records_for_reply(
+    records: list[dict], table_type: str | None, indent: int = 2
+) -> str | None:
+    """
+    Kitchen-specific record formatting for user-facing reply display.
+
+    Handles special cases: preferences as key-value, recipes with full
+    instructions, meal plans with recipe links.
+
+    Returns None for table types that should use generic formatting.
+    """
+    if not records:
+        return None
+
+    prefix = " " * indent
+
+    # Preferences: key-value display
+    if table_type == "preferences":
+        lines = []
+        for record in records:
+            clean = {k: v for k, v in record.items() if k not in REPLY_STRIP_FIELDS and v is not None}
+            lines.append(f"{prefix}Your Preferences:")
+            for field in [
+                "dietary_restrictions", "allergies", "favorite_cuisines",
+                "cooking_skill_level", "available_equipment",
+                "household_adults", "household_kids", "household_babies",
+                "planning_rhythm", "current_vibes", "nutrition_goals",
+                "disliked_ingredients",
+            ]:
+                value = clean.get(field)
+                if value is not None and value != [] and value != "":
+                    label = field.replace("_", " ").title()
+                    if isinstance(value, list):
+                        value = ", ".join(str(v) for v in value)
+                    lines.append(f"{prefix}  - {label}: {value}")
+        return "\n".join(lines)
+
+    # Recipes: special formatting with optional full display
+    if table_type == "recipes":
+        lines = []
+        for record in records:
+            clean = {k: v for k, v in record.items() if k not in REPLY_STRIP_FIELDS and v is not None}
+            name = clean.get("name") or clean.get("title") or "(untitled recipe)"
+            parts = [f"{prefix}- {name}"]
+
+            if clean.get("cuisine"):
+                parts.append(f"({clean['cuisine']})")
+            if clean.get("total_time"):
+                parts.append(f"{clean['total_time']}min")
+            if clean.get("servings"):
+                parts.append(f"serves {clean['servings']}")
+            if clean.get("tags"):
+                tags = clean["tags"][:3] if isinstance(clean["tags"], list) else []
+                if tags:
+                    parts.append(f"[{', '.join(tags)}]")
+
+            # Full recipe display when instructions are present
+            if clean.get("instructions"):
+                lines.append(" ".join(parts))
+                if clean.get("description"):
+                    lines.append(f"{prefix}  *{clean['description']}*")
+
+                ingredients = clean.get("recipe_ingredients", [])
+                if ingredients:
+                    lines.append(f"{prefix}  **Ingredients:**")
+                    for ing in ingredients[:20]:
+                        if isinstance(ing, dict):
+                            ing_name = ing.get("name", "")
+                            qty = ing.get("quantity", "")
+                            unit = ing.get("unit", "")
+                            notes = ing.get("notes", "")
+                            ing_str = f"{prefix}    - {ing_name}"
+                            if qty:
+                                ing_str += f" ({qty}"
+                                if unit:
+                                    ing_str += f" {unit}"
+                                ing_str += ")"
+                            if notes:
+                                ing_str += f", {notes}"
+                            lines.append(ing_str)
+
+                instructions = clean.get("instructions", [])
+                if instructions:
+                    lines.append(f"{prefix}  **Instructions:**")
+                    for i, step in enumerate(instructions[:15], 1):
+                        lines.append(f"{prefix}    {i}. {step}")
+            else:
+                lines.append(" ".join(parts))
+
+        return "\n".join(lines)
+
+    # Meal plans: date + meal type + recipe link
+    if table_type == "meal_plans":
+        lines = []
+        for record in records:
+            clean = {k: v for k, v in record.items() if k not in REPLY_STRIP_FIELDS and v is not None}
+            name = clean.get("date") or clean.get("name") or "(no date)"
+            parts = [f"{prefix}- {name}"]
+
+            if clean.get("meal_type"):
+                parts.append(f"[{clean['meal_type']}]")
+            recipe_label = clean.get("_recipe_id_label")
+            has_recipe = recipe_label or clean.get("recipe_id")
+            if recipe_label:
+                parts.append(f"\u2192 {recipe_label}")
+            elif clean.get("recipe_id"):
+                parts.append(f"\u2192 recipe:{clean['recipe_id']}")
+            elif clean.get("notes"):
+                notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
+                parts.append(f'notes:"{notes_preview}"')
+            if clean.get("servings"):
+                parts.append(f"({clean['servings']} servings)")
+            if clean.get("notes") and has_recipe:
+                notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
+                parts.append(f'notes:"{notes_preview}"')
+
+            lines.append(" ".join(parts))
+
+        return "\n".join(lines)
+
+    # Not a kitchen-specific table type — return None for generic formatting
+    return None

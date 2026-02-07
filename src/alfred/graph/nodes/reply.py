@@ -301,63 +301,35 @@ def _format_understand_clarification(understand_output) -> str:
 # =============================================================================
 
 
-# Re-export from canonical location for backwards compat
-from alfred.domain.kitchen.formatters import EMPTY_RESPONSES  # noqa: F401
-
-
 def _format_quick_response(intent: str, subdomain: str, result: Any) -> str | None:
     """
     Format response without LLM for simple patterns.
-    
+
     Returns None if no formatter matches (triggers LLM fallback).
     """
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+
     # Handle empty results
     if not result or (isinstance(result, list) and len(result) == 0):
-        return EMPTY_RESPONSES.get(subdomain, "No results found.")
-    
+        return domain.get_empty_response(subdomain)
+
     # Format based on subdomain and result type
     if isinstance(result, list):
         count = len(result)
-        
-        # List display for read operations
-        if subdomain == "inventory":
-            return _format_inventory_list(result)
-        elif subdomain == "recipes":
-            return _format_recipe_list(result)
-        elif subdomain == "shopping":
-            return _format_shopping_list(result)
-        elif subdomain == "tasks":
-            return _format_task_list(result)
-        elif subdomain == "meal_plans":
-            return _format_meal_plan_list(result)
-        
-        # Write confirmations
-        intent_lower = intent.lower()
-        if "add" in intent_lower or "create" in intent_lower:
-            item_word = "item" if count == 1 else "items"
-            if subdomain == "shopping":
-                return f"Added {count} {item_word} to your shopping list."
-            elif subdomain == "inventory":
-                return f"Added {count} {item_word} to your pantry."
-            elif subdomain == "tasks":
-                return f"Added {count} task{'s' if count > 1 else ''}."
-        
-        if "delete" in intent_lower or "remove" in intent_lower or "clear" in intent_lower:
-            item_word = "item" if count == 1 else "items"
-            return f"Removed {count} {item_word}."
-    
+
+        # List display for read operations — delegate to domain formatters
+        formatters = domain.get_subdomain_formatters()
+        if subdomain in formatters:
+            return formatters[subdomain](result)
+
+        # Write confirmations — delegate to domain
+        confirmation = domain.get_quick_write_confirmation(subdomain, count, intent)
+        if confirmation:
+            return confirmation
+
     # No formatter matched
     return None
-
-
-# Delegate to canonical formatters in domain/kitchen/formatters.py
-from alfred.domain.kitchen.formatters import (  # noqa: F401, E402
-    format_inventory_summary as _format_inventory_list,
-    format_recipe_summary as _format_recipe_list,
-    format_shopping_summary as _format_shopping_list,
-    format_task_summary as _format_task_list,
-    format_meal_plan_summary as _format_meal_plan_list,
-)
 
 
 async def _quick_llm_response(
@@ -395,7 +367,9 @@ async def _quick_llm_response(
 ⚠️ IMPORTANT: The user wanted to {expected_action.upper()} but we only {action_performed.upper()}ed.
 Do NOT claim you completed the {expected_action}. Be honest that you only read the data."""
     
-    system_prompt = """You are Alfred, a helpful kitchen assistant. 
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    system_prompt = f"""{domain.get_system_prompt()}
 Give a brief, friendly response based on the results. Be concise.
 NEVER claim to have updated/created/deleted something if you only read data."""
     
@@ -982,8 +956,10 @@ def _format_execution_summary(
 
 def _track_items_from_dict(result: dict, items_list: list[str]) -> None:
     """Extract item names from a dict result and add to tracking list."""
-    # Check for 'recipes' or similar list keys
-    for key in ["recipes", "meal_plans", "tasks", "items"]:
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    tracking_keys = domain.get_item_tracking_keys()
+    for key in tracking_keys:
         if key in result and isinstance(result[key], list):
             for item in result[key]:
                 if isinstance(item, dict) and "name" in item:
@@ -1064,52 +1040,32 @@ def _summarize_dict(d: dict) -> str:
 # Human-Readable Formatting for Reply (strips IDs, keeps useful fields)
 # =============================================================================
 
-# Re-export from canonical location
-from alfred.domain.kitchen.formatters import REPLY_STRIP_FIELDS as _STRIP_FIELDS  # noqa: F811, E402
-
-# Fields to keep and display (human-readable)
-_PRIORITY_FIELDS = ["name", "title", "date", "meal_type", "quantity", "unit", 
-                    "location", "notes", "description", "instructions", "category",
-                    "cuisine", "difficulty", "servings", "tags", "rating"]
+def _get_strip_fields() -> set[str]:
+    """Get fields to strip from records for reply display."""
+    from alfred.domain import get_current_domain
+    return get_current_domain().get_strip_fields("reply")
 
 
 def _clean_record(record: dict) -> dict:
     """Strip internal fields from a record, keep human-readable ones."""
-    return {k: v for k, v in record.items() 
-            if k not in _STRIP_FIELDS and v is not None}
+    strip_fields = _get_strip_fields()
+    return {k: v for k, v in record.items()
+            if k not in strip_fields and v is not None}
 
 
 def _detect_table_type(record: dict) -> str | None:
-    """Detect table type from record structure for proper formatting."""
-    if not isinstance(record, dict):
-        return None
-    
-    # Table-specific field patterns
-    if "dietary_restrictions" in record or "allergies" in record or "cooking_skill_level" in record:
-        return "preferences"
-    if "recipe_id" in record and "name" in record and "quantity" in record:
-        return "recipe_ingredients"
-    if "meal_type" in record and "date" in record:
-        return "meal_plans"
-    if "cuisine" in record or "prep_time" in record or "cook_time" in record or "total_time" in record:
-        return "recipes"
-    if "location" in record or "expiry_date" in record:
-        return "inventory"
-    if "is_purchased" in record:
-        return "shopping_list"
-    if "due_date" in record or "status" in record:
-        return "tasks"
-    
-    return None
+    """Detect table type from record structure. Delegates to domain."""
+    from alfred.domain import get_current_domain
+    return get_current_domain().infer_table_from_record(record)
 
 
 def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -> str:
     """
     Format a list of items for Reply in human-readable format.
-    
+
     Strips IDs, keeps names/quantities/dates/notes.
-    Uses table detection for special formatting (preferences, etc.)
-    
+    Delegates domain-specific formatting (preferences, etc.) to domain config.
+
     Args:
         items: List of records to format
         max_items: Maximum items to show
@@ -1118,133 +1074,53 @@ def _format_items_for_reply(items: list, max_items: int = 50, indent: int = 2) -
     if not items:
         prefix = " " * indent
         return f"{prefix}(none)"
-    
+
     prefix = " " * indent
-    lines = []
-    
+
     # Detect table type from first record
     first_record = items[0] if items and isinstance(items[0], dict) else {}
     table_type = _detect_table_type(first_record)
-    
+
+    # Try domain-specific formatting first
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    domain_formatted = domain.format_records_for_reply(
+        items[:max_items], table_type, indent
+    )
+    if domain_formatted is not None:
+        if len(items) > max_items:
+            domain_formatted += f"\n{prefix}... and {len(items) - max_items} more"
+        return domain_formatted
+
+    # Generic formatting fallback
+    lines = []
     for item in items[:max_items]:
         if isinstance(item, dict):
             clean = _clean_record(item)
-            
-            # Special formatting for preferences (key-value pairs)
-            if table_type == "preferences":
-                lines.append(f"{prefix}Your Preferences:")
-                for field in ["dietary_restrictions", "allergies", "favorite_cuisines",
-                              "cooking_skill_level", "available_equipment",
-                              "household_adults", "household_kids", "household_babies",
-                              "planning_rhythm", "current_vibes", "nutrition_goals", "disliked_ingredients"]:
-                    value = clean.get(field)
-                    if value is not None and value != [] and value != "":
-                        label = field.replace("_", " ").title()
-                        if isinstance(value, list):
-                            value = ", ".join(str(v) for v in value)
-                        lines.append(f"{prefix}  - {label}: {value}")
-                continue
-            
-            # Standard formatting for other tables
-            # Try multiple name fields, fall back to descriptive placeholder
             name = (clean.get("name") or clean.get("title") or clean.get("date") or
-                    clean.get("description", "")[:50] or  # Try description snippet
-                    f"({table_type or 'record'} updated)")  # Descriptive fallback
+                    clean.get("description", "")[:50] or
+                    f"({table_type or 'record'} updated)")
             parts = [f"{prefix}- {name}"]
-            
-            # Add key details based on table type
-            if table_type == "recipes":
-                if clean.get("cuisine"):
-                    parts.append(f"({clean['cuisine']})")
-                if clean.get("total_time"):
-                    parts.append(f"{clean['total_time']}min")
-                if clean.get("servings"):
-                    parts.append(f"serves {clean['servings']}")
-                if clean.get("tags"):
-                    tags = clean["tags"][:3] if isinstance(clean["tags"], list) else []
-                    if tags:
-                        parts.append(f"[{', '.join(tags)}]")
-                
-                # V7.1: Include full recipe data when present (for "show full recipe" reads)
-                # If instructions were fetched, include them - this is what user asked for
-                if clean.get("instructions"):
-                    lines.append(" ".join(parts))  # Add the header line first
-                    parts = []  # Clear parts, we'll build full recipe below
-                    
-                    # Description if present
-                    if clean.get("description"):
-                        lines.append(f"{prefix}  *{clean['description']}*")
-                    
-                    # Ingredients
-                    ingredients = clean.get("recipe_ingredients", [])
-                    if ingredients:
-                        lines.append(f"{prefix}  **Ingredients:**")
-                        for ing in ingredients[:20]:  # Cap at 20
-                            if isinstance(ing, dict):
-                                ing_name = ing.get("name", "")
-                                qty = ing.get("quantity", "")
-                                unit = ing.get("unit", "")
-                                notes = ing.get("notes", "")
-                                ing_str = f"{prefix}    - {ing_name}"
-                                if qty:
-                                    ing_str += f" ({qty}"
-                                    if unit:
-                                        ing_str += f" {unit}"
-                                    ing_str += ")"
-                                if notes:
-                                    ing_str += f", {notes}"
-                                lines.append(ing_str)
-                    
-                    # Instructions
-                    instructions = clean.get("instructions", [])
-                    if instructions:
-                        lines.append(f"{prefix}  **Instructions:**")
-                        for i, step in enumerate(instructions[:15], 1):  # Cap at 15
-                            lines.append(f"{prefix}    {i}. {step}")
-                    
-                    continue  # Skip the normal line append since we handled it
-            elif table_type == "meal_plans":
-                if clean.get("meal_type"):
-                    parts.append(f"[{clean['meal_type']}]")
-                # Include recipe info - _recipe_id_label is added by CRUD enrichment
-                recipe_label = clean.get("_recipe_id_label")
-                has_recipe = recipe_label or clean.get("recipe_id")
-                if recipe_label:
-                    parts.append(f"→ {recipe_label}")
-                elif clean.get("recipe_id"):
-                    parts.append(f"→ recipe:{clean['recipe_id']}")
-                elif clean.get("notes"):
-                    # Notes-only meal (no recipe) - show notes as main content
-                    notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
-                    parts.append(f'notes:"{notes_preview}"')
-                if clean.get("servings"):
-                    parts.append(f"({clean['servings']} servings)")
-                # Show notes alongside recipe (not just as fallback)
-                if clean.get("notes") and has_recipe:
-                    notes_preview = clean["notes"][:50] + "..." if len(clean["notes"]) > 50 else clean["notes"]
-                    parts.append(f'notes:"{notes_preview}"')
-            else:
-                # Generic formatting
-                if clean.get("quantity"):
-                    unit = clean.get("unit", "")
-                    parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
-                if clean.get("meal_type"):
-                    parts.append(f"[{clean['meal_type']}]")
-                if clean.get("location"):
-                    parts.append(f"[{clean['location']}]")
-                if clean.get("category"):
-                    parts.append(f"({clean['category']})")
-                if clean.get("notes"):
-                    notes = clean["notes"][:100] + "..." if len(clean.get("notes", "")) > 100 else clean.get("notes", "")
-                    parts.append(f"- {notes}")
-            
+
+            # Generic field display
+            if clean.get("quantity"):
+                unit = clean.get("unit", "")
+                parts.append(f"({clean['quantity']} {unit})" if unit else f"({clean['quantity']})")
+            if clean.get("location"):
+                parts.append(f"[{clean['location']}]")
+            if clean.get("category"):
+                parts.append(f"({clean['category']})")
+            if clean.get("notes"):
+                notes = clean["notes"][:100] + "..." if len(clean.get("notes", "")) > 100 else clean.get("notes", "")
+                parts.append(f"- {notes}")
+
             lines.append(" ".join(parts))
         else:
             lines.append(f"{prefix}- {item}")
-    
+
     if len(items) > max_items:
         lines.append(f"{prefix}... and {len(items) - max_items} more")
-    
+
     return "\n".join(lines)
 
 
@@ -1273,12 +1149,14 @@ def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000, re
                 return f"{value} ({label})"
         return value
     
+    strip_fields = _get_strip_fields()
+
     def _clean_nested(obj):
         """Recursively clean nested data structures and enrich refs."""
         if isinstance(obj, dict):
             cleaned = {}
             for k, v in obj.items():
-                if k not in _STRIP_FIELDS and v is not None:
+                if k not in strip_fields and v is not None:
                     cleaned[k] = _clean_nested(v)
             return cleaned
         elif isinstance(obj, list):
@@ -1312,7 +1190,9 @@ def _format_dict_for_reply(data: dict, step_type: str, max_chars: int = 8000, re
                 parts = [f"  Saved: {name}"]
             else:
                 parts = [f"  {name}"]
-            for field in _PRIORITY_FIELDS:
+            from alfred.domain import get_current_domain as _gcd
+            priority_fields = _gcd().get_priority_fields()
+            for field in priority_fields:
                 if field in clean_data and field not in ("name", "title"):
                     val = clean_data[field]
                     if isinstance(val, list):

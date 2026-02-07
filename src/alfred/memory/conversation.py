@@ -55,8 +55,8 @@ def _summarize_assistant_message(message: str) -> str:
     Tool results and step results are the source of truth for specifics.
     
     Patterns detected:
-    - Recipe content (ingredients, instructions)
-    - Long lists (inventory, shopping items)
+    - Domain-specific generated content (detected via domain markers)
+    - Long lists (bulleted items)
     - Generated content
     """
     if len(message) < SUMMARIZE_THRESHOLD:
@@ -64,9 +64,9 @@ def _summarize_assistant_message(message: str) -> str:
     
     lines = message.strip().split("\n")
     
-    # Detect recipe content patterns
-    if _looks_like_recipe_content(message):
-        return _summarize_recipe_content(message)
+    # Detect generated content patterns (domain-specific)
+    if _looks_like_generated_content(message):
+        return _summarize_generated_content(message)
     
     # Detect long list patterns  
     if _looks_like_item_list(message):
@@ -80,47 +80,40 @@ def _summarize_assistant_message(message: str) -> str:
     return message
 
 
-def _looks_like_recipe_content(message: str) -> bool:
-    """Detect if message contains recipe-like content."""
-    recipe_markers = [
-        "**Ingredients:",
-        "- Ingredients:",
-        "Instructions:",
-        "Serve with",
-        "tbsp butter",
-        "tsp ",
-        "cup ",
-        "cloves",
-        "Preheat",
-        "Simmer",
-    ]
-    marker_count = sum(1 for m in recipe_markers if m.lower() in message.lower())
+def _looks_like_generated_content(message: str) -> bool:
+    """Detect if message contains domain-specific generated content."""
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    markers = domain.get_generated_content_markers()
+    if not markers:
+        return False
+    marker_count = sum(1 for m in markers if m.lower() in message.lower())
     return marker_count >= 3
 
 
-def _summarize_recipe_content(message: str) -> str:
-    """Extract recipe names and provide summary."""
+def _summarize_generated_content(message: str) -> str:
+    """Extract entity names from generated content and provide summary."""
+    import re
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+    content_label = domain.get_generated_content_label()
+    skip_words = domain.get_bold_skip_words()
+
     lines = message.split("\n")
-    
-    # Find recipe names (usually bold headers)
-    recipe_names = []
+    entity_names = []
     for line in lines:
-        # Look for patterns like "1. **Recipe Name**" or "**Recipe Name**"
         if "**" in line:
-            # Extract text between **
-            import re
             matches = re.findall(r'\*\*([^*]+)\*\*', line)
             for match in matches:
-                # Filter out section headers like "Ingredients:" 
-                if not any(x in match.lower() for x in ["ingredient", "instruction", "serve"]):
-                    if len(match) > 5:  # Skip short matches
-                        recipe_names.append(match.strip())
-    
-    if recipe_names:
-        names_str = ", ".join(recipe_names[:5])  # Max 5 recipes
-        return f"Generated recipe(s): {names_str}. [Content archived for later retrieval]"
-    
-    return "Generated recipe content. [Content archived for later retrieval]"
+                if not any(x in match.lower() for x in skip_words):
+                    if len(match) > 5:
+                        entity_names.append(match.strip())
+
+    if entity_names:
+        names_str = ", ".join(entity_names[:5])
+        return f"Generated {content_label}(s): {names_str}. [Content archived for later retrieval]"
+
+    return f"Generated {content_label} content. [Content archived for later retrieval]"
 
 
 def _looks_like_item_list(message: str) -> bool:
@@ -229,7 +222,7 @@ def extract_entities_from_result(
                 step_index=step_index,
             ))
         else:
-            # Check if it's a wrapper dict like {"salad_recipes": [...], "ingredients": [...]}
+            # Check if it's a wrapper dict with list values (e.g., {"items": [...]})
             # Recursively extract from any list values
             for key, value in result.items():
                 if isinstance(value, list):
@@ -297,39 +290,19 @@ def extract_entities_from_step_results(
 
 
 def _infer_table_from_result(result: Any) -> str | None:
-    """Try to infer table name from result structure."""
+    """Try to infer table name from result structure. Delegates to domain."""
     if isinstance(result, list) and result:
         sample = result[0] if isinstance(result[0], dict) else None
     elif isinstance(result, dict):
         sample = result
     else:
         return None
-    
+
     if not sample:
         return None
-    
-    # Heuristics based on field names
-    if "recipe_id" in sample and "ingredient_id" in sample:
-        return "recipe_ingredients"
-    if "cuisine" in sample or "instructions" in sample:
-        return "recipes"
-    if "location" in sample and "expiry_date" in sample:
-        return "inventory"
-    if "is_purchased" in sample:
-        return "shopping_list"
-    if "meal_type" in sample and "date" in sample:
-        return "meal_plans"
-    if "due_date" in sample or ("title" in sample and "completed" in sample):
-        return "tasks"
-    if "dietary_restrictions" in sample:
-        return "preferences"
-    if "aliases" in sample or "category" in sample:
-        return "ingredients"
-    # Fallback: if it looks like a recipe (has name + id), call it a recipe
-    if "name" in sample and "id" in sample and not any(k in sample for k in ["location", "quantity", "is_purchased"]):
-        return "recipes"
-    
-    return None
+
+    from alfred.domain import get_current_domain
+    return get_current_domain().infer_table_from_record(sample)
 
 
 def update_active_entities(
@@ -414,11 +387,12 @@ def format_condensed_context(
         tokens_used += estimate_tokens(section)
     
     # 2. Active entities (critical for reference resolution)
-    # Filter to relevant types only - skip ingredient-level noise
+    # Filter to relevant types only — skip low-level noise
     active = conversation.get("active_entities", {})
     if active:
-        relevant_types = {"recipe", "meal_plan", "preferences", "task"}
-        filtered = {k: v for k, v in active.items() 
+        from alfred.domain import get_current_domain
+        relevant_types = get_current_domain().get_relevant_entity_types()
+        filtered = {k: v for k, v in active.items()
                    if v.get("type", "unknown") in relevant_types}
         
         if filtered:
@@ -534,9 +508,10 @@ def format_full_context(
     # These are entities from earlier turns, shown for cross-reference only
     active = conversation.get("active_entities", {})
     if active:
-        # Filter to show most relevant entity types (skip ingredient noise)
-        relevant_types = {"recipe", "meal_plan", "preferences", "task"}
-        filtered = {k: v for k, v in active.items() 
+        # Filter to show most relevant entity types — skip low-level noise
+        from alfred.domain import get_current_domain
+        relevant_types = get_current_domain().get_relevant_entity_types()
+        filtered = {k: v for k, v in active.items()
                    if v.get("type", "unknown") in relevant_types}
         
         if filtered:

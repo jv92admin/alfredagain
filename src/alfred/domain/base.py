@@ -596,6 +596,40 @@ class DomainConfig(ABC):
         """
         return []  # Default: no skip words
 
+    def get_generated_content_markers(self) -> list[str]:
+        """
+        Markers that indicate assistant responses contain generated content.
+
+        Used to detect when a message contains domain-specific generated
+        content (e.g., recipe instructions, workout plans) for summarization.
+
+        Returns:
+            List of marker strings to check for (case-insensitive)
+        """
+        return []  # Default: no markers
+
+    def get_generated_content_label(self) -> str:
+        """
+        Label for generated content in conversation summaries.
+
+        Returns:
+            Label string (e.g., "recipe", "workout plan")
+        """
+        return "content"
+
+    def get_relevant_entity_types(self) -> set[str]:
+        """
+        Entity types considered relevant for conversation context display.
+
+        Filters out low-level entity types (e.g., ingredients, sub-items)
+        that would clutter the context.
+
+        Returns:
+            Set of entity type names to show in context
+        """
+        # Default: all entity types with complexity set
+        return {e.type_name for e in self.entities.values() if e.complexity}
+
     # =========================================================================
     # Reply Formatting
     # =========================================================================
@@ -679,6 +713,68 @@ class DomainConfig(ABC):
             System prompt string
         """
         return f"You are a helpful {self.name} assistant."
+
+    def get_quick_write_confirmation(
+        self, subdomain: str, count: int, action: str
+    ) -> str | None:
+        """
+        Get a confirmation message for quick-mode write operations.
+
+        E.g., "Added 3 items to your shopping list." or "Added 2 items to your pantry."
+
+        Args:
+            subdomain: The subdomain written to
+            count: Number of items affected
+            action: The action performed (e.g., "add", "delete")
+
+        Returns:
+            Confirmation string, or None for generic handling
+        """
+        return None  # Default: no domain-specific confirmations
+
+    def get_priority_fields(self) -> list[str]:
+        """
+        Get human-readable fields to prioritize in record display.
+
+        These are the most useful fields to show when formatting records
+        for user-facing replies.
+
+        Returns:
+            Ordered list of field names
+        """
+        return ["name", "title", "date", "description", "notes", "category"]
+
+    def format_records_for_reply(
+        self, records: list[dict], table_type: str | None, indent: int = 2
+    ) -> str | None:
+        """
+        Format records for user-facing reply display.
+
+        Domain-specific formatting for tables that need special treatment
+        (e.g., preferences as key-value, recipes with full instructions).
+
+        Args:
+            records: List of record dicts
+            table_type: Detected table type (from infer_table_from_record)
+            indent: Indentation spaces
+
+        Returns:
+            Formatted string, or None to use generic formatting
+        """
+        return None  # Default: use generic formatting
+
+    def get_item_tracking_keys(self) -> list[str]:
+        """
+        Get dict keys to check when tracking item names from results.
+
+        These are top-level keys in result dicts that contain lists of items
+        with 'name' fields (e.g., "recipes", "tasks").
+
+        Returns:
+            List of key names to check
+        """
+        # Default: derive from entity table names
+        return list(self.entities.keys())
 
     # =========================================================================
     # Mode/Agent Registration

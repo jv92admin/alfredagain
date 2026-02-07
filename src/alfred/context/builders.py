@@ -225,12 +225,12 @@ class UnderstandContext:
 class ThinkContext:
     """Context for Think's planning decisions.
 
-    Key feature: Recipe detail level tracking to avoid redundant reads.
+    Key feature: Entity detail level tracking to avoid redundant reads.
     Shows `[read:full]` vs `[read:summary]` so Think knows what data Act has.
     """
 
     current_turn: int
-    # Registry data for entity formatting with recipe detail tracking
+    # Registry data for entity formatting with detail tracking
     registry_data: dict = field(default_factory=dict)
     # Additional context fields (optional, used by full format())
     conversation: ConversationHistory | None = None
@@ -238,7 +238,7 @@ class ThinkContext:
     curation: CurationSummary | None = None
 
     def format_entity_context(self) -> str:
-        """Format entity context for Think prompt with recipe detail tracking.
+        """Format entity context for Think prompt with detail tracking.
 
         Structure:
         1. Generated Content (pending artifacts)
@@ -382,7 +382,7 @@ class ThinkContext:
         """Format full context for Think prompt (entity + conversation + reasoning)."""
         sections = []
 
-        # Entity context with recipe detail tracking
+        # Entity context with detail tracking
         entity_section = self.format_entity_context()
         if entity_section and "No entities" not in entity_section:
             sections.append(entity_section)
@@ -423,7 +423,7 @@ class ReplyContext:
         sections = []
 
         # Entity context with saved/generated distinction
-        # Reply needs to know: recipe_3 = saved, gen_recipe_1 = not saved
+        # Reply needs to know: entity_3 = saved, gen_entity_1 = not saved
         entity_section = format_entity_context(self.entity, mode="reply")
         if entity_section and "No entities" not in entity_section:
             sections.append(f"## Entity Context\n\n{entity_section}")
@@ -506,7 +506,7 @@ def build_think_context(state: "AlfredState") -> ThinkContext:
     Build context for Think's planning decisions.
 
     Key features:
-    - Recipe detail level tracking ([read:full] vs [read:summary])
+    - Entity detail level tracking ([read:full] vs [read:summary])
     - Entity refs + labels with action status
     - Reasoning trace from prior turns
     - Current turn's Understand curation decisions
@@ -559,7 +559,7 @@ def build_reply_context(state: "AlfredState") -> ReplyContext:
     outcome = _build_execution_outcome(step_results, think_output)
 
     # V9 UNIFIED: Get pending_artifacts so Reply has same view as Think/Act
-    # This enables Reply to show generated content when user asks "show me that recipe"
+    # This enables Reply to show generated content when user references it
     pending_artifacts = {}
     if isinstance(registry, SessionIdRegistry):
         pending_artifacts = registry.get_all_pending_artifacts()

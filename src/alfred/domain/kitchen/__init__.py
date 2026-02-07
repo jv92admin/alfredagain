@@ -382,6 +382,22 @@ class KitchenConfig(DomainConfig):
             "note", "tip", "prep", "cook time",
         ]
 
+    def get_generated_content_markers(self) -> list[str]:
+        """Markers for detecting recipe/cooking content in messages."""
+        return [
+            "**Ingredients:", "- Ingredients:", "Instructions:",
+            "Serve with", "tbsp butter", "tsp ", "cup ",
+            "cloves", "Preheat", "Simmer",
+        ]
+
+    def get_generated_content_label(self) -> str:
+        """Label for generated content in summaries."""
+        return "recipe"
+
+    def get_relevant_entity_types(self) -> set[str]:
+        """Entity types relevant for conversation context."""
+        return {"recipe", "meal_plan", "preferences", "task"}
+
     # =========================================================================
     # Reply Formatting
     # =========================================================================
@@ -448,6 +464,41 @@ class KitchenConfig(DomainConfig):
         from pathlib import Path
         prompt_path = Path(__file__).parent.parent.parent.parent / "prompts" / "system.md"
         return prompt_path.read_text(encoding="utf-8")
+
+    def get_quick_write_confirmation(
+        self, subdomain: str, count: int, action: str
+    ) -> str | None:
+        """Kitchen-specific write confirmations."""
+        item_word = "item" if count == 1 else "items"
+        if "add" in action.lower() or "create" in action.lower():
+            if subdomain == "shopping":
+                return f"Added {count} {item_word} to your shopping list."
+            elif subdomain == "inventory":
+                return f"Added {count} {item_word} to your pantry."
+            elif subdomain == "tasks":
+                return f"Added {count} task{'s' if count > 1 else ''}."
+        if "delete" in action.lower() or "remove" in action.lower() or "clear" in action.lower():
+            return f"Removed {count} {item_word}."
+        return None
+
+    def get_priority_fields(self) -> list[str]:
+        """Kitchen-specific priority fields for record display."""
+        return [
+            "name", "title", "date", "meal_type", "quantity", "unit",
+            "location", "notes", "description", "instructions", "category",
+            "cuisine", "difficulty", "servings", "tags", "rating",
+        ]
+
+    def format_records_for_reply(
+        self, records: list[dict], table_type: str | None, indent: int = 2
+    ) -> str | None:
+        """Kitchen-specific record formatting for reply display."""
+        from alfred.domain.kitchen.formatters import format_records_for_reply
+        return format_records_for_reply(records, table_type, indent)
+
+    def get_item_tracking_keys(self) -> list[str]:
+        """Kitchen keys for tracking items in result dicts."""
+        return ["recipes", "meal_plans", "tasks", "items"]
 
     # =========================================================================
     # Mode/Agent Registration
