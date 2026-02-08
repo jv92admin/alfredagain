@@ -566,7 +566,7 @@ def build_act_quick_prompt(
     domain = get_current_domain()
 
     # === SYSTEM PROMPT: Load Act's prompts, same as Act ===
-    prompts_dir = Path(__file__).parent.parent.parent / "prompts" / "act"
+    prompts_dir = Path(__file__).parent / "templates" / "act"
     
     def load_prompt(filename: str) -> str:
         path = prompts_dir / filename

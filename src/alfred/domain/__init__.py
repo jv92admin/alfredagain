@@ -8,10 +8,13 @@ The key abstraction is DomainConfig - a protocol that each domain implements
 to provide its entities, subdomains, personas, and formatting rules.
 
 Usage:
-    from alfred.domain import get_current_domain, DomainConfig
+    from alfred.domain import register_domain, get_current_domain, DomainConfig
 
+    # At app startup:
+    register_domain(my_domain)
+
+    # Anywhere in core:
     domain = get_current_domain()
-    table = domain.type_to_table["recipe"]  # "recipes"
 """
 
 from alfred.domain.base import (
@@ -20,32 +23,15 @@ from alfred.domain.base import (
     SubdomainDefinition,
 )
 
-# Lazy import to avoid circular dependencies
 _current_domain: DomainConfig | None = None
 
 
-def get_current_domain() -> DomainConfig:
+def register_domain(domain: DomainConfig) -> None:
     """
-    Get the currently configured domain.
+    Register the active domain configuration.
 
-    Returns the kitchen domain by default. In the future, this could
-    be configured via environment variable or settings.
-
-    Returns:
-        The active DomainConfig implementation
-    """
-    global _current_domain
-    if _current_domain is None:
-        from alfred.domain.kitchen import KITCHEN_DOMAIN
-        _current_domain = KITCHEN_DOMAIN
-    return _current_domain
-
-
-def set_current_domain(domain: DomainConfig) -> None:
-    """
-    Set the active domain configuration.
-
-    Used primarily for testing or when running multiple domains.
+    Must be called at app startup before any core functions are used.
+    Each domain application (kitchen, FPL, etc.) calls this once.
 
     Args:
         domain: The DomainConfig implementation to use
@@ -54,10 +40,40 @@ def set_current_domain(domain: DomainConfig) -> None:
     _current_domain = domain
 
 
+def get_current_domain() -> DomainConfig:
+    """
+    Get the currently registered domain.
+
+    Falls back to kitchen domain auto-import for backwards compatibility.
+    This fallback will be removed in Phase 4b when all entry points
+    use explicit register_domain() calls.
+
+    Returns:
+        The active DomainConfig implementation
+
+    Raises:
+        RuntimeError: If no domain is registered (after fallback removal)
+    """
+    global _current_domain
+    if _current_domain is None:
+        # Backwards-compat fallback — import alfred_kitchen triggers registration
+        import alfred_kitchen  # noqa: F401
+        if _current_domain is None:
+            raise RuntimeError(
+                "No domain registered. Import alfred_kitchen or call register_domain()."
+            )
+    return _current_domain
+
+
+# Deprecated alias — use register_domain() instead
+set_current_domain = register_domain
+
+
 __all__ = [
     "DomainConfig",
     "EntityDefinition",
     "SubdomainDefinition",
+    "register_domain",
     "get_current_domain",
-    "set_current_domain",
+    "set_current_domain",  # deprecated alias
 ]

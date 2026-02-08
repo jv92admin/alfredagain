@@ -15,6 +15,7 @@ from typing import Any
 
 from alfred.core.modes import Mode, ModeContext
 from alfred.core.id_registry import SessionIdRegistry
+from alfred.domain import get_current_domain
 from alfred.graph.state import AlfredState, UnderstandOutput
 from alfred.context.builders import build_understand_context
 from alfred.llm.client import call_llm, set_current_node
@@ -22,7 +23,7 @@ from alfred.llm.client import call_llm, set_current_node
 logger = logging.getLogger(__name__)
 
 # Load prompt template
-PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "understand.md"
+PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "templates" / "understand.md"
 
 
 def _load_prompt() -> str:
@@ -67,7 +68,10 @@ async def understand_node(state: AlfredState) -> dict[str, Any]:
     set_current_node("understand")
     
     # Build prompt using Context API
-    base_prompt = _load_prompt()
+    # Domain provides the full prompt body; fall back to core template
+    domain = get_current_domain()
+    domain_content = domain.get_understand_prompt_content()
+    base_prompt = domain_content if domain_content else _load_prompt()
     context = build_understand_context(state).format()
     full_prompt = f"{base_prompt}\n\n---\n\n# Current Request\n\n{context}"
     

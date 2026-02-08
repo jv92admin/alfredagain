@@ -19,13 +19,18 @@ import instructor
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
-from alfred.config import settings
+from alfred.config import core_settings as settings
 from alfred.llm.model_router import get_node_config
 from alfred.llm.prompt_logger import log_prompt
 from alfred.observability.langsmith import get_session_tracker
 
 # Type variable for generic structured output
 T = TypeVar("T", bound=BaseModel)
+
+
+def _sanitize_text(text: str) -> str:
+    """Remove surrogate characters that break UTF-8 encoding."""
+    return text.encode("utf-8", errors="replace").decode("utf-8")
 
 # Singleton client instances
 _client: instructor.Instructor | None = None
@@ -115,6 +120,10 @@ async def call_llm(
     # Extract model name for the API call
     model = config.pop("model", "gpt-4.1-mini")
 
+    # Sanitize prompts to prevent surrogate encoding errors
+    system_prompt = _sanitize_text(system_prompt)
+    user_prompt = _sanitize_text(user_prompt)
+
     # Build messages
     messages = [
         {"role": "system", "content": system_prompt},
@@ -194,9 +203,14 @@ def _build_chat_kwargs(
     stream: bool = False,
 ) -> dict:
     """Build API kwargs for raw chat completions (shared by chat/chat_stream)."""
+    # Sanitize all message content to prevent surrogate encoding errors
+    safe_messages = [
+        {**m, "content": _sanitize_text(m["content"])} if "content" in m else m
+        for m in messages
+    ]
     api_kwargs: dict = {
         "model": model,
-        "messages": messages,
+        "messages": safe_messages,
         "stream": stream,
         "store": False,
     }

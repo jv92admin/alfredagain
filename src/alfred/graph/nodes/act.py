@@ -53,7 +53,6 @@ from alfred.graph.state import (
     StepCompleteAction,
     ToolCallAction,
 )
-from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
 from alfred.prompts.injection import build_act_user_prompt
@@ -319,7 +318,7 @@ def _decision_to_action(decision: ActDecision) -> ActAction:
 # =============================================================================
 
 # Prompt paths
-_PROMPTS_DIR = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "act"
+_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "templates" / "act"
 
 # Cache for loaded prompts
 _PROMPT_CACHE: dict[str, str] = {}
@@ -340,7 +339,8 @@ def _get_system_prompt(step_type: str = "read") -> str:
     """
     Build the Act system prompt from layers.
 
-    Layers (Act is execution, not user-facing — no system.md):
+    Domain can provide the full system prompt (preferred).
+    Otherwise falls back to template assembly:
     1. base.md - Act's role in Alfred (execution engine)
     2. crud.md - Tools, filters, operators (only for read/write)
     3. {step_type}.md - Mechanics for this step type
@@ -349,7 +349,14 @@ def _get_system_prompt(step_type: str = "read") -> str:
     Subdomain content (persona, user profile, schema) is added to user_prompt.
     """
     from alfred.domain import get_current_domain
+    domain = get_current_domain()
 
+    # Domain can provide the full system prompt (preferred)
+    domain_content = domain.get_act_prompt_content(step_type)
+    if domain_content:
+        return domain_content
+
+    # Fallback: core template assembly + injection
     base = _load_prompt("base.md")
     step_type_content = _load_prompt(f"{step_type}.md")
 
@@ -367,7 +374,6 @@ def _get_system_prompt(step_type: str = "read") -> str:
         parts.append(step_type_content)
 
     # Add domain-specific guidance (examples, patterns, table-specific rules)
-    domain = get_current_domain()
     domain_injection = domain.get_act_prompt_injection(step_type)
     if domain_injection:
         parts.append(domain_injection)
@@ -1164,12 +1170,12 @@ async def act_node(state: AlfredState) -> dict:
         try:
             user_id = state.get("user_id")
             if user_id:
-                profile = await get_cached_profile(user_id)
-                # Profile for analyze/generate/write steps (user constraints matter)
-                profile_section = format_profile_for_prompt(profile)
+                domain = get_current_domain()
+                profile_section = await domain.get_user_profile(user_id)
                 # Subdomain guidance for all three step types
-                if profile.subdomain_guidance:
-                    guidance = profile.subdomain_guidance.get(current_step.subdomain, "")
+                all_guidance = await domain.get_subdomain_guidance(user_id)
+                if all_guidance:
+                    guidance = all_guidance.get(current_step.subdomain, "")
                     if guidance:
                         subdomain_guidance_section = f"""## User Preferences ({current_step.subdomain})
 

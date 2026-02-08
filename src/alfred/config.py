@@ -1,7 +1,8 @@
 """
-Alfred V2 - Configuration and settings.
+Alfred Core - Configuration and settings.
 
-Uses pydantic-settings for type-safe environment variable loading.
+CoreSettings contains only what the orchestration engine needs.
+Domain-specific settings live in domain packages (e.g., alfred_kitchen.config).
 """
 
 from functools import lru_cache
@@ -10,8 +11,13 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+class CoreSettings(BaseSettings):
+    """
+    Core settings shared by all domains.
+
+    Contains only what the alfred orchestration engine needs.
+    Domain-specific settings (Supabase, session, etc.) go in subclasses.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -22,11 +28,6 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str
 
-    # Supabase
-    supabase_url: str
-    supabase_anon_key: str
-    supabase_service_role_key: str
-
     # LangSmith (optional)
     langchain_tracing_v2: bool = False
     langchain_api_key: str | None = None
@@ -35,48 +36,59 @@ class Settings(BaseSettings):
     # Application
     alfred_env: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    
+
     # Prompt logging
     # ALFRED_LOG_PROMPTS=1 - log to local files (dev only)
-    # ALFRED_LOG_TO_DB=1 - log to Supabase prompt_logs table (works in production)
     alfred_log_prompts: bool = False
-    alfred_log_to_db: bool = False
-    alfred_log_keep_sessions: int = 4  # Keep last N sessions in DB
-    
-    # Dev user - matches the user created in migrations/001_core_tables.sql
-    # Skip auth for now, use this hardcoded user
-    dev_user_id: str = "00000000-0000-0000-0000-000000000002"  # Alice
-
-    # Session management
-    session_active_timeout_minutes: int = 30  # Prompt to resume after this
-    session_expire_hours: int = 24  # Auto-clear session after this
 
     @property
     def is_development(self) -> bool:
         return self.alfred_env == "development"
-    
+
     @property
     def is_production(self) -> bool:
         return self.alfred_env == "production"
 
 
 @lru_cache
-def get_settings() -> Settings:
-    """Get cached settings instance."""
-    return Settings()
+def get_core_settings() -> CoreSettings:
+    """Get cached CoreSettings instance (no Supabase fields required)."""
+    return CoreSettings()
 
 
-# Convenience singleton - lazy loaded
-class _SettingsProxy:
-    """Lazy proxy for settings to avoid loading .env at import time."""
-    
-    _instance: Settings | None = None
-    
+class _CoreSettingsProxy:
+    """Lazy proxy for CoreSettings — only needs OPENAI_API_KEY."""
+
+    _instance: CoreSettings | None = None
+
     def __getattr__(self, name: str):
         if self._instance is None:
-            self._instance = get_settings()
+            self._instance = get_core_settings()
         return getattr(self._instance, name)
 
 
-settings = _SettingsProxy()
+core_settings = _CoreSettingsProxy()
 
+
+# ---------------------------------------------------------------------------
+# Backwards-compat: Settings, get_settings, settings proxy
+#
+# These exist so existing code doing `from alfred.config import settings`
+# continues to work. They instantiate KitchenSettings (the full Settings
+# class that includes Supabase fields) via lazy import.
+#
+# New core code should only depend on CoreSettings fields.
+# ---------------------------------------------------------------------------
+
+# Re-export Settings from kitchen for backwards compat
+def __getattr__(name: str):
+    if name == "Settings":
+        from alfred_kitchen.config import KitchenSettings
+        return KitchenSettings
+    if name == "get_settings":
+        from alfred_kitchen.config import get_settings
+        return get_settings
+    if name == "settings":
+        from alfred_kitchen.config import settings
+        return settings
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

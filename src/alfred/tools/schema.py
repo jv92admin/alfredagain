@@ -13,7 +13,6 @@ alfred.domain.kitchen.schema. Access them via DomainConfig methods.
 import time
 from typing import Any
 
-from alfred.db.client import get_client
 
 
 # =============================================================================
@@ -129,7 +128,8 @@ async def get_table_schema(table: str) -> dict[str, Any]:
     Returns:
         Dict with table name and column info
     """
-    client = get_client()
+    from alfred.domain import get_current_domain
+    client = get_current_domain().get_db_adapter()
 
     try:
         result = client.rpc("get_table_columns", {"table_name": table}).execute()

@@ -16,8 +16,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from alfred.db.client import get_client
-
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +23,11 @@ def _get_domain():
     """Get current domain config for CRUD configuration."""
     from alfred.domain import get_current_domain
     return get_current_domain()
+
+
+def _get_client():
+    """Get database client via domain adapter."""
+    return _get_domain().get_db_adapter()
 
 
 # =============================================================================
@@ -155,7 +158,7 @@ async def db_read(params: DbReadParams, user_id: str, middleware=None) -> list[d
     Returns:
         List of matching rows as dicts
     """
-    client = get_client()
+    client = _get_client()
     domain = _get_domain()
     user_owned_tables = domain.get_user_owned_tables()
 
@@ -275,7 +278,7 @@ async def db_create(params: DbCreateParams, user_id: str, middleware=None) -> di
     Returns:
         Single dict for single insert, list of dicts for batch
     """
-    client = get_client()
+    client = _get_client()
     domain = _get_domain()
     user_owned_tables = domain.get_user_owned_tables()
 
@@ -318,7 +321,7 @@ async def db_update(params: DbUpdateParams, user_id: str) -> list[dict]:
     Returns:
         List of updated rows
     """
-    client = get_client()
+    client = _get_client()
     user_owned_tables = _get_domain().get_user_owned_tables()
 
     query = client.table(params.table).update(params.data)
@@ -346,7 +349,7 @@ async def db_delete(params: DbDeleteParams, user_id: str) -> list[dict]:
     Returns:
         List of deleted rows
     """
-    client = get_client()
+    client = _get_client()
     user_owned_tables = _get_domain().get_user_owned_tables()
 
     # Safety: Prevent empty-filter deletes on non-user-owned tables

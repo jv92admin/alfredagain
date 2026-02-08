@@ -12,9 +12,14 @@ Key concepts:
 - DomainConfig: The main protocol with all domain-specific methods
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from alfred.db.adapter import DatabaseAdapter
 
 
 @dataclass
@@ -923,6 +928,40 @@ class DomainConfig(ABC):
         """
         return {}  # Default: no bypass mode LLM configs
 
+    def get_reply_prompt_content(self) -> str:
+        """
+        Get domain-specific reply instructions for the Reply node.
+
+        Returns the full reply template with domain-specific examples
+        in <identity>, <subdomains>, and <principles> sections.
+        When provided, this replaces the core reply.md template entirely
+        (but NOT the system prompt header from get_system_prompt()).
+
+        Returns:
+            Markdown string with the complete Reply instructions,
+            or empty string to fall back to core template + injection.
+        """
+        return ""  # Default: fall back to core template + injection
+
+    def get_act_prompt_content(self, step_type: str) -> str:
+        """
+        Get domain-specific full system prompt for the Act node.
+
+        Returns the complete Act system prompt for the given step type,
+        including base layer, CRUD tools reference (for read/write),
+        step-type mechanics, and domain-specific examples.
+
+        When provided, this replaces the core template assembly entirely.
+
+        Args:
+            step_type: The act step type (read, write, analyze, generate)
+
+        Returns:
+            Full system prompt string, or empty string to fall back
+            to core template assembly + injection.
+        """
+        return ""  # Default: fall back to core template assembly
+
     def get_act_prompt_injection(self, step_type: str) -> str:
         """
         Get domain-specific guidance to append to Act node prompts.
@@ -938,6 +977,36 @@ class DomainConfig(ABC):
             or empty string for no injection.
         """
         return ""  # Default: no domain-specific Act guidance
+
+    def get_think_prompt_content(self) -> str:
+        """
+        Get domain-specific system prompt for the Think node.
+
+        Returns the full system prompt with domain-specific examples,
+        conversation management patterns, output contract examples,
+        and all entity-specific guidance. When provided, this replaces
+        the core think.md template AND the injection variables entirely.
+
+        Returns:
+            Markdown string with the complete Think system prompt,
+            or empty string to fall back to core template + injection.
+        """
+        return ""  # Default: fall back to core template + injection
+
+    def get_understand_prompt_content(self) -> str:
+        """
+        Get domain-specific content for the Understand node prompt.
+
+        Returns the full prompt body with domain-specific examples,
+        reference resolution patterns, quick mode table, curation examples,
+        and output contract examples. The core provides only the system prompt;
+        ALL user prompt content comes from the domain.
+
+        Returns:
+            Markdown string with the complete Understand prompt body,
+            or empty string to fall back to the core template.
+        """
+        return ""  # Default: fall back to core template
 
     def get_think_domain_context(self) -> str:
         """
@@ -1008,5 +1077,59 @@ class DomainConfig(ABC):
 
         Returns:
             Pydantic model class for handoff results
+        """
+        ...
+
+    # --- User Context (profile, dashboard, guidance) ---
+
+    async def get_user_profile(self, user_id: str) -> str:
+        """
+        Return formatted user profile text for prompt injection.
+
+        Includes hard constraints (diet, allergies, household), capabilities,
+        taste preferences, and recent activity. Used by Think and Act nodes.
+
+        Returns:
+            Markdown-formatted profile string, or empty string if unavailable.
+        """
+        return ""
+
+    async def get_domain_snapshot(self, user_id: str) -> str:
+        """
+        Return formatted domain-state summary for Think node context.
+
+        Provides a snapshot of the user's current domain state (e.g., inventory
+        counts, saved items, upcoming plans). Used by Think node for planning.
+
+        Returns:
+            Markdown-formatted snapshot string, or empty string if unavailable.
+        """
+        return ""
+
+    async def get_subdomain_guidance(self, user_id: str) -> dict[str, str]:
+        """
+        Return per-subdomain user preference/guidance text.
+
+        Used by Think (all subdomains) and Act (specific subdomain) nodes
+        to inject user preferences into prompts.
+
+        Returns:
+            Dict mapping subdomain name to guidance text.
+        """
+        return {}
+
+    # --- Database Access ---
+
+    @abstractmethod
+    def get_db_adapter(self) -> "DatabaseAdapter":
+        """
+        Return a database adapter for CRUD operations.
+
+        Called per-request by the CRUD executor. The returned adapter
+        must support .table() and .rpc() methods. For Supabase domains,
+        this wraps get_client() which handles auth token from request context.
+
+        Returns:
+            A DatabaseAdapter-compatible object.
         """
         ...

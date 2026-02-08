@@ -17,7 +17,7 @@ from alfred.memory.conversation import format_condensed_context
 
 
 # Load prompt once at module level
-_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "router.md"
+_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "templates" / "router.md"
 _SYSTEM_PROMPT: str | None = None
 
 

@@ -28,7 +28,7 @@ from alfred.memory.conversation import format_condensed_context
 
 
 # Load prompts once at module level
-_REPLY_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "reply.md"
+_REPLY_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "templates" / "reply.md"
 _REPLY_PROMPT: str | None = None
 _SYSTEM_PROMPT: str | None = None
 
@@ -43,10 +43,15 @@ def _get_prompts() -> tuple[str, str]:
         _SYSTEM_PROMPT = domain.get_system_prompt()
 
     if _REPLY_PROMPT is None:
-        raw = _REPLY_PROMPT_PATH.read_text(encoding="utf-8")
-        # Inject domain-specific subdomain formatting guide
-        subdomain_guide = domain.get_reply_subdomain_guide()
-        _REPLY_PROMPT = raw.replace("{domain_subdomain_guide}", subdomain_guide)
+        # Domain can provide the full reply instructions (preferred)
+        domain_content = domain.get_reply_prompt_content()
+        if domain_content:
+            _REPLY_PROMPT = domain_content
+        else:
+            # Fallback: core template + subdomain guide injection
+            raw = _REPLY_PROMPT_PATH.read_text(encoding="utf-8")
+            subdomain_guide = domain.get_reply_subdomain_guide()
+            _REPLY_PROMPT = raw.replace("{domain_subdomain_guide}", subdomain_guide)
 
     return _SYSTEM_PROMPT, _REPLY_PROMPT
 
@@ -647,13 +652,17 @@ If the user wanted an update but you only read, explain that the update didn't h
     reply_context = build_reply_context(state)
     entity_context_section = reply_context.entity
     entity_section_formatted = ""
+    # Get primary entity type for ref examples (e.g. "recipe" for kitchen)
+    from alfred.domain import get_current_domain as _get_domain
+    _etype = next(iter(_get_domain().entities), "item")
+
     if entity_context_section.active or entity_context_section.generated:
         from alfred.context.entity import format_entity_context
         entity_section_formatted = f"""## Entity Context (Saved vs Generated)
 
 {format_entity_context(entity_context_section, mode="reply")}
 
-**Key:** `item_3` = already saved (don't offer to save). `gen_item_1` = generated, not saved (offer to save).
+**Key:** `{_etype}_3` = already saved (don't offer to save). `gen_{_etype}_1` = generated, not saved (offer to save).
 """
     
     # V6: Build conversation flow section for continuity
@@ -677,7 +686,7 @@ If the user wanted an update but you only read, explain that the update didn't h
 
 Generate a natural, helpful response. Lead with the outcome, be specific, be concise.
 Speak as a WITNESS - report what actually happened, not what should have happened.
-**If recommending a saved item (item_X), present IT — don't invent a new one or offer to save.**"""
+**If recommending a saved {_etype} ({_etype}_X), present IT — don't invent a new one or offer to save.**"""
 
     try:
         result = await call_llm(
