@@ -2,7 +2,7 @@
 import sys
 sys.path.insert(0, "src")
 
-from alfred.db.client import get_service_client
+from alfred_kitchen.db.client import get_service_client
 from onboarding.payload import build_payload_from_state, OnboardingPayload
 from onboarding.state import OnboardingState
 

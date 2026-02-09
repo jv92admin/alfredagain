@@ -1,5 +1,5 @@
 """Check ingredient_id mapping status in inventory."""
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 from dotenv import load_dotenv
 
 load_dotenv()

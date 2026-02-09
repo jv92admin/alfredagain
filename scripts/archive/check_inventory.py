@@ -1,5 +1,5 @@
 """Check Alice's inventory."""
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 
 client = get_client()
 

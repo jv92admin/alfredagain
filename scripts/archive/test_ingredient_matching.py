@@ -5,7 +5,7 @@ import asyncio
 import sys
 sys.path.insert(0, "src")
 
-from alfred.tools.ingredient_lookup import lookup_ingredient, _extract_ingredient_words
+from alfred_kitchen.domain.tools.ingredient_lookup import lookup_ingredient, _extract_ingredient_words
 
 
 async def main():

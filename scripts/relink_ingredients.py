@@ -13,7 +13,7 @@ import os
 
 load_dotenv()
 
-from alfred.tools.ingredient_lookup import lookup_ingredient
+from alfred_kitchen.domain.tools.ingredient_lookup import lookup_ingredient
 
 
 def get_supabase():

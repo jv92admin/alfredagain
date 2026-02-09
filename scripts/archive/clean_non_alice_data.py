@@ -17,7 +17,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 
 ALICE_USER_ID = "00000000-0000-0000-0000-000000000002"
 

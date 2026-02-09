@@ -43,7 +43,7 @@ async def get_current_user(authorization: str = Header(None)) -> AuthenticatedUs
     
     Expects: Authorization: Bearer <supabase_access_token>
     """
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
     
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
@@ -171,7 +171,7 @@ async def get_or_create_session(user_id: str) -> OnboardingState:
     
     Called at start of any onboarding endpoint.
     """
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
     
     client = get_service_client()
     
@@ -198,7 +198,7 @@ async def save_session(state: OnboardingState) -> None:
     
     Called after every step to ensure durability.
     """
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
     
     client = get_service_client()
     
@@ -218,7 +218,7 @@ async def save_session(state: OnboardingState) -> None:
 
 async def clear_session(user_id: str) -> None:
     """Delete onboarding session after completion."""
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
     
     client = get_service_client()
     
@@ -248,7 +248,7 @@ def get_completed_phases(state: OnboardingState) -> list[str]:
 @router.get("/state", response_model=StateResponse)
 async def get_onboarding_state(user: AuthenticatedUser = Depends(get_current_user)) -> StateResponse:
     """Get current onboarding progress."""
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
 
     client = get_service_client()
 
@@ -949,7 +949,7 @@ async def complete_onboarding(user: AuthenticatedUser = Depends(get_current_user
     payload = build_payload_from_state(state)
     payload_dict = payload.to_dict()
     
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
     client = get_service_client()
     
     try:
@@ -1045,7 +1045,7 @@ async def apply_onboarding_to_preferences(user: AuthenticatedUser = Depends(get_
     
     Can be called after /complete or separately to re-apply.
     """
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
     
     client = get_service_client()
     

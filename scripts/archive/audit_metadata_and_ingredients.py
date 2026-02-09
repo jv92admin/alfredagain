@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from dotenv import load_dotenv
 load_dotenv()
 
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 
 
 def print_section(title: str):

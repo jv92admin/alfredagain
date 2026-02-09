@@ -1,5 +1,5 @@
 """Check if test users exist in database."""
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 import bcrypt
 
 client = get_client()

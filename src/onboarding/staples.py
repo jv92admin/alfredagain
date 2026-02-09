@@ -117,7 +117,7 @@ async def get_staples_options(
             "cuisine_suggested_ids": ["uuid3", ...]    # Tier 2 cuisine matches
         }
     """
-    from alfred.db.client import get_service_client
+    from alfred_kitchen.db.client import get_service_client
 
     client = get_service_client()
     cuisines = cuisines or []

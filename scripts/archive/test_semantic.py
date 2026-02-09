@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Test lean semantic search (name + description only)."""
 
-from alfred.db.client import get_client
-from alfred.tools.ingredient_lookup import generate_embedding
+from alfred_kitchen.db.client import get_client
+from alfred_kitchen.domain.tools.ingredient_lookup import generate_embedding
 
 client = get_client()
 

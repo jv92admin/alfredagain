@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, "src")
 import asyncio
 
-from alfred.db.client import get_service_client
+from alfred_kitchen.db.client import get_service_client
 
 USER_ID = "ec95ba05-d099-4c4e-aee6-162e80e980d3"
 

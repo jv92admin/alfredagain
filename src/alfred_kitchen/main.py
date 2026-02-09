@@ -299,7 +299,7 @@ def serve(
     console.print(f"[dim]Press Ctrl+C to stop[/dim]\n")
     
     uvicorn.run(
-        "alfred.web.app:app",
+        "alfred_kitchen.web.app:app",
         host="0.0.0.0",
         port=actual_port,
         reload=reload,
