@@ -1,124 +1,127 @@
-# Alfred V2
+# Alfred
 
-A modern LangGraph-based multi-agent assistant for kitchen, fitness, and wine management.
-
-## Features
-
-- **Pantry Agent** - Kitchen inventory, recipes, meal planning
-- **Coach Agent** - Fitness tracking, workout planning (coming soon)
-- **Cellar Agent** - Wine collection management (coming soon)
+A LangGraph-based multi-agent assistant with a domain-agnostic core and pluggable domain implementations.
 
 ## Architecture
 
-Alfred uses a LangGraph pipeline with four nodes:
+Alfred is split into two Python packages:
+
+- **`alfred`** — Core orchestration engine: LangGraph pipeline, entity tracking, CRUD execution, prompt assembly, conversation memory
+- **`alfred_kitchen`** — Kitchen domain: pantry, recipes, meal planning, shopping lists, tasks
+
+The core runs a 5-node pipeline:
 
 ```
-Router → Think → Act Loop → Reply
+Understand → Think → Act (loop) → Reply → Summarize
 ```
 
-- **Router**: Classifies intent, picks agent, sets complexity
-- **Think**: Domain-specific planning, generates natural language steps
-- **Act Loop**: Executes steps via tools with structured actions
-- **Reply**: Synthesizes final response with agent persona
+- **Understand** — Entity resolution, context curation, quick mode detection
+- **Think** — Plans execution steps (read, write, analyze, generate)
+- **Act** — Executes steps via CRUD tools or LLM generation
+- **Reply** — Synthesizes natural language response from execution results
+- **Summarize** — Compresses context and persists entity registry for next turn
+
+Quick mode bypasses Think for simple single-table lookups.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Orchestration | LangGraph |
+| LLM | OpenAI (gpt-4.1 / gpt-4.1-mini) |
 | Structured Output | Instructor |
 | Database | Supabase (Postgres + pgvector) |
-| Auth | Supabase Auth |
-| Models | gpt-4o-mini / gpt-4o / o1 |
+| Auth | Supabase Auth (Google OAuth) |
+| API | FastAPI + SSE streaming |
+| Frontend | React + TypeScript + Vite |
 | CLI | Typer + Rich |
-| Deployment | Railway |
 | Observability | LangSmith |
+| Deployment | Railway |
 
 ## Setup
 
 ### Prerequisites
 
 - Python 3.11+
-- Supabase account
+- Node.js 18+ (for frontend)
+- Supabase project
 - OpenAI API key
-- Railway account (for deployment)
 
 ### Local Development
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/alfred-v2.git
-   cd alfred-v2
-   ```
-
-2. Create virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-4. Copy environment file and fill in values:
-   ```bash
-   cp .env.example .env
-   ```
-
-5. Run the CLI:
-   ```bash
-   alfred health  # Check configuration
-   alfred chat    # Start interactive chat
-   ```
-
-### Database Setup
-
-1. Create a Supabase project at [supabase.com](https://supabase.com)
-2. Enable the `vector` extension in Database → Extensions
-3. Run the migration in SQL Editor:
-   ```sql
-   -- Copy contents of migrations/001_core_tables.sql
-   ```
-
-## Development
-
 ```bash
-# Run tests
-pytest
+# Clone and setup
+git clone <repo-url>
+cd alfredagain
+python -m venv .venv
+.venv\Scripts\activate  # Windows (or source .venv/bin/activate on Unix)
+pip install -e ".[dev]"
 
-# Type checking
-mypy src/
+# Backend
+alfred health     # Check configuration
+alfred chat       # Interactive CLI
+alfred serve      # FastAPI server on :8000
 
-# Linting
-ruff check src/
-
-# Format code
-ruff format src/
+# Frontend
+cd frontend
+npm install
+npm run dev       # Vite dev server
 ```
+
+### Environment
+
+Copy `.env.example` to `.env` and fill in:
+- `OPENAI_API_KEY`
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- Optional: `LANGCHAIN_API_KEY` for LangSmith tracing
 
 ## Project Structure
 
 ```
-alfred-v2/
-├── src/alfred/
-│   ├── graph/          # LangGraph orchestration
-│   ├── agents/         # Domain agents (pantry, coach, cellar)
-│   ├── db/             # Supabase integration
-│   ├── llm/            # LLM infrastructure
-│   ├── tools/          # Tool definitions
-│   ├── memory/         # Long-term memory
-│   ├── config.py       # Settings
-│   ├── main.py         # CLI entry point
-│   └── server.py       # Health check server
-├── prompts/            # LLM prompts and constitutions
-├── migrations/         # SQL migration files
-├── tests/              # Test suite
-└── docs/               # Documentation
+alfredagain/
+├── src/
+│   ├── alfred/                    # Core orchestration (domain-agnostic)
+│   │   ├── graph/                 # LangGraph nodes, state, workflow
+│   │   ├── core/                  # SessionIdRegistry, modes, payload compiler
+│   │   ├── context/               # Context builders, entity tiers
+│   │   ├── memory/                # Conversation compression
+│   │   ├── tools/                 # CRUD executor, schema, filters
+│   │   ├── llm/                   # LLM client, model routing
+│   │   ├── prompts/               # injection.py + templates/
+│   │   ├── domain/                # DomainConfig protocol + registration
+│   │   └── agents/                # Agent protocol (extension point)
+│   │
+│   ├── alfred_kitchen/            # Kitchen domain implementation
+│   │   ├── domain/                # KitchenConfig, schema, formatters
+│   │   ├── modes/                 # Cook mode, brainstorm mode
+│   │   ├── tools/                 # Ingredient lookup, CRUD middleware
+│   │   ├── web/                   # FastAPI app, routes, auth
+│   │   ├── db/                    # Supabase client, adapter
+│   │   ├── background/            # Profile builder, dashboard
+│   │   ├── models/                # Pydantic entities
+│   │   └── recipe_import/         # URL scraping, LLM parsing
+│   │
+│   └── onboarding/                # User onboarding flow
+│
+├── frontend/                      # React + TypeScript SPA
+├── migrations/                    # SQL migration files
+├── tests/                         # Test suite
+└── docs/                          # Architecture documentation
 ```
+
+## Development
+
+```bash
+pytest              # Run tests
+ruff check src/     # Lint
+ruff format src/    # Format
+mypy src/           # Type check
+```
+
+## Documentation
+
+See [docs/architecture/overview.md](docs/architecture/overview.md) for the full documentation index.
 
 ## License
 
 MIT
-
