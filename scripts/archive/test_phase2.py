@@ -66,7 +66,7 @@ async def test_recipe_formatting():
     print("TEST 2: Recipe formatting with grouped ingredients")
     print("="*60)
     
-    from alfred.prompts.injection import _format_recipe_record
+    from alfred_kitchen.domain.formatters import format_recipe_record as _format_recipe_record
     
     # Mock recipe record with nested ingredients
     mock_recipe = {
@@ -114,7 +114,7 @@ async def test_instructions_toggle():
     print("TEST 3: Instructions toggle")
     print("="*60)
     
-    from alfred.prompts.injection import _format_recipe_record
+    from alfred_kitchen.domain.formatters import format_recipe_record as _format_recipe_record
     
     # Without instructions
     recipe_summary = {

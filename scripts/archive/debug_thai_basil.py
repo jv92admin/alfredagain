@@ -4,7 +4,7 @@ import asyncio
 import sys
 sys.path.insert(0, "src")
 
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 
 
 async def main():

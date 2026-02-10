@@ -10,10 +10,15 @@
 |------|---------|------------------|
 | [../CLAUDE.md](../CLAUDE.md) | System constitution (stable) | Rarely |
 | [../skills/](../skills/) | Agent-scoped context | When patterns change |
-| [architecture/overview.md](architecture/overview.md) | System map, graph flow | Major changes |
-| [architecture/context-and-session.md](architecture/context-and-session.md) | Context engineering, registry | Conceptual changes |
+| [architecture/overview.md](architecture/overview.md) | Architecture index + pipeline diagram | Major changes |
+| [architecture/core-domain-architecture.md](architecture/core-domain-architecture.md) | Two-package split, DomainConfig protocol | Protocol changes |
+| [architecture/core-public-api.md](architecture/core-public-api.md) | Entry points, extension points, extraction | API changes |
+| [architecture/domain-implementation-guide.md](architecture/domain-implementation-guide.md) | How to build a new domain | Protocol changes |
+| [architecture/crud-and-database.md](architecture/crud-and-database.md) | CRUD executor, middleware, filters | CRUD changes |
+| [architecture/sessions-context-entities.md](architecture/sessions-context-entities.md) | SessionIdRegistry, entity lifecycle, context | Context changes |
+| [architecture/pipeline-stages.md](architecture/pipeline-stages.md) | Graph nodes, routing, state shape | Pipeline changes |
+| [architecture/prompt-assembly.md](architecture/prompt-assembly.md) | Template loading, injection, domain overrides | Prompt changes |
 | [architecture/capabilities.md](architecture/capabilities.md) | User-facing capabilities | Feature changes |
-| [specs/context-api-spec.md](specs/context-api-spec.md) | Context builders | API changes |
 | [specs/onboarding-spec.md](specs/onboarding-spec.md) | User onboarding | Onboarding changes |
 | [specs/post-onboarding-education-spec.md](specs/post-onboarding-education-spec.md) | Home dashboard, capabilities, nudging | Post-onboarding changes |
 | [specs/session-persistence-spec.md](specs/session-persistence-spec.md) | Session timeout, resume flow | Session changes |
@@ -24,13 +29,57 @@
 
 | Area | Status | Description | Spec |
 |------|--------|-------------|------|
-| — | — | — | — |
-
-*No active projects. Add items here when starting new work.*
+| Domain Abstraction Phase 5a | Planned | FPL domain scaffold to validate protocol | [domain-implementation-guide.md](architecture/domain-implementation-guide.md) |
+| DomainConfig Restructure | Planned | Phase 5c: DomainSpec (data) + DomainBehavior (protocol) | [core-domain-architecture.md](architecture/core-domain-architecture.md) |
 
 ---
 
 ## Recently Completed
+
+### 2026-02-08: Architecture Documentation — Full Rewrite
+
+7 new architecture docs covering the two-package structure after the domain abstraction refactoring.
+
+- **Tier 1 — Internals:**
+  - [crud-and-database.md](architecture/crud-and-database.md) — CRUD executor, DatabaseAdapter, middleware, filter system
+  - [sessions-context-entities.md](architecture/sessions-context-entities.md) — SessionIdRegistry, entity lifecycle, context builders
+  - [pipeline-stages.md](architecture/pipeline-stages.md) — Graph nodes, routing, state shape, contracts
+  - [prompt-assembly.md](architecture/prompt-assembly.md) — Template loading, injection.py, domain overrides
+
+- **Tier 2 — Architecture:**
+  - [core-domain-architecture.md](architecture/core-domain-architecture.md) — Two-package split, DomainConfig (66 methods), import boundary
+  - [core-public-api.md](architecture/core-public-api.md) — Entry points, capabilities, extension points, extraction path
+  - [domain-implementation-guide.md](architecture/domain-implementation-guide.md) — Step-by-step guide with FPL worked example
+
+- **Tier 3 — Updates:**
+  - [overview.md](architecture/overview.md) — Rewritten as 30-line index page
+  - `context-and-session.md` — Merged into sessions-context-entities.md, deleted
+  - [CLAUDE.md](../CLAUDE.md) — Updated with two-package structure
+  - [ROADMAP.md](ROADMAP.md) — Updated documentation table, Phase 4 completion
+  - [README.md](../README.md) — Rewritten for current architecture
+
+### 2026-02-07: Domain Abstraction Phase 4 — Package Extraction
+
+Alfred split into two installable packages: `alfred` (core) and `alfred_kitchen` (domain).
+
+- **Phase 4a: Structural Prerequisites**
+  - Prompt templates relocated: `prompts/` → `src/alfred/prompts/templates/`
+  - Profile builder abstracted: `get_user_profile()`, `get_domain_snapshot()` on DomainConfig
+  - DatabaseAdapter protocol: `db/adapter.py` — thin wrapper with `table()` and `rpc()`
+  - Config split: `CoreSettings` (core) vs `KitchenSettings` (extends core)
+  - Domain factory: strict `register_domain()` / `get_current_domain()` with no auto-import fallback
+
+- **Phase 4b-c: Package Creation + Import Migration**
+  - `src/alfred_kitchen/` created with domain/, modes/, tools/, prompts/, web/, db/, background/, models/, recipe_import/
+  - ~80 import lines updated (kitchen-to-kitchen internal imports)
+  - `alfred_kitchen/__init__.py` auto-registers `KITCHEN_DOMAIN` at import time
+
+- **Phase 4d: Integration & Deployment Sweep**
+  - Fixed string-based module paths (uvicorn, Dockerfile, Procfile)
+  - Fixed onboarding and script imports
+  - All entry points verified: CLI, server, cook mode, brainstorm mode
+
+- **Refactoring plan:** See extraction plan in `.claude/plans/`
 
 ### 2026-02-01: Post-Onboarding Education System — Home Dashboard + Capabilities
 

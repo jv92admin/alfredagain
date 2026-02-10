@@ -17,15 +17,19 @@ from alfred.memory.conversation import format_condensed_context
 
 
 # Load prompt once at module level
-_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "router.md"
+_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "templates" / "router.md"
 _SYSTEM_PROMPT: str | None = None
 
 
 def _get_system_prompt() -> str:
-    """Load the router system prompt."""
+    """Load the router system prompt, injecting domain-specific content."""
     global _SYSTEM_PROMPT
     if _SYSTEM_PROMPT is None:
-        _SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
+        from alfred.domain import get_current_domain
+        raw = _PROMPT_PATH.read_text(encoding="utf-8")
+        domain = get_current_domain()
+        router_content = domain.get_router_prompt_injection()
+        _SYSTEM_PROMPT = raw.replace("{domain_router_content}", router_content)
     return _SYSTEM_PROMPT
 
 

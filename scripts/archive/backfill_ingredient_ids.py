@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
-from alfred.db.client import get_client
-from alfred.tools.ingredient_lookup import lookup_ingredient
+from alfred_kitchen.db.client import get_client
+from alfred_kitchen.domain.tools.ingredient_lookup import lookup_ingredient
 
 # Tables to backfill
 TABLES_WITH_INGREDIENTS = [

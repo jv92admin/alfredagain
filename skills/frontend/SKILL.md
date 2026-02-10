@@ -220,7 +220,7 @@ The AI sees this as `mentioned:user` with full data available.
 | User deletes | `deleted:user` | Ref + label |
 | User @-mentions | `mentioned:user` | Full entity data |
 
-See [docs/architecture/context-and-session.md](../../docs/architecture/context-and-session.md) for backend details.
+See [docs/architecture/sessions-context-entities.md](../../docs/architecture/sessions-context-entities.md) for backend details.
 
 ---
 

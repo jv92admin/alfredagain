@@ -5,7 +5,12 @@ For implementation details, see `docs/` and `skills/`.
 
 ## What Alfred Is
 
-Alfred is a LangGraph-based multi-agent assistant for kitchen management (pantry, recipes, meal planning, shopping, tasks).
+Alfred is a LangGraph-based multi-agent assistant, split into two Python packages:
+
+- **`alfred`** (core) — Domain-agnostic orchestration engine: pipeline, entity tracking, CRUD execution, prompt assembly, conversation memory
+- **`alfred_kitchen`** (domain) — Kitchen-specific implementation: entities, subdomains, prompts, database adapter, bypass modes
+
+Core never imports kitchen. Kitchen imports core freely. New domains implement `DomainConfig` and call `register_domain()`.
 
 **Core Principle:** Deterministic systems manage state. LLMs interpret and decide. The CRUD layer + SessionIdRegistry own entity lifecycle; LLMs reason over that state.
 
@@ -76,7 +81,7 @@ Before making changes that affect:
 | Database schema | Create numbered migration in `migrations/` |
 | API contracts | Update `docs/architecture/capabilities.md` |
 | Prompt structure | Update relevant `docs/prompts/*.md` |
-| Entity lifecycle | Update `docs/architecture/context-and-session.md` |
+| Entity lifecycle | Update `docs/architecture/sessions-context-entities.md` |
 
 ---
 
@@ -84,10 +89,14 @@ Before making changes that affect:
 
 | Path | Purpose | Audience |
 |------|---------|----------|
+| `docs/architecture/overview.md` | Architecture index + pipeline diagram | All agents |
+| `docs/architecture/core-domain-architecture.md` | Two-package split, DomainConfig protocol | All agents |
+| `docs/architecture/core-public-api.md` | Entry points, extension protocols, extraction path | Implementers |
+| `docs/architecture/domain-implementation-guide.md` | How to build a new domain | Implementers |
+| `docs/architecture/` (4 internals docs) | CRUD, sessions, pipeline, prompts | Deep-dive |
 | `skills/frontend/` | UI development context | Frontend agents |
 | `skills/backend/` | CRUD, database patterns | Backend agents |
 | `skills/orchestration/` | LLM node behavior | Orchestration agents |
-| `docs/architecture/` | System architecture | All agents |
 | `docs/specs/` | Feature specifications | Implementers |
 | `docs/ideas/` | Brainstorming, vision | Designers |
 | `docs/ROADMAP.md` | Active work, backlog | All |

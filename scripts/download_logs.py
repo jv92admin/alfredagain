@@ -19,7 +19,7 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from alfred.db.client import get_client
+from alfred_kitchen.db.client import get_client
 
 OUTPUT_DIR = Path("prompt_logs_downloaded")
 

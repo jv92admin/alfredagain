@@ -19,7 +19,7 @@ from openai import OpenAI
 
 # Try to import from alfred, fallback to direct supabase if not in venv
 try:
-    from alfred.db.client import get_client
+    from alfred_kitchen.db.client import get_client
     from alfred.config import settings
     OPENAI_API_KEY = settings.openai_api_key
 except ImportError:

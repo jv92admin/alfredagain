@@ -189,8 +189,8 @@ def _log_to_file(
     else:
         content += "(No response yet)\n"
 
-    # Write the file
-    filepath.write_text(content, encoding="utf-8")
+    # Write the file (replace surrogates so logging never crashes)
+    filepath.write_text(content, encoding="utf-8", errors="replace")
     return filepath
 
 
@@ -207,7 +207,7 @@ def _log_to_db(
 ) -> bool:
     """Log to Supabase database."""
     try:
-        from alfred.db.client import get_client
+        from alfred_kitchen.db.client import get_client
         
         client = get_client()
         session_id = _get_session_id()
@@ -249,7 +249,7 @@ def _log_to_db(
 def _cleanup_old_sessions() -> int:
     """Delete old sessions, keeping only the configured number of most recent."""
     try:
-        from alfred.db.client import get_client
+        from alfred_kitchen.db.client import get_client
         
         client = get_client()
         keep = _get_keep_sessions()

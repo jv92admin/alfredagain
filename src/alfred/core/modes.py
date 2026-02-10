@@ -1,12 +1,13 @@
 """
 Alfred V3 - Mode System.
 
-Modes control complexity adaptation:
+Core modes control complexity adaptation within the graph pipeline:
 - QUICK: 1-2 steps, minimal planning, terse responses
-- COOK: Bypasses graph — 1 LLM call/turn, frozen recipe context
-- BRAINSTORM: Bypasses graph — 1 LLM call/turn, creative exploration
 - PLAN: 4-8 steps, full planning, explicit proposals
 - CREATE: 2-4 steps, generation-focused, rich output
+
+Domain-specific bypass modes (e.g., cook, brainstorm) skip the graph entirely
+and are registered via DomainConfig.bypass_modes.
 
 Mode Selection:
 1. Primary: User selects mode in UI (explicit, reliable)
@@ -19,11 +20,9 @@ from enum import Enum
 
 
 class Mode(Enum):
-    """User interaction modes."""
+    """Core graph pipeline modes. Bypass modes are registered via DomainConfig."""
 
     QUICK = "quick"        # 1-2 steps, minimal planning
-    COOK = "cook"          # Graph bypass — guided cooking session
-    BRAINSTORM = "brainstorm"  # Graph bypass — creative exploration
     PLAN = "plan"          # Full pipeline
     CREATE = "create"      # Generation-focused
 
@@ -37,24 +36,6 @@ MODE_CONFIG = {
         "verbosity": "terse",
         "examples_in_prompt": False,
         "profile_detail": "minimal",
-    },
-    Mode.COOK: {
-        "max_steps": 0,
-        "skip_think": True,
-        "bypass_graph": True,
-        "proposal_required": False,
-        "verbosity": "terse",
-        "examples_in_prompt": False,
-        "profile_detail": "minimal",
-    },
-    Mode.BRAINSTORM: {
-        "max_steps": 0,
-        "skip_think": True,
-        "bypass_graph": True,
-        "proposal_required": False,
-        "verbosity": "medium",
-        "examples_in_prompt": False,
-        "profile_detail": "compact",
     },
     Mode.PLAN: {
         "max_steps": 8,
@@ -126,11 +107,17 @@ class ModeContext:
     
     @classmethod
     def from_dict(cls, data: dict) -> "ModeContext":
-        """Deserialize from dict."""
-        return cls(
-            selected_mode=Mode(data["selected_mode"]),
-            profile_default=Mode(data["profile_default"]) if data.get("profile_default") else None,
-        )
+        """Deserialize from dict. Falls back to PLAN for unrecognized modes."""
+        try:
+            selected = Mode(data["selected_mode"])
+        except ValueError:
+            # Bypass mode string (e.g., "cook") — fall back to PLAN for graph pipeline
+            selected = Mode.PLAN
+        try:
+            profile = Mode(data["profile_default"]) if data.get("profile_default") else None
+        except ValueError:
+            profile = None
+        return cls(selected_mode=selected, profile_default=profile)
     
     @classmethod
     def default(cls) -> "ModeContext":

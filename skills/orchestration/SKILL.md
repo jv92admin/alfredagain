@@ -202,6 +202,6 @@ If Think sees entities in "Recent Context (last 2 turns)":
 ## Related Docs
 
 - [docs/architecture/overview.md](../../docs/architecture/overview.md) — System architecture
-- [docs/architecture/context-and-session.md](../../docs/architecture/context-and-session.md) — Context engineering details
+- [docs/architecture/sessions-context-entities.md](../../docs/architecture/sessions-context-entities.md) — Context engineering details
 - [docs/prompts/think-prompt-structure.md](../../docs/prompts/think-prompt-structure.md) — Think prompt assembly
 - [docs/prompts/act-prompt-structure.md](../../docs/prompts/act-prompt-structure.md) — Act prompt assembly

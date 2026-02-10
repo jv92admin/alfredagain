@@ -225,12 +225,12 @@ class UnderstandContext:
 class ThinkContext:
     """Context for Think's planning decisions.
 
-    Key feature: Recipe detail level tracking to avoid redundant reads.
+    Key feature: Entity detail level tracking to avoid redundant reads.
     Shows `[read:full]` vs `[read:summary]` so Think knows what data Act has.
     """
 
     current_turn: int
-    # Registry data for entity formatting with recipe detail tracking
+    # Registry data for entity formatting with detail tracking
     registry_data: dict = field(default_factory=dict)
     # Additional context fields (optional, used by full format())
     conversation: ConversationHistory | None = None
@@ -238,7 +238,7 @@ class ThinkContext:
     curation: CurationSummary | None = None
 
     def format_entity_context(self) -> str:
-        """Format entity context for Think prompt with recipe detail tracking.
+        """Format entity context for Think prompt with detail tracking.
 
         Structure:
         1. Generated Content (pending artifacts)
@@ -255,9 +255,8 @@ class ThinkContext:
         ref_active_reason = self.registry_data.get("ref_active_reason", {})
         ref_turn_created = self.registry_data.get("ref_turn_created", {})
         pending_artifacts = self.registry_data.get("pending_artifacts", {})
-        # Recipe detail tracking
-        ref_recipe_last_read_level = self.registry_data.get("ref_recipe_last_read_level", {})
-        ref_recipe_last_full_turn = self.registry_data.get("ref_recipe_last_full_turn", {})
+        # Generic detail tracking (keyed by ref → {"level": ..., "full_turn": ...})
+        ref_detail_tracking = self.registry_data.get("ref_detail_tracking", {})
 
         # Get active entities split by source
         recent_refs, retained_refs = self._get_active_entities()
@@ -290,38 +289,43 @@ class ThinkContext:
 
         # Section 2: Active Entities (last 2 turns - automatic)
         # Filter out: entities shown in Generated Content section
-        from alfred.context.entity import SOURCE_TAG_LEGEND, RECIPE_DATA_LEGEND
+        from alfred.context.entity import SOURCE_TAG_LEGEND
+        from alfred.domain import get_current_domain
         recent_display = [r for r in recent_refs if r not in generated_refs]
         if recent_display:
             lines.append("## ACTIVE ENTITIES")
             lines.append("Act has data for these. Plan reads only when data is missing from this section.")
             lines.append(SOURCE_TAG_LEGEND)
-            # Only show recipe-specific read level guidance when recipes are present
-            has_recipes = any(
-                ref_types.get(r) == "recipe" for r in recent_display
-            )
-            if has_recipes:
-                lines.append(RECIPE_DATA_LEGEND)
+            # Phase 2: Get entity-specific legends from domain config
+            domain = get_current_domain()
+            entity_types_present = set(ref_types.get(r) for r in recent_display)
+            for entity_type in entity_types_present:
+                legend = domain.get_entity_data_legend(entity_type)
+                if legend:
+                    lines.append(legend)
             lines.append("")
             for ref in recent_display:
                 label = ref_labels.get(ref, ref)
                 entity_type = ref_types.get(ref, "unknown")
                 action = ref_actions.get(ref, "-")
                 last_ref = ref_turn_last_ref.get(ref, "?")
-                # Recipe detail level tracking
-                if entity_type == "recipe":
-                    level = ref_recipe_last_read_level.get(ref)
-                    if level:
-                        action = f"{action}:{level}"
-                        if level != "full":
-                            last_full_turn = ref_recipe_last_full_turn.get(ref)
-                            if last_full_turn:
-                                action = f"{action} (last_full:T{last_full_turn})"
+                # Detail level tracking (driven by domain config, not entity-specific)
+                tracking = ref_detail_tracking.get(ref, {})
+                detail_level = tracking.get("level")
+                if detail_level:
+                    action = f"{action}:{detail_level}"
+                    if detail_level != "full":
+                        last_full_turn = tracking.get("full_turn")
+                        if last_full_turn:
+                            action = f"{action} (last_full:T{last_full_turn})"
                 # Stub indicator: created:user entities that haven't been read
                 stub_marker = ""
                 if action.startswith("created:user") or action.startswith("updated:user"):
-                    # No read level means Act has no data for this entity
-                    if entity_type == "recipe" and not ref_recipe_last_read_level.get(ref):
+                    # No detail tracking means Act has no data for this entity
+                    etype = ref_types.get(ref, "")
+                    table_name = domain.type_to_table.get(etype, "")
+                    entity_def = domain.entities.get(table_name)
+                    if entity_def and entity_def.detail_tracking and not tracking:
                         stub_marker = " (no details)"
                 lines.append(f"- `{ref}`: {label}{stub_marker} ({entity_type}) [{action}] T{last_ref}")
             lines.append("")
@@ -378,7 +382,7 @@ class ThinkContext:
         """Format full context for Think prompt (entity + conversation + reasoning)."""
         sections = []
 
-        # Entity context with recipe detail tracking
+        # Entity context with detail tracking
         entity_section = self.format_entity_context()
         if entity_section and "No entities" not in entity_section:
             sections.append(entity_section)
@@ -419,7 +423,7 @@ class ReplyContext:
         sections = []
 
         # Entity context with saved/generated distinction
-        # Reply needs to know: recipe_3 = saved, gen_recipe_1 = not saved
+        # Reply needs to know: entity_3 = saved, gen_entity_1 = not saved
         entity_section = format_entity_context(self.entity, mode="reply")
         if entity_section and "No entities" not in entity_section:
             sections.append(f"## Entity Context\n\n{entity_section}")
@@ -502,7 +506,7 @@ def build_think_context(state: "AlfredState") -> ThinkContext:
     Build context for Think's planning decisions.
 
     Key features:
-    - Recipe detail level tracking ([read:full] vs [read:summary])
+    - Entity detail level tracking ([read:full] vs [read:summary])
     - Entity refs + labels with action status
     - Reasoning trace from prior turns
     - Current turn's Understand curation decisions
@@ -555,7 +559,7 @@ def build_reply_context(state: "AlfredState") -> ReplyContext:
     outcome = _build_execution_outcome(step_results, think_output)
 
     # V9 UNIFIED: Get pending_artifacts so Reply has same view as Think/Act
-    # This enables Reply to show generated content when user asks "show me that recipe"
+    # This enables Reply to show generated content when user references it
     pending_artifacts = {}
     if isinstance(registry, SessionIdRegistry):
         pending_artifacts = registry.get_all_pending_artifacts()

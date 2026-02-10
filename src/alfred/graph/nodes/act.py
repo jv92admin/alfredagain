@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 from alfred.core.modes import Mode, ModeContext
 from alfred.core.id_registry import SessionIdRegistry
+from alfred.domain import get_current_domain
 from alfred.core.payload_compiler import compile_payloads, get_compiled_payload_for_step
 from alfred.graph.state import (
     ACT_CONTEXT_THRESHOLD,
@@ -52,54 +53,23 @@ from alfred.graph.state import (
     StepCompleteAction,
     ToolCallAction,
 )
-from alfred.background.profile_builder import format_profile_for_prompt, get_cached_profile
 from alfred.llm.client import call_llm, set_current_node
 from alfred.memory.conversation import format_full_context
-from alfred.prompts.injection import build_act_prompt, build_act_user_prompt
+from alfred.prompts.injection import build_act_user_prompt
 from alfred.tools.crud import execute_crud
 from alfred.tools.schema import get_schema_with_fallback
-from alfred.prompts.personas import get_full_subdomain_content
-from alfred.prompts.examples import get_contextual_examples
-
-# Entity types to track across steps
-TRACKED_ENTITY_TYPES = {"recipes", "meal_plans", "tasks", "recipe", "meal_plan", "task"}
 
 
 def _infer_entity_type_from_artifact(artifact: dict) -> str:
-    """Infer entity type from artifact structure. V4 CONSOLIDATION."""
-    if "instructions" in artifact or "cuisine" in artifact or "prep_time" in artifact:
-        return "recipe"
-    # Flat meal plan entry
-    if "meal_type" in artifact and "date" in artifact:
-        return "meal_plan"
-    # Nested meal plan structure: {"meal_plan": [...]} or has "meals" key
-    if "meal_plan" in artifact or "meals" in artifact:
-        return "meal_plan"
-    if "due_date" in artifact or ("title" in artifact and "status" in artifact):
-        return "task"
-    if artifact.get("type"):
-        return artifact["type"]
-    return "item"
+    """Infer entity type from artifact structure. Phase 2: Uses domain config."""
+    domain = get_current_domain()
+    return domain.infer_entity_type_from_artifact(artifact)
 
 
 def _extract_artifact_label(artifact: dict, entity_type: str, index: int) -> str:
-    """Extract a human-readable label from an artifact."""
-    # Standard name/title fields
-    if artifact.get("name"):
-        return artifact["name"]
-    if artifact.get("title"):
-        return artifact["title"]
-    
-    # Meal plan: try to extract date range
-    if entity_type == "meal_plan":
-        meal_plan = artifact.get("meal_plan", [])
-        if meal_plan and isinstance(meal_plan, list):
-            dates = [entry.get("date") for entry in meal_plan if entry.get("date")]
-            if dates:
-                return f"Meal Plan {dates[0]} to {dates[-1]}"
-        return f"Generated Meal Plan"
-    
-    return f"item_{index + 1}"
+    """Extract a human-readable label from an artifact. Delegates to domain config."""
+    domain = get_current_domain()
+    return domain.compute_artifact_label(artifact, entity_type, index)
 
 
 # V4 CONSOLIDATION: _extract_turn_entities and _format_turn_entities removed
@@ -348,7 +318,7 @@ def _decision_to_action(decision: ActDecision) -> ActAction:
 # =============================================================================
 
 # Prompt paths
-_PROMPTS_DIR = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "act"
+_PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "templates" / "act"
 
 # Cache for loaded prompts
 _PROMPT_CACHE: dict[str, str] = {}
@@ -368,30 +338,46 @@ def _load_prompt(filename: str) -> str:
 def _get_system_prompt(step_type: str = "read") -> str:
     """
     Build the Act system prompt from layers.
-    
-    Layers (Act is execution, not user-facing — no system.md):
+
+    Domain can provide the full system prompt (preferred).
+    Otherwise falls back to template assembly:
     1. base.md - Act's role in Alfred (execution engine)
     2. crud.md - Tools, filters, operators (only for read/write)
     3. {step_type}.md - Mechanics for this step type
-    
+    4. Domain-specific guidance (from DomainConfig.get_act_prompt_injection)
+
     Subdomain content (persona, user profile, schema) is added to user_prompt.
     """
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+
+    # Domain can provide the full system prompt (preferred)
+    domain_content = domain.get_act_prompt_content(step_type)
+    if domain_content:
+        return domain_content
+
+    # Fallback: core template assembly + injection
     base = _load_prompt("base.md")
     step_type_content = _load_prompt(f"{step_type}.md")
-    
+
     # Build layers: base → (crud) → step_type
     parts = [base]
-    
+
     # CRUD steps need the tools reference
     if step_type in ("read", "write"):
         crud = _load_prompt("crud.md")
         if crud:
             parts.append(crud)
-    
+
     # Add step-type-specific content (read.md, write.md, analyze.md, generate.md)
     if step_type_content:
         parts.append(step_type_content)
-    
+
+    # Add domain-specific guidance (examples, patterns, table-specific rules)
+    domain_injection = domain.get_act_prompt_injection(step_type)
+    if domain_injection:
+        parts.append(domain_injection)
+
     return "\n\n---\n\n".join(parts)
 
 
@@ -415,8 +401,9 @@ def _format_step_results(
     the critical info (IDs, names) that Act needs for subsequent steps.
     """
     import json
-    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
-    
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+
     if not step_results:
         return "### Previous Step Results\n*No previous steps completed yet.*"
 
@@ -498,7 +485,7 @@ def _format_step_results(
                     else:
                         lines.append(_summarize_step_data(data, table))
         elif isinstance(result, list):
-            table = _infer_table_from_record(result[0]) if result else None
+            table = domain.infer_table_from_record(result[0]) if result else None
             lines.append(f"**Step {step_num}** ({len(result)} records):")
             if is_recent:
                 lines.extend(_format_step_data_clean(result, table))
@@ -547,68 +534,48 @@ def _format_step_results(
 
 
 def _subdomain_to_table(subdomain: str) -> str:
-    """Map subdomain to primary table name."""
-    mapping = {
-        "inventory": "inventory",
-        "shopping": "shopping_list",
-        "recipes": "recipes",
-        "meal_plans": "meal_plans",
-        "tasks": "tasks",
-        "preferences": "preferences",
-    }
-    return mapping.get(subdomain, subdomain)
+    """Map subdomain to primary table name. Phase 2: Uses domain config."""
+    domain = get_current_domain()
+    subdomain_def = domain.subdomains.get(subdomain)
+    if subdomain_def:
+        return subdomain_def.primary_table
+    return subdomain
 
 
 def _subdomain_to_entity_type(subdomain: str) -> str:
-    """Map subdomain to entity type for SessionIdRegistry refs."""
-    mapping = {
-        "inventory": "inv",
-        "shopping": "shopping",
-        "recipes": "recipe",
-        "meal_plans": "meal_plan",
-        "tasks": "task",
-        "preferences": "preference",
-    }
-    return mapping.get(subdomain, subdomain)
+    """Map subdomain to entity type for SessionIdRegistry refs. Phase 2: Uses domain config."""
+    domain = get_current_domain()
+    subdomain_def = domain.subdomains.get(subdomain)
+    if subdomain_def:
+        # Get the primary table's entity type
+        entity = domain.entities.get(subdomain_def.primary_table)
+        if entity:
+            return entity.type_name
+    return subdomain
 
 
 def _normalize_subdomain(raw: str) -> str:
     """
     Normalize approximate subdomain to canonical value.
-    
+
     Single source of truth for valid subdomains.
     Understand passes natural/approximate values, Act Quick normalizes.
+    Delegates to domain config for alias resolution.
     """
     raw_lower = raw.lower().strip()
-    
-    # Canonical values (no change needed)
-    canonical = {"inventory", "recipes", "shopping", "meal_plans", "preferences"}
+
+    # Canonical values from domain config (no change needed)
+    domain = get_current_domain()
+    canonical = set(domain.subdomains.keys())
     if raw_lower in canonical:
         return raw_lower
-    
-    # Common variations → canonical
-    aliases = {
-        # Singular → plural
-        "recipe": "recipes",
-        "meal_plan": "meal_plans",
-        "preference": "preferences",
-        # Natural language
-        "pantry": "inventory",
-        "fridge": "inventory",
-        "ingredients": "inventory",
-        "shopping_list": "shopping",
-        "groceries": "shopping",
-        "meals": "meal_plans",
-        "meal planning": "meal_plans",
-        "diet": "preferences",
-        "dietary": "preferences",
-        "restrictions": "preferences",
-    }
-    
+
+    # Domain-specific aliases
+    aliases = domain.get_subdomain_aliases()
     if raw_lower in aliases:
         logger.info(f"Normalized subdomain: {raw} → {aliases[raw_lower]}")
         return aliases[raw_lower]
-    
+
     # Unknown - return as-is (will fail at schema lookup with clear error)
     logger.warning(f"Unknown subdomain: {raw}")
     return raw_lower
@@ -616,17 +583,18 @@ def _normalize_subdomain(raw: str) -> str:
 
 def _format_step_data_clean(data: Any, table: str | None) -> list[str]:
     """Format step data in clean, readable format with IDs preserved.
-    
-    V4: IDs are now simple refs (recipe_1, inv_5) from the registry,
+
+    V4: IDs are now simple refs (item_1, item_5) from the registry,
     so we display them in full (no truncation needed).
     """
-    from alfred.prompts.injection import _format_records_for_table
-    
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
+
     if isinstance(data, list):
         if not data:
             return ["  (no records)"]
-        formatted = _format_records_for_table(data, table)
-        # V4: IDs are simple refs - display in full
+        formatted = domain.format_records_for_context(data, table)
+        # IDs are simple refs - display in full
         ids = [str(r.get("id")) for r in data if isinstance(r, dict) and r.get("id")]
         if ids:
             formatted.append(f"  **IDs:** {', '.join(ids)}")
@@ -634,8 +602,7 @@ def _format_step_data_clean(data: Any, table: str | None) -> list[str]:
     elif isinstance(data, int):
         return [f"  Affected {data} records"]
     elif isinstance(data, dict):
-        from alfred.prompts.injection import _format_record_clean
-        return [_format_record_clean(data, table)]
+        return [domain.format_record_for_context(data, table)]
     else:
         return [f"  {str(data)[:200]}"]
 
@@ -686,7 +653,8 @@ def _extract_key_fields(records: list[dict]) -> str:
 
 def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int) -> str:
     """Format tool results from current step - show ACTUAL data with clean formatting."""
-    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
+    from alfred.domain import get_current_domain
+    domain = get_current_domain()
     
     if not tool_results:
         return ""
@@ -704,7 +672,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
         
         # Infer table from data if not provided
         if not table and isinstance(result, list) and result:
-            table = _infer_table_from_record(result[0])
+            table = domain.infer_table_from_record(result[0])
         
         table_label = f" on `{table}`" if table else ""
         lines.append(f"### Tool Call {i}: `{tool_name}`{table_label}")
@@ -718,7 +686,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
                 else:
                     lines.append(f"**Result: {len(result)} records found:**")
                     # Clean formatted records with IDs visible
-                    formatted = _format_records_for_table(result[:50], table)
+                    formatted = domain.format_records_for_context(result[:50], table)
                     lines.extend(formatted)
                     if len(result) > 50:
                         lines.append(f"  ... and {len(result) - 50} more")
@@ -734,7 +702,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
         elif tool_name == "db_create":
             if isinstance(result, list):
                 lines.append(f"**✓ Created {len(result)} records:**")
-                formatted = _format_records_for_table(result, table)
+                formatted = domain.format_records_for_context(result, table)
                 lines.extend(formatted)
                 # Show IDs created
                 ids = [str(r.get("id")) for r in result if isinstance(r, dict) and r.get("id")]
@@ -742,8 +710,7 @@ def _format_current_step_results(tool_results: list[tuple], tool_calls_made: int
                     lines.append(f"**Created IDs:** {ids}")
             elif isinstance(result, dict):
                 lines.append(f"**✓ Created 1 record:**")
-                from alfred.prompts.injection import _format_record_clean
-                lines.append(_format_record_clean(result, table))
+                lines.append(domain.format_record_for_context(result, table))
             else:
                 lines.append(f"**✓ Created:** `{result}`")
         elif tool_name == "db_update":
@@ -811,9 +778,10 @@ def build_act_entity_context(
     Returns:
         Formatted entity context string
     """
-    from alfred.prompts.injection import _format_records_for_table, _infer_table_from_record
+    from alfred.domain import get_current_domain
     import json
-    
+    domain = get_current_domain()
+
     lines = []
 
     # Entity Source Legend (centralized in entity.py)
@@ -840,7 +808,7 @@ def build_act_entity_context(
     just_promoted = session_registry.get_just_promoted_artifacts()
     if just_promoted:
         lines.append("## Just Saved This Turn")
-        lines.append("Main record created. For linked tables (recipe_ingredients), use the ref as FK:")
+        lines.append("Main record created. For linked/nested tables, use the ref as FK:")
         lines.append("")
         for ref, artifact in just_promoted.items():
             label = artifact.get("name") or artifact.get("label") or ref
@@ -881,7 +849,7 @@ def build_act_entity_context(
                     
                 if isinstance(data, list):
                     if not table and data:
-                        table = _infer_table_from_record(data[0])
+                        table = domain.infer_table_from_record(data[0])
                     for record in data:
                         if isinstance(record, dict) and record.get("id"):
                             ref = str(record["id"])
@@ -911,20 +879,13 @@ def build_act_entity_context(
             label = session_registry.ref_labels.get(ref, data.get("name") or data.get("title") or ref)
             entity_type = session_registry.ref_types.get(ref, table or "unknown")
             
-            # Format based on entity type
-            if table == "recipes" or entity_type == "recipe":
-                lines.extend(_format_recipe_data(ref, label, data, session_registry))
-            else:
-                # Generic format
-                lines.append(f"### `{ref}`: {label} ({entity_type})")
-                # Show key fields inline
-                key_fields = ["quantity", "unit", "location", "category", "date", "meal_type", "status"]
-                field_parts = []
-                for field in key_fields:
-                    if field in data and data[field] is not None:
-                        field_parts.append(f"{field}: {data[field]}")
-                if field_parts:
-                    lines.append(f"  {' | '.join(field_parts)}")
+            # Format based on entity type — delegates to domain config
+            domain = get_current_domain()
+            formatted = domain.format_entity_for_context(
+                entity_type=entity_type, ref=ref, label=label, data=data,
+                registry=session_registry,
+            )
+            lines.extend(formatted)
             lines.append("")
     
     # Section 3: Recent Context (refs only for entities NOT in entity_data)
@@ -965,113 +926,6 @@ def build_act_entity_context(
         lines.append("*No entities in context.*")
     
     return "\n".join(lines)
-
-
-def _format_recipe_data(ref: str, label: str, data: dict, registry: "SessionIdRegistry | None" = None) -> list[str]:
-    """Format recipe data for Act context - includes key fields and instruction count.
-    
-    Checks what data is available and labels appropriately:
-    - Full: has instructions AND full ingredients (with id, quantity)
-    - Snapshot: missing instructions OR only ingredient names
-    
-    When registry is provided, ingredient refs are looked up and displayed inline.
-    """
-    # Check what data we have
-    has_instructions = bool(data.get("instructions"))
-    ingredients = data.get("recipe_ingredients", [])
-    
-    # Check if ingredients have full data (not just name/category from auto-include)
-    has_full_ingredients = False
-    if ingredients and isinstance(ingredients[0], dict):
-        # Full ingredients have id, quantity, unit - auto-include only has name, category
-        has_full_ingredients = "id" in ingredients[0] or "quantity" in ingredients[0]
-    
-    # Determine what's missing
-    missing = []
-    if not has_instructions:
-        missing.append("instructions")
-    if not has_full_ingredients and ingredients:
-        missing.append("ingredient details")
-    
-    if missing:
-        snapshot_indicator = f" *(snapshot — missing: {', '.join(missing)})*"
-    else:
-        snapshot_indicator = ""
-    
-    lines = [f"### `{ref}`: {label} (recipe){snapshot_indicator}"]
-    
-    # Core metadata
-    meta = []
-    if data.get("cuisine"):
-        meta.append(f"cuisine: {data['cuisine']}")
-    # Handle prep/cook time (matches injection.py logic)
-    prep = data.get("prep_time_minutes") or data.get("prep_time")
-    cook = data.get("cook_time_minutes") or data.get("cook_time")
-    total = data.get("total_time")
-    if total:
-        meta.append(f"time: {total}")
-    elif prep or cook:
-        time_str = f"{prep or 0}+{cook or 0}min"
-        meta.append(f"time: {time_str}")
-    if data.get("servings"):
-        meta.append(f"servings: {data['servings']}")
-    if data.get("difficulty"):
-        meta.append(f"difficulty: {data['difficulty']}")
-    if meta:
-        lines.append(f"  {' | '.join(meta)}")
-    
-    # Tags
-    tags = []
-    if data.get("occasions"):
-        tags.append(f"occasions: {', '.join(data['occasions'][:3])}")
-    if data.get("health_tags"):
-        tags.append(f"health: {', '.join(data['health_tags'][:3])}")
-    if tags:
-        lines.append(f"  {' | '.join(tags)}")
-    
-    # Ingredients - format based on whether we have full data
-    if ingredients:
-        if has_full_ingredients:
-            # Full ingredients - show with quantities AND refs for updates
-            lines.append(f"  **ingredients ({len(ingredients)} items):**")
-            for ing in ingredients:
-                qty = ing.get("quantity", "")
-                unit = ing.get("unit", "")
-                name = ing.get("name", "?")
-                qty_str = f"{qty} {unit} " if qty else ""
-                
-                # Look up ingredient ref if registry available and ingredient has ID
-                ing_ref = None
-                if registry and ing.get("id"):
-                    ing_ref = registry.get_ref(str(ing["id"]))
-                
-                if ing_ref:
-                    lines.append(f"    - `{ing_ref}`: {qty_str}{name}")
-                else:
-                    lines.append(f"    - {qty_str}{name}")
-        else:
-            # Summary only (auto-include) - just names
-            names = [i.get("name", "?") for i in ingredients[:5]]
-            more = f"... ({len(ingredients)} total)" if len(ingredients) > 5 else f" ({len(ingredients)} total)"
-            lines.append(f"  ingredients (names only): {', '.join(names)}{more}")
-    
-    # Instructions - show full content when available
-    instructions = data.get("instructions")
-    if instructions:
-        if isinstance(instructions, list):
-            lines.append(f"  **instructions ({len(instructions)} steps):**")
-            for i, step in enumerate(instructions, 1):
-                # Skip prefix if step already starts with a number (e.g., "1. Prep...")
-                if re.match(r'^\d+\.?\s', step):
-                    lines.append(f"    {step}")
-                else:
-                    lines.append(f"    {i}. {step}")
-        else:
-            lines.append(f"  **instructions:** {instructions}")
-    else:
-        lines.append("  instructions: not loaded")
-    
-    return lines
 
 
 def _format_previous_turn_steps(conversation: dict) -> str:
@@ -1316,12 +1170,12 @@ async def act_node(state: AlfredState) -> dict:
         try:
             user_id = state.get("user_id")
             if user_id:
-                profile = await get_cached_profile(user_id)
-                # Profile for analyze/generate/write steps (user constraints matter)
-                profile_section = format_profile_for_prompt(profile)
+                domain = get_current_domain()
+                profile_section = await domain.get_user_profile(user_id)
                 # Subdomain guidance for all three step types
-                if profile.subdomain_guidance:
-                    guidance = profile.subdomain_guidance.get(current_step.subdomain, "")
+                all_guidance = await domain.get_subdomain_guidance(user_id)
+                if all_guidance:
+                    guidance = all_guidance.get(current_step.subdomain, "")
                     if guidance:
                         subdomain_guidance_section = f"""## User Preferences ({current_step.subdomain})
 
@@ -1674,18 +1528,26 @@ async def act_node(state: AlfredState) -> dict:
                 # If data has explicit artifacts key, use it
                 if "artifacts" in decision.data:
                     artifacts = decision.data["artifacts"]
-                elif "recipes" in decision.data:
-                    # Common pattern: generated recipes
-                    artifacts = decision.data.get("recipes", [])
-                    if isinstance(artifacts, dict):
-                        artifacts = [artifacts]
-                elif "meal_plan" in decision.data:
-                    # Generated meal plan - wrap the whole thing as one artifact
-                    # The meal_plan key signals this is a meal plan structure
-                    artifacts = [decision.data]
                 else:
-                    # Wrap entire data as single artifact
-                    artifacts = [decision.data]
+                    # Check if any key matches a domain entity table name
+                    # (e.g., "recipes" → list of recipe artifacts)
+                    domain = get_current_domain()
+                    entity_tables = set(domain.entities.keys())
+                    matched = False
+                    for key in decision.data:
+                        if key in entity_tables:
+                            val = decision.data[key]
+                            if isinstance(val, list):
+                                artifacts = val
+                            elif isinstance(val, dict):
+                                artifacts = [val]
+                            else:
+                                artifacts = [decision.data]
+                            matched = True
+                            break
+                    if not matched:
+                        # Wrap entire data as single artifact
+                        artifacts = [decision.data]
             elif isinstance(decision.data, list):
                 artifacts = decision.data
         
@@ -1714,16 +1576,12 @@ async def act_node(state: AlfredState) -> dict:
         # This allows "save those recipes" to work even in a later turn
         new_archive = state.get("content_archive", {}).copy()
         if step_type in ("generate", "analyze") and step_data:
-            # Create a descriptive archive key
+            # Create a descriptive archive key — domain infers from step description
             archive_key = f"step_{current_step_index}_{step_type}"
-            # Also try to create a semantic key based on step description
-            desc_lower = current_step.description.lower()
-            if "recipe" in desc_lower:
-                archive_key = "generated_recipes"
-            elif "meal" in desc_lower and "plan" in desc_lower:
-                archive_key = "generated_meal_plan"
-            elif "analyz" in desc_lower or "compar" in desc_lower:
-                archive_key = "analysis_result"
+            domain = get_current_domain()
+            semantic_key = domain.get_archive_key_for_description(current_step.description)
+            if semantic_key:
+                archive_key = semantic_key
             
             new_archive[archive_key] = {
                 "step_index": current_step_index,
@@ -1777,13 +1635,10 @@ async def act_node(state: AlfredState) -> dict:
                         # that would wipe unsaved artifacts (e.g., gen_recipe_2 when
                         # only gen_recipe_1 was saved).
                         
-                        # Clear related archive keys (generated_recipes, etc.)
-                        archive_keys_to_clear = []
-                        if subdomain == "recipes":
-                            archive_keys_to_clear.append("generated_recipes")
-                        elif subdomain == "meal_plans":
-                            archive_keys_to_clear.append("generated_meal_plan")
-                        
+                        # Clear related archive keys via domain config
+                        domain = get_current_domain()
+                        archive_keys_to_clear = domain.get_archive_keys_for_subdomain(subdomain)
+
                         for key in archive_keys_to_clear:
                             if key in new_archive:
                                 del new_archive[key]
@@ -1994,17 +1849,11 @@ async def act_quick_node(state: AlfredState) -> dict[str, Any]:
         # Convert structured params to dict for CRUD
         params = decision.params.model_dump(exclude_none=True)
         
-        # Ensure table is set
+        # Ensure table is set — derive from domain subdomains
         if not params.get("table"):
-            table_map = {
-                "inventory": "inventory",
-                "shopping": "shopping_list",
-                "recipes": "recipes",
-                "meal_plans": "meal_plans",
-                "tasks": "tasks",
-                "preferences": "preferences",
-            }
-            params["table"] = table_map.get(quick_subdomain, quick_subdomain)
+            domain = get_current_domain()
+            subdomain_def = domain.subdomains.get(quick_subdomain)
+            params["table"] = subdomain_def.primary_table if subdomain_def else quick_subdomain
         
         # Ensure filters exists for read operations
         if "filters" not in params:

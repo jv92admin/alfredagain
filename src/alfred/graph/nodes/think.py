@@ -21,12 +21,7 @@ Output: ThinkOutput with steps (including group) or proposal/clarification.
 from datetime import date
 from pathlib import Path
 
-from alfred.background.profile_builder import (
-    format_dashboard_for_prompt,
-    format_profile_for_prompt,
-    get_cached_dashboard,
-    get_cached_profile,
-)
+from alfred.domain import get_current_domain
 from alfred.prompts.injection import format_all_subdomain_guidance
 from alfred.context.builders import build_think_context
 from alfred.context.reasoning import (
@@ -79,15 +74,30 @@ def adjust_step_complexity(step: ThinkStep) -> ThinkStep:
 
 
 # Load prompt once at module level
-_PROMPT_PATH = Path(__file__).parent.parent.parent.parent.parent / "prompts" / "think.md"
+_PROMPT_PATH = Path(__file__).parent.parent.parent / "prompts" / "templates" / "think.md"
 _SYSTEM_PROMPT: str | None = None
 
 
 def _get_system_prompt() -> str:
-    """Load the think system prompt."""
+    """Load the think system prompt, injecting domain-specific content."""
     global _SYSTEM_PROMPT
     if _SYSTEM_PROMPT is None:
-        _SYSTEM_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
+        from alfred.domain import get_current_domain
+        domain = get_current_domain()
+        # Domain can provide the full system prompt (preferred)
+        domain_content = domain.get_think_prompt_content()
+        if domain_content:
+            _SYSTEM_PROMPT = domain_content
+        else:
+            # Fallback: core template + injection variables
+            raw = _PROMPT_PATH.read_text(encoding="utf-8")
+            domain_context = domain.get_think_domain_context()
+            domain_guide = domain.get_think_planning_guide()
+            _SYSTEM_PROMPT = raw.replace(
+                "{domain_context}", domain_context
+            ).replace(
+                "{domain_planning_guide}", domain_guide
+            )
     return _SYSTEM_PROMPT
 
 
@@ -166,25 +176,25 @@ async def think_node(state: AlfredState) -> dict:
     # Format conversation context (condensed for Think)
     context_section = format_condensed_context(conversation)
     
-    # Fetch user profile and kitchen dashboard for decision-making
+    # Fetch user profile and dashboard for decision-making
     profile_section = ""
     dashboard_section = ""
     subdomain_guidance_section = ""
+    domain = get_current_domain()
     if user_id:
         try:
-            profile = await get_cached_profile(user_id)
-            profile_section = format_profile_for_prompt(profile)
-            # Get subdomain guidance from profile (includes subdomain_guidance dict)
-            if profile.subdomain_guidance:
+            profile_section = await domain.get_user_profile(user_id)
+            # Get subdomain guidance
+            guidance = await domain.get_subdomain_guidance(user_id)
+            if guidance:
                 subdomain_guidance_section = format_all_subdomain_guidance(
-                    {"subdomain_guidance": profile.subdomain_guidance}
+                    {"subdomain_guidance": guidance}
                 )
         except Exception:
             pass  # Profile is optional
-        
+
         try:
-            dashboard = await get_cached_dashboard(user_id)
-            dashboard_section = format_dashboard_for_prompt(dashboard)
+            dashboard_section = await domain.get_domain_snapshot(user_id)
         except Exception:
             pass  # Dashboard is optional
     
@@ -225,8 +235,8 @@ If they modify → adjust the plan.
         understand_section = f"\n**Entities mentioned**: {referenced_entities}"
     
     # Extract mode info
-    mode_name = mode.name  # QUICK, COOK, PLAN, or CREATE
-    max_steps = {"QUICK": 2, "COOK": 4, "PLAN": 8, "CREATE": 4}.get(mode_name, 4)
+    mode_name = mode.name  # QUICK, PLAN, or CREATE
+    max_steps = mode_context.max_steps
     
     # Build three XML sections that fill the placeholders
     

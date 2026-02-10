@@ -5,7 +5,7 @@ Wraps OpenAI with Instructor for guaranteed structured outputs.
 All LLM calls go through here for consistency and observability.
 
 Also provides raw chat functions (call_llm_chat, call_llm_chat_stream)
-for Cook/Brainstorm modes that bypass the graph and don't need structured output.
+for bypass modes that skip the graph and don't need structured output.
 
 Model support:
 - GPT-4.1-mini: Fast, non-reasoning (current default)
@@ -19,13 +19,18 @@ import instructor
 from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel
 
-from alfred.config import settings
+from alfred.config import core_settings as settings
 from alfred.llm.model_router import get_node_config
 from alfred.llm.prompt_logger import log_prompt
 from alfred.observability.langsmith import get_session_tracker
 
 # Type variable for generic structured output
 T = TypeVar("T", bound=BaseModel)
+
+
+def _sanitize_text(text: str) -> str:
+    """Remove surrogate characters that break UTF-8 encoding."""
+    return text.encode("utf-8", errors="replace").decode("utf-8")
 
 # Singleton client instances
 _client: instructor.Instructor | None = None
@@ -60,7 +65,7 @@ def get_raw_async_client() -> AsyncOpenAI:
     """
     Get a raw async OpenAI client (no Instructor wrapping).
 
-    Used by Cook/Brainstorm modes for unstructured chat completions
+    Used by bypass modes for unstructured chat completions
     and streaming. Singleton pattern.
     """
     global _raw_async_client
@@ -101,7 +106,7 @@ async def call_llm(
             user_prompt="Add milk to my pantry",
             complexity="low",
         )
-        print(result.agent)  # "pantry"
+        print(result.agent)  # "main"
     """
     client = get_client()
 
@@ -114,6 +119,10 @@ async def call_llm(
 
     # Extract model name for the API call
     model = config.pop("model", "gpt-4.1-mini")
+
+    # Sanitize prompts to prevent surrogate encoding errors
+    system_prompt = _sanitize_text(system_prompt)
+    user_prompt = _sanitize_text(user_prompt)
 
     # Build messages
     messages = [
@@ -194,9 +203,14 @@ def _build_chat_kwargs(
     stream: bool = False,
 ) -> dict:
     """Build API kwargs for raw chat completions (shared by chat/chat_stream)."""
+    # Sanitize all message content to prevent surrogate encoding errors
+    safe_messages = [
+        {**m, "content": _sanitize_text(m["content"])} if "content" in m else m
+        for m in messages
+    ]
     api_kwargs: dict = {
         "model": model,
-        "messages": messages,
+        "messages": safe_messages,
         "stream": stream,
         "store": False,
     }
@@ -216,12 +230,12 @@ async def call_llm_chat(
     *,
     messages: list[dict[str, str]],
     complexity: str = "low",
-    node_name: str = "cook",
+    node_name: str = "bypass",
 ) -> str:
     """
     Multi-turn chat completion without structured output.
 
-    Used by Cook/Brainstorm modes for conversational responses
+    Used by bypass modes for conversational responses
     and by the handoff summarizer.
 
     Args:
@@ -274,12 +288,12 @@ async def call_llm_chat_stream(
     *,
     messages: list[dict[str, str]],
     complexity: str = "low",
-    node_name: str = "cook",
+    node_name: str = "bypass",
 ) -> AsyncGenerator[str, None]:
     """
     Streaming multi-turn chat completion. Yields token chunks.
 
-    Used by Cook/Brainstorm modes for real-time streaming responses.
+    Used by bypass modes for real-time streaming responses.
 
     Args:
         messages: Full messages array [{"role": "system", ...}, ...]

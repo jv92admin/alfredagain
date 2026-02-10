@@ -28,7 +28,7 @@ Sections inject in order of **stability** (most stable → most dynamic):
 └─────────────────────────────────────────┘
           ↓
 ┌─────────────────────────────────────────┐
-│ ## Kitchen Dashboard                    │
+│ ## Dashboard                    │
 │ Snapshot of DB state. What EXISTS.      │
 │ Source: count queries per subdomain     │
 └─────────────────────────────────────────┘
@@ -82,12 +82,12 @@ Sections inject in order of **stability** (most stable → most dynamic):
 
 ---
 
-### Kitchen Dashboard
+### Dashboard
 
 **Source:** Count queries + recent samples
 **Format:**
 ```markdown
-## Kitchen Dashboard
+## Dashboard
 - **Inventory:** 49 items (pantry: 36, fridge: 7, freezer: 5)
 - **Recipes:** 3 saved (indian: 2, thai: 1)
 - **Meal Plan:** 2 meals planned (Mon dinner, Tue lunch)

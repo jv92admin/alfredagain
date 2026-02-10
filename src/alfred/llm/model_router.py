@@ -129,9 +129,8 @@ NODE_VERBOSITY: dict[str, str] = {
     "think": "medium",  # Plans need some detail
     "act": "low",  # Tool calls should be terse
     "reply": "medium",  # User-facing needs balance
-    "cook": "terse",  # Concise cooking guidance
-    "brainstorm": "medium",  # Creative exploration
     "handoff": "low",  # Session summary
+    # Domain bypass modes (cook, brainstorm, etc.) provide their own via get_mode_llm_config()
 }
 
 # Node-specific temperature overrides
@@ -143,9 +142,8 @@ NODE_TEMPERATURE: dict[str, float] = {
     "think": 0.35,  # Planning needs flexibility to merge steps
     "reply": 0.6,  # User-facing can be warmer
     "summarize": 0.3,  # Summarization should be consistent
-    "cook": 0.4,  # Warm but not too creative
-    "brainstorm": 0.6,  # Creative warmth
     "handoff": 0.3,  # Summary should be consistent
+    # Domain bypass modes provide their own via get_mode_llm_config()
 }
 
 
@@ -156,8 +154,11 @@ def get_node_config(
     """
     Get model configuration optimized for a specific node.
 
+    Checks core node defaults first, then falls back to domain config
+    for bypass mode nodes (e.g., cook, brainstorm).
+
     Args:
-        node: Node name ("router", "think", "act", "reply")
+        node: Node name ("router", "think", "act", "reply") or bypass mode name
         complexity: Task complexity level
 
     Returns:
@@ -165,13 +166,22 @@ def get_node_config(
     """
     config = get_model_config(complexity)
 
-    # Apply node-specific verbosity unless it's a high-complexity task
-    # (high complexity overrides node defaults)
-    if complexity != "high" and node in NODE_VERBOSITY:
-        config["verbosity"] = NODE_VERBOSITY[node]
-
-    # Apply node-specific temperature (always - determinism is important)
-    if node in NODE_TEMPERATURE:
-        config["temperature"] = NODE_TEMPERATURE[node]
+    # Check core node defaults first
+    if node in NODE_VERBOSITY or node in NODE_TEMPERATURE:
+        # Apply node-specific verbosity unless it's a high-complexity task
+        if complexity != "high" and node in NODE_VERBOSITY:
+            config["verbosity"] = NODE_VERBOSITY[node]
+        # Apply node-specific temperature (always - determinism is important)
+        if node in NODE_TEMPERATURE:
+            config["temperature"] = NODE_TEMPERATURE[node]
+    else:
+        # Check domain config for bypass mode nodes
+        from alfred.domain import get_current_domain
+        domain = get_current_domain()
+        mode_llm_config = domain.get_mode_llm_config().get(node, {})
+        if "verbosity" in mode_llm_config:
+            config["verbosity"] = mode_llm_config["verbosity"]
+        if "temperature" in mode_llm_config:
+            config["temperature"] = mode_llm_config["temperature"]
 
     return config

@@ -56,7 +56,7 @@ LLM says `name = "chicken"` → System does `name ilike "%chicken%"`
 ```python
 # crud.py line 327-347
 if params.table in ("inventory", "shopping_list"):
-    from alfred.tools.ingredient_lookup import lookup_ingredient
+    from alfred_kitchen.domain.tools.ingredient_lookup import lookup_ingredient
     # ... ingredient lookup logic
 ```
 LLM says `name = "chicken"` → System looks up ingredient, filters by ingredient_id

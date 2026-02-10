@@ -34,7 +34,7 @@ load_dotenv()
 
 # Use alfred's db client
 try:
-    from alfred.db.client import get_client
+    from alfred_kitchen.db.client import get_client
 except ImportError:
     from supabase import create_client
     def get_client():
